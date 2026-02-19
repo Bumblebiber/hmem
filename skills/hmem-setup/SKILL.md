@@ -57,7 +57,14 @@ project root — created automatically on first `write_memory(store="company")`.
 
 ## Step 3 — Configure MCP
 
-Add hmem to your `.mcp.json` (create it at your project root if it doesn't exist):
+Add hmem to your `.mcp.json` (create it at your project root if it doesn't exist).
+
+> **Important:** `.mcp.json` must be in the directory where you start your terminal
+> or AI tool. Claude Code, Gemini CLI, and OpenCode discover it from the current
+> working directory — if you open your project in `/home/alice/myproject`, that's
+> where `.mcp.json` belongs. The `.hmem` memory files will be created in that same
+> directory (under `Agents/YOUR_NAME/`) unless you point `HMEM_PROJECT_DIR`
+> elsewhere.
 
 ```json
 {

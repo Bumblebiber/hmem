@@ -71,6 +71,8 @@ npm install
 npm run build
 ```
 
+Place `.mcp.json` in the directory where you open your terminal or IDE — Claude Code, Gemini CLI, and OpenCode discover it from the current working directory. Memory files (`.hmem`) will be created there automatically.
+
 Add to your `.mcp.json`:
 
 ```json
