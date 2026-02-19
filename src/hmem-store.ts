@@ -28,6 +28,8 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
+import type { HmemConfig } from "./hmem-config.js";
+import { DEFAULT_CONFIG } from "./hmem-config.js";
 
 // ---- Types ----
 
@@ -65,13 +67,14 @@ export interface MemoryNode {
 
 export interface ReadOptions {
   id?: string;
-  depth?: number;       // ignored for ID queries; 1-5 for bulk (default 1)
-  prefix?: string;      // "P", "L", "T", "E", "D", "M", "S"
-  after?: string;       // ISO date
-  before?: string;      // ISO date
-  search?: string;      // full-text search across all levels
-  limit?: number;       // max results, default 100
-  agentRole?: AgentRole; // filter by role clearance (company store)
+  depth?: number;             // ignored for ID queries; 1-5 for bulk (default 1)
+  prefix?: string;            // "P", "L", "T", "E", "D", "M", "S"
+  after?: string;             // ISO date
+  before?: string;            // ISO date
+  search?: string;            // full-text search across all levels
+  limit?: number;             // max results, default from config
+  agentRole?: AgentRole;      // filter by role clearance (company store)
+  recentChildrenCount?: number; // override: how many recent entries get L2 children inline
 }
 
 export interface WriteResult {
@@ -85,8 +88,7 @@ const ROLE_LEVEL: Record<AgentRole, number> = {
   worker: 0, al: 1, pl: 2, ceo: 3,
 };
 
-const MAX_NODE_CONTENT = 50_000;  // characters — hard cap for L2-L5
-const MAX_L1_CONTENT   = 500;     // characters — L1 must stay compact
+// (limits are now instance-level via this.cfg.maxCharsPerLevel)
 
 /** All roles that a given role may see (itself + below). */
 function allowedRoles(role: AgentRole): AgentRole[] {
@@ -145,9 +147,11 @@ const MIGRATIONS = [
 export class HmemStore {
   private db: Database.Database;
   private readonly dbPath: string;
+  private readonly cfg: HmemConfig;
 
-  constructor(hmemPath: string) {
+  constructor(hmemPath: string, config?: HmemConfig) {
     this.dbPath = hmemPath;
+    this.cfg = config ?? { ...DEFAULT_CONFIG };
     const dir = path.dirname(hmemPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
@@ -183,13 +187,16 @@ export class HmemStore {
     if (!level1) {
       throw new Error("Content must have at least one line (Level 1).");
     }
-    if (level1.length > MAX_L1_CONTENT) {
-      throw new Error(`Level 1 exceeds ${MAX_L1_CONTENT} character limit (${level1.length} chars). Keep L1 compact.`);
+    const l1Limit = this.cfg.maxCharsPerLevel[0];
+    if (level1.length > l1Limit) {
+      throw new Error(`Level 1 exceeds ${l1Limit} character limit (${level1.length} chars). Keep L1 compact.`);
     }
     for (const node of nodes) {
-      if (node.content.length > MAX_NODE_CONTENT) {
+      // depth 2-5 → index 1-4
+      const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(node.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
+      if (node.content.length > nodeLimit) {
         throw new Error(
-          `Node content at depth ${node.depth} exceeds ${MAX_NODE_CONTENT} character limit ` +
+          `L${node.depth} content exceeds ${nodeLimit} character limit ` +
           `(${node.content.length} chars). Split into multiple write_memory calls or use file references.`
         );
       }
@@ -230,7 +237,7 @@ export class HmemStore {
    * For bulk queries: returns L1 summaries (depth=1 default).
    */
   read(opts: ReadOptions = {}): MemoryEntry[] {
-    const limit = opts.limit || 100;
+    const limit = opts.limit || this.cfg.defaultReadLimit;
     const roleFilter = this.buildRoleFilter(opts.agentRole);
 
     // Single entry by ID (root or compound node)
@@ -323,7 +330,12 @@ export class HmemStore {
       for (const row of rows) this.bumpAccess(row.id);
     }
 
-    return rows.map(r => this.rowToEntry(r));
+    // Attach L2 children to the N most recent entries (recentChildrenCount)
+    const recentN = opts.recentChildrenCount ?? this.cfg.recentChildrenCount;
+    return rows.map((r, i) => {
+      const children = (recentN > 0 && i < recentN) ? this.fetchChildren(r.id) : undefined;
+      return this.rowToEntry(r, children);
+    });
   }
 
   /**
@@ -698,15 +710,15 @@ export function resolveHmemPath(projectDir: string, templateName: string): strin
 /**
  * Open (or create) an HmemStore for an agent's personal memory.
  */
-export function openAgentMemory(projectDir: string, templateName: string): HmemStore {
+export function openAgentMemory(projectDir: string, templateName: string, config?: HmemConfig): HmemStore {
   const hmemPath = resolveHmemPath(projectDir, templateName);
-  return new HmemStore(hmemPath);
+  return new HmemStore(hmemPath, config);
 }
 
 /**
  * Open (or create) the shared company knowledge store (FIRMENWISSEN.hmem).
  */
-export function openCompanyMemory(projectDir: string): HmemStore {
+export function openCompanyMemory(projectDir: string, config?: HmemConfig): HmemStore {
   const hmemPath = path.join(projectDir, "FIRMENWISSEN.hmem");
-  return new HmemStore(hmemPath);
+  return new HmemStore(hmemPath, config);
 }

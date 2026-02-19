@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy this file to your project root as hmem.config.json and adjust to taste.",
+
+  "maxL1Chars": 500,
+  "maxLnChars": 50000,
+
+  "_comment_limits": "Instead of maxL1Chars/maxLnChars you can set all levels explicitly:",
+  "_example_explicit": { "maxCharsPerLevel": [500, 5000, 15000, 30000, 50000] },
+
+  "maxDepth": 5,
+  "recentChildrenCount": 10,
+  "defaultReadLimit": 100
+}

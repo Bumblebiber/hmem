@@ -26,6 +26,7 @@ import { validateRequest } from "./json-parser.js";
 import { searchMemory } from "./memory-search.js";
 import { openAgentMemory, openCompanyMemory, resolveHmemPath, HmemStore } from "./hmem-store.js";
 import type { AgentRole, MemoryNode } from "./hmem-store.js";
+import { loadHmemConfig } from "./hmem-config.js";
 import type { AgentRequest, AgentCatalog, OrchestratorState } from "./types.js";
 
 // ---- Environment ----
@@ -58,6 +59,10 @@ try {
 function log(msg: string) {
   console.error(`[MCP:${AGENT_ID}] ${msg}`);
 }
+
+// Load hmem config (hmem.config.json in project dir, falls back to defaults)
+const hmemConfig = loadHmemConfig(PROJECT_DIR);
+log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth} recentChildren=${hmemConfig.recentChildrenCount}`);
 
 // Load catalog once at startup
 let catalog: AgentCatalog;
@@ -1061,8 +1066,8 @@ server.tool(
 
     try {
       const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR)
-        : openAgentMemory(PROJECT_DIR, templateName);
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
       try {
         const effectiveMinRole = storeName === "company" ? (minRole as AgentRole) : ("worker" as AgentRole);
         const result = hmemStore.write(prefix, content, links, effectiveMinRole);
@@ -1136,8 +1141,8 @@ server.tool(
 
     try {
       const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR)
-        : openAgentMemory(PROJECT_DIR, templateName);
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
       try {
         // Default depth: 2 for single-ID lookup, 1 for listings
         const effectiveDepth = depth || (id ? 2 : 1);
@@ -1324,7 +1329,7 @@ server.tool(
       };
     }
 
-    const store = new HmemStore(hmemPath);
+    const store = new HmemStore(hmemPath, hmemConfig);
     try {
       const entries = store.read({ depth: depth || 3, limit: 500 });
       const stats = store.stats();
@@ -1385,7 +1390,7 @@ server.tool(
       };
     }
 
-    const store = new HmemStore(hmemPath);
+    const store = new HmemStore(hmemPath, hmemConfig);
     try {
       const fields: any = {};
       if (level_1 !== undefined) fields.level_1 = level_1;
@@ -1435,7 +1440,7 @@ server.tool(
       };
     }
 
-    const store = new HmemStore(hmemPath);
+    const store = new HmemStore(hmemPath, hmemConfig);
     try {
       const ok = store.delete(entry_id);
       log(`delete_agent_memory [CURATOR]: ${agent_name} ${entry_id} → ${ok ? "deleted" : "not found"}`);
