@@ -682,7 +682,11 @@ export class HmemStore {
 // ---- Convenience: resolve .hmem path for an agent ----
 
 export function resolveHmemPath(projectDir: string, templateName: string): string {
-  // Check Agents/ first, then Assistenten/
+  // No agent name configured → use memory.hmem directly in project root
+  if (!templateName || templateName === "UNKNOWN") {
+    return path.join(projectDir, "memory.hmem");
+  }
+  // Named agent → Agents/NAME/NAME.hmem (check Assistenten/ as fallback)
   let agentDir = path.join(projectDir, "Agents", templateName);
   if (!fs.existsSync(agentDir)) {
     const alt = path.join(projectDir, "Assistenten", templateName);

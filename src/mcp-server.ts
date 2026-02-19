@@ -34,7 +34,8 @@ if (!PROJECT_DIR) {
   process.exit(1);
 }
 
-let AGENT_ID = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "UNKNOWN";
+// Empty string → resolveHmemPath uses memory.hmem (no agent name required)
+let AGENT_ID = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "";
 let DEPTH = parseInt(process.env.HMEM_DEPTH || process.env.COUNCIL_DEPTH || "0", 10);
 let ROLE = process.env.HMEM_AGENT_ROLE || process.env.COUNCIL_AGENT_ROLE || "worker";
 
@@ -1040,15 +1041,9 @@ server.tool(
     ),
   },
   async ({ prefix, content, links, store: storeName, min_role: minRole }) => {
-    if (AGENT_ID === "UNKNOWN") {
-      return {
-        content: [{ type: "text" as const, text: "ERROR: Agent-ID unknown. write_memory is only available for spawned agents." }],
-        isError: true,
-      };
-    }
-
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker") as AgentRole;
+    const isFirstTime = !AGENT_ID && !fs.existsSync(resolveHmemPath(PROJECT_DIR, ""));
 
     // Company store: only AL+ can write
     if (storeName === "company") {
@@ -1068,15 +1063,21 @@ server.tool(
       try {
         const effectiveMinRole = storeName === "company" ? (minRole as AgentRole) : ("worker" as AgentRole);
         const result = hmemStore.write(prefix, content, links, effectiveMinRole);
-        const storeLabel = storeName === "company" ? "FIRMENWISSEN" : templateName;
+        const storeLabel = storeName === "company" ? "FIRMENWISSEN" : (templateName || "memory");
         log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix}, min_role=${effectiveMinRole})`);
+
+        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+        const firstTimeNote = isFirstTime
+          ? `\nMemory store created: ${hmemPath}\nTo use a custom name, set HMEM_AGENT_ID in your .mcp.json.`
+          : "";
 
         return {
           content: [{
             type: "text" as const,
             text: `Memory saved: ${result.id} (${result.timestamp.substring(0, 19)})\n` +
               `Store: ${storeLabel} | Category: ${prefix}` +
-              (storeName === "company" ? ` | Clearance: ${effectiveMinRole}+` : ""),
+              (storeName === "company" ? ` | Clearance: ${effectiveMinRole}+` : "") +
+              firstTimeNote,
           }],
         };
       } finally {
