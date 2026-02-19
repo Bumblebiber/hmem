@@ -26,19 +26,17 @@ import type { AgentRole, MemoryNode } from "./hmem-store.js";
 import type { AgentRequest, AgentCatalog, OrchestratorState } from "./types.js";
 
 // ---- Environment ----
-const PROJECT_DIR = process.env.COUNCIL_PROJECT_DIR || "";
+// HMEM_* vars are the canonical names; COUNCIL_* kept for backwards compatibility
+const PROJECT_DIR = process.env.HMEM_PROJECT_DIR || process.env.COUNCIL_PROJECT_DIR || "";
 
 if (!PROJECT_DIR) {
-  console.error("FATAL: COUNCIL_PROJECT_DIR not set");
+  console.error("FATAL: HMEM_PROJECT_DIR not set");
   process.exit(1);
 }
 
-// Read Agent-ID and Depth from PID context (written by the Orchestrator)
-// The MCP server is a subprocess of Claude, Claude is a subprocess of the Orchestrator
-// process.ppid = Claude PID, Orchestrator writes .mcp_contexts/{claude_pid}.json
-let AGENT_ID = process.env.COUNCIL_AGENT_ID || "UNKNOWN";
-let DEPTH = parseInt(process.env.COUNCIL_DEPTH || "0", 10);
-let ROLE = process.env.COUNCIL_AGENT_ROLE || "worker";
+let AGENT_ID = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "UNKNOWN";
+let DEPTH = parseInt(process.env.HMEM_DEPTH || process.env.COUNCIL_DEPTH || "0", 10);
+let ROLE = process.env.HMEM_AGENT_ROLE || process.env.COUNCIL_AGENT_ROLE || "worker";
 
 const ppid = process.ppid;
 const ctxFile = path.join(PROJECT_DIR, "orchestrator", ".mcp_contexts", `${ppid}.json`);
