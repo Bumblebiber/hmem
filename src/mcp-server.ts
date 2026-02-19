@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /**
- * MCP Server for the Das Althing Orchestrator.
+ * hmem — Hierarchical Memory MCP Server.
  *
- * Runs as a stdio subprocess of each Claude Code agent.
- * Stateless — only reads/writes files (REQ_*.json, AGENT_CATALOG.json, output in agent CWD).
+ * Provides persistent, hierarchical memory for AI agents via MCP.
+ * Also bundles Das Althing orchestrator tools (spawn_agent, etc.) —
+ * these are inactive if you're not running the Das Althing orchestrator.
  *
- * Environment variables (set by the Orchestrator):
- *   COUNCIL_AGENT_ID         — ID of the calling agent
- *   COUNCIL_DEPTH            — Spawn depth of the calling agent
- *   COUNCIL_PROJECT_DIR      — Project directory
- *   COUNCIL_MAX_SPAWN_DEPTH  — Max spawn depth from config (default: 3)
+ * Environment variables:
+ *   HMEM_PROJECT_DIR         — Root directory where .hmem files are stored (required)
+ *   HMEM_AGENT_ID            — Agent identifier (optional; defaults to memory.hmem)
+ *   HMEM_AGENT_ROLE          — Role: worker | al | pl | ceo (default: worker)
+ *
+ * Legacy fallbacks (Das Althing):
+ *   COUNCIL_PROJECT_DIR, COUNCIL_AGENT_ID, COUNCIL_AGENT_ROLE
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -75,7 +78,7 @@ const validationLog = {
   debug: (_msg: string) => {},
 } as any;
 
-const MAX_SPAWN_DEPTH = parseInt(process.env.COUNCIL_MAX_SPAWN_DEPTH || "3", 10);
+const MAX_SPAWN_DEPTH = parseInt(process.env.HMEM_MAX_SPAWN_DEPTH || process.env.COUNCIL_MAX_SPAWN_DEPTH || "3", 10);
 
 // ---- Helper: Read agent.json for a template ----
 function readAgentJson(templateName: string): { model?: string; tool?: string } {
@@ -106,7 +109,7 @@ function readAgentJson(templateName: string): { model?: string; tool?: string } 
 
 // ---- Server ----
 const server = new McpServer({
-  name: "council-orchestrator",
+  name: "hmem",
   version: "1.0.0",
 });
 
