@@ -13,8 +13,10 @@ Execute these steps in order. Report results after all complete.
 
 ## Step 1 — Write Memory
 
-Review the session and write back anything not yet captured.
-Call `write_memory` for each meaningful insight:
+Your L1 memory summaries are already in your context (injected at session start).
+**Check them first** — do not re-write anything that already exists.
+
+Only write what is **new since the last `/save` or session start**:
 
 | Prefix | When to use |
 |--------|-------------|
@@ -23,7 +25,7 @@ Call `write_memory` for each meaningful insight:
 | `E` | Error patterns — root cause + fix |
 | `D` | Architectural or design decisions |
 
-Quality over quantity. Skip trivial or obvious things.
+Quality over quantity. Skip trivial things and anything already captured.
 
 **Example calls:**
 
