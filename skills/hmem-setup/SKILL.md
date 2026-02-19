@@ -98,28 +98,31 @@ Roles control what entries in the shared `FIRMENWISSEN` store are visible.
 
 ## Step 4 — Install Skill Files
 
-Skill files teach your AI tool how to use `read_memory` and `write_memory`.
-Copy both to the global skills directory for your tool:
+Skill files teach your AI tool how to use `read_memory`, `write_memory`, and `/save`.
+Copy them to the global skills directory for your tool:
 
 **Claude Code:**
 ```bash
-mkdir -p ~/.claude/skills/hmem-read ~/.claude/skills/hmem-write
+mkdir -p ~/.claude/skills/hmem-read ~/.claude/skills/hmem-write ~/.claude/skills/save
 cp /path/to/hmem/skills/hmem-read/SKILL.md ~/.claude/skills/hmem-read/SKILL.md
 cp /path/to/hmem/skills/hmem-write/SKILL.md ~/.claude/skills/hmem-write/SKILL.md
+cp /path/to/hmem/skills/save/SKILL.md ~/.claude/skills/save/SKILL.md
 ```
 
 **Gemini CLI:**
 ```bash
-mkdir -p ~/.gemini/skills/hmem-read ~/.gemini/skills/hmem-write
+mkdir -p ~/.gemini/skills/hmem-read ~/.gemini/skills/hmem-write ~/.gemini/skills/save
 cp /path/to/hmem/skills/hmem-read/SKILL.md ~/.gemini/skills/hmem-read/SKILL.md
 cp /path/to/hmem/skills/hmem-write/SKILL.md ~/.gemini/skills/hmem-write/SKILL.md
+cp /path/to/hmem/skills/save/SKILL.md ~/.gemini/skills/save/SKILL.md
 ```
 
 **OpenCode:**
 ```bash
-mkdir -p ~/.config/opencode/skills/hmem-read ~/.config/opencode/skills/hmem-write
+mkdir -p ~/.config/opencode/skills/hmem-read ~/.config/opencode/skills/hmem-write ~/.config/opencode/skills/save
 cp /path/to/hmem/skills/hmem-read/SKILL.md ~/.config/opencode/skills/hmem-read/SKILL.md
 cp /path/to/hmem/skills/hmem-write/SKILL.md ~/.config/opencode/skills/hmem-write/SKILL.md
+cp /path/to/hmem/skills/save/SKILL.md ~/.config/opencode/skills/save/SKILL.md
 ```
 
 ---
