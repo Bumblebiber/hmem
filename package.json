@@ -1,7 +1,7 @@
 {
   "name": "hmem",
   "version": "1.0.0",
-  "description": "Hierarchical memory for AI agents — MCP server with 5-level lazy-loaded SQLite memory",
+  "description": "Humanlike memory for AI agents — MCP server with 5-level lazy-loaded SQLite memory",
   "main": "dist/mcp-server.js",
   "scripts": {
     "build": "tsc",
@@ -12,7 +12,7 @@
   "engines": {
     "node": ">=18"
   },
-  "keywords": ["mcp", "ai", "memory", "agents", "llm", "sqlite", "hierarchical"],
+  "keywords": ["mcp", "ai", "memory", "agents", "llm", "sqlite", "humanlike", "hierarchical"],
   "license": "MIT",
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

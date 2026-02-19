@@ -1,5 +1,5 @@
 /**
- * Hierarchical Memory Store (.hmem)
+ * Humanlike Memory Store (.hmem)
  *
  * SQLite-based long-term memory for agents with true tree structure.
  * L1 summaries live in the `memories` table (injected at startup).

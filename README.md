@@ -1,11 +1,11 @@
-# hmem — Hierarchical Memory for AI Agents
+# hmem — Humanlike Memory for AI Agents
 
 > AI agents forget everything when a session ends. hmem changes that.
 
 > **Beta:** hmem is functional and actively used in production, but APIs and file formats
 > may still change. Feedback and bug reports welcome.
 
-**hmem** is a Model Context Protocol (MCP) server that gives AI agents persistent, hierarchical memory — modeled after how human memory actually works.
+**hmem** is a Model Context Protocol (MCP) server that gives AI agents persistent, humanlike memory — modeled after how human memory actually works.
 
 Born as a side project of a multi-agent AI system, hmem solves a real problem: when you work across multiple machines or sessions, your AI instances start from zero every time. They duplicate work, contradict previous decisions, and lose hard-won context.
 
@@ -21,7 +21,7 @@ Existing RAG solutions are flat — every memory fragment has the same abstracti
 
 ---
 
-## The Solution: 5-Level Hierarchical Memory
+## The Solution: 5-Level Humanlike Memory
 
 hmem stores and retrieves memory in five nested levels of detail — mirroring how human memory works.
 

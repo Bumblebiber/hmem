@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * hmem — Hierarchical Memory MCP Server.
+ * hmem — Humanlike Memory MCP Server.
  *
- * Provides persistent, hierarchical memory for AI agents via MCP.
+ * Provides persistent, humanlike memory for AI agents via MCP.
  * Also bundles Das Althing orchestrator tools (spawn_agent, etc.) —
  * these are inactive if you're not running the Das Althing orchestrator.
  *
@@ -1006,7 +1006,7 @@ server.tool(
   }
 );
 
-// ---- Hierarchical Memory (.hmem) ----
+// ---- Humanlike Memory (.hmem) ----
 
 server.tool(
   "write_memory",

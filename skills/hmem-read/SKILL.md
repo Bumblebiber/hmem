@@ -1,6 +1,6 @@
 ---
 name: hmem-read
-description: Hierarchical Memory lesen — Lazy Loading Protocol fuer read_memory und search_memory.
+description: Humanlike Memory lesen — Lazy Loading Protocol fuer read_memory und search_memory.
   Verwende diesen Skill wann immer du read_memory oder search_memory aufrufst.
 ---
 

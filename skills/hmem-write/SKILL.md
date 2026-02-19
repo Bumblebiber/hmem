@@ -1,6 +1,6 @@
 ---
 name: hmem-write
-description: Hierarchical Memory schreiben — write_memory Syntax, Praefixe, Qualitaetsregeln.
+description: Humanlike Memory schreiben — write_memory Syntax, Praefixe, Qualitaetsregeln.
   Verwende diesen Skill wann immer du write_memory aufrufst.
 ---
 
