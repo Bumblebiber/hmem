@@ -122,26 +122,29 @@ Skill files teach your AI tool how to use hmem correctly. Copy them to your tool
 
 **Claude Code:**
 ```bash
-mkdir -p ~/.claude/skills/hmem-read ~/.claude/skills/hmem-write ~/.claude/skills/save
+mkdir -p ~/.claude/skills/hmem-read ~/.claude/skills/hmem-write ~/.claude/skills/save ~/.claude/skills/memory-curate
 cp skills/hmem-read/SKILL.md ~/.claude/skills/hmem-read/SKILL.md
 cp skills/hmem-write/SKILL.md ~/.claude/skills/hmem-write/SKILL.md
 cp skills/save/SKILL.md ~/.claude/skills/save/SKILL.md
+cp skills/memory-curate/SKILL.md ~/.claude/skills/memory-curate/SKILL.md
 ```
 
 **Gemini CLI:**
 ```bash
-mkdir -p ~/.gemini/skills/hmem-read ~/.gemini/skills/hmem-write ~/.gemini/skills/save
+mkdir -p ~/.gemini/skills/hmem-read ~/.gemini/skills/hmem-write ~/.gemini/skills/save ~/.gemini/skills/memory-curate
 cp skills/hmem-read/SKILL.md ~/.gemini/skills/hmem-read/SKILL.md
 cp skills/hmem-write/SKILL.md ~/.gemini/skills/hmem-write/SKILL.md
 cp skills/save/SKILL.md ~/.gemini/skills/save/SKILL.md
+cp skills/memory-curate/SKILL.md ~/.gemini/skills/memory-curate/SKILL.md
 ```
 
 **OpenCode:**
 ```bash
-mkdir -p ~/.config/opencode/skills/hmem-read ~/.config/opencode/skills/hmem-write ~/.config/opencode/skills/save
+mkdir -p ~/.config/opencode/skills/hmem-read ~/.config/opencode/skills/hmem-write ~/.config/opencode/skills/save ~/.config/opencode/skills/memory-curate
 cp skills/hmem-read/SKILL.md ~/.config/opencode/skills/hmem-read/SKILL.md
 cp skills/hmem-write/SKILL.md ~/.config/opencode/skills/hmem-write/SKILL.md
 cp skills/save/SKILL.md ~/.config/opencode/skills/save/SKILL.md
+cp skills/memory-curate/SKILL.md ~/.config/opencode/skills/memory-curate/SKILL.md
 ```
 
 ---
