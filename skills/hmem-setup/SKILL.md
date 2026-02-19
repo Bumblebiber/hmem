@@ -130,7 +130,43 @@ cp /path/to/hmem/skills/memory-curate/SKILL.md ~/.config/opencode/skills/memory-
 
 ---
 
-## Step 5 — Verify
+## Step 5 — Optional: hmem.config.json
+
+Place `hmem.config.json` in your `HMEM_PROJECT_DIR` to customize behavior. All keys are optional.
+
+```json
+{
+  "maxL1Chars": 500,
+  "maxLnChars": 50000,
+  "maxDepth": 5,
+  "defaultReadLimit": 100,
+  "recentDepthTiers": [
+    { "count": 10, "depth": 2 },
+    { "count": 3,  "depth": 3 }
+  ]
+}
+```
+
+**Character limits** — two options:
+- `"maxL1Chars"` + `"maxLnChars"`: set endpoints only, intermediate levels interpolated linearly
+- `"maxCharsPerLevel"`: explicit array `[L1, L2, L3, L4, L5]`
+
+**Recency gradient** (`recentDepthTiers`): controls how deeply children are inlined for recent entries in a default `read_memory()` call.
+
+Each tier is `{ "count": N, "depth": D }` — the N most recent entries get children inlined up to depth D. The highest applicable depth wins.
+
+Default behavior:
+| Entry position | What you see |
+|---|---|
+| 0–2 (most recent) | L1 + L2 + L3 |
+| 3–9 | L1 + L2 |
+| 10+ | L1 only |
+
+Set to `[]` to disable (L1-only for all entries).
+
+---
+
+## Step 6 — Verify
 
 **Fully restart** your AI tool (exit and reopen — `/clear` is not enough).
 Then call:

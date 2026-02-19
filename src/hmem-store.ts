@@ -28,8 +28,8 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
-import type { HmemConfig } from "./hmem-config.js";
-import { DEFAULT_CONFIG } from "./hmem-config.js";
+import type { HmemConfig, DepthTier } from "./hmem-config.js";
+import { DEFAULT_CONFIG, resolveDepthForPosition } from "./hmem-config.js";
 
 // ---- Types ----
 
@@ -62,7 +62,8 @@ export interface MemoryNode {
   created_at: string;
   access_count: number;
   last_accessed: string | null;
-  child_count?: number; // populated when fetching children
+  child_count?: number;     // populated when fetching children
+  children?: MemoryNode[];  // populated when fetching with depth > 1
 }
 
 export interface ReadOptions {
@@ -74,7 +75,7 @@ export interface ReadOptions {
   search?: string;            // full-text search across all levels
   limit?: number;             // max results, default from config
   agentRole?: AgentRole;      // filter by role clearance (company store)
-  recentChildrenCount?: number; // override: how many recent entries get L2 children inline
+  recentDepthTiers?: import("./hmem-config.js").DepthTier[]; // override recency tiers
 }
 
 export interface WriteResult {
@@ -330,10 +331,11 @@ export class HmemStore {
       for (const row of rows) this.bumpAccess(row.id);
     }
 
-    // Attach L2 children to the N most recent entries (recentChildrenCount)
-    const recentN = opts.recentChildrenCount ?? this.cfg.recentChildrenCount;
+    // Recency gradient: inline children up to the tier-resolved depth for recent entries
+    const tiers: DepthTier[] = opts.recentDepthTiers ?? this.cfg.recentDepthTiers;
     return rows.map((r, i) => {
-      const children = (recentN > 0 && i < recentN) ? this.fetchChildren(r.id) : undefined;
+      const depth = resolveDepthForPosition(i, tiers);
+      const children = depth >= 2 ? this.fetchChildrenDeep(r.id, 2, depth) : undefined;
       return this.rowToEntry(r, children);
     });
   }
@@ -548,6 +550,15 @@ export class HmemStore {
 
   /** Fetch direct children of a node (root or compound), including their grandchild counts. */
   private fetchChildren(parentId: string): MemoryNode[] {
+    return this.fetchChildrenDeep(parentId, 2, 2);
+  }
+
+  /**
+   * Fetch children recursively up to maxDepth.
+   * currentDepth: the depth level of the children being fetched (2 = L2, 3 = L3, …)
+   * maxDepth: stop recursing when currentDepth > maxDepth
+   */
+  private fetchChildrenDeep(parentId: string, currentDepth: number, maxDepth: number): MemoryNode[] {
     const rows = this.db.prepare(
       "SELECT * FROM memory_nodes WHERE parent_id = ? ORDER BY seq"
     ).all(parentId) as any[];
@@ -556,7 +567,11 @@ export class HmemStore {
       const childCount = (this.db.prepare(
         "SELECT COUNT(*) as c FROM memory_nodes WHERE parent_id = ?"
       ).get(r.id) as any).c;
-      return this.rowToNode(r, childCount);
+      const node = this.rowToNode(r, childCount);
+      if (currentDepth < maxDepth && childCount > 0) {
+        node.children = this.fetchChildrenDeep(r.id, currentDepth + 1, maxDepth);
+      }
+      return node;
     });
   }
 

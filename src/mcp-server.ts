@@ -62,7 +62,7 @@ function log(msg: string) {
 
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
-log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth} recentChildren=${hmemConfig.recentChildrenCount}`);
+log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth} tiers=${JSON.stringify(hmemConfig.recentDepthTiers)}`);
 
 // Load catalog once at startup
 let catalog: AgentCatalog;

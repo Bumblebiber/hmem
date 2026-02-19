@@ -189,6 +189,69 @@ These will be split into a separate package in a future release.
 
 ---
 
+## Configuration (hmem.config.json)
+
+Place an optional `hmem.config.json` in your `HMEM_PROJECT_DIR` to tune behavior. All keys are optional — missing keys fall back to defaults.
+
+```json
+{
+  "maxL1Chars": 500,
+  "maxLnChars": 50000,
+  "maxDepth": 5,
+  "defaultReadLimit": 100,
+  "recentDepthTiers": [
+    { "count": 10, "depth": 2 },
+    { "count": 3,  "depth": 3 }
+  ]
+}
+```
+
+### Character limits
+
+Two ways to set per-level character limits:
+
+**Option A — linear interpolation** (recommended): set only the endpoints; all levels in between are computed automatically.
+
+```json
+{ "maxL1Chars": 500, "maxLnChars": 50000 }
+```
+
+With 5 depth levels this yields: `[500, 13250, 26000, 38750, 50000]`
+
+**Option B — explicit per-level array**: set each level individually. If fewer entries than `maxDepth`, the last value is repeated.
+
+```json
+{ "maxCharsPerLevel": [500, 5000, 15000, 30000, 50000] }
+```
+
+### Recency gradient (`recentDepthTiers`)
+
+Controls how deep children are inlined for the most recent entries in a default `read_memory()` call. Each tier is `{ count, depth }`: the *count* most recent entries get children inlined up to *depth*.
+
+Tiers are cumulative — the **highest applicable depth wins** for each entry position.
+
+```json
+"recentDepthTiers": [
+  { "count": 3,  "depth": 3 },   // last 3 entries  → L1 + L2 + L3
+  { "count": 10, "depth": 2 }    // last 10 entries → L1 + L2
+]
+```
+
+Result:
+| Entry position | Depth inlined |
+|---|---|
+| 0–2 (most recent) | L1 + L2 + L3 |
+| 3–9 | L1 + L2 |
+| 10+ | L1 only |
+
+This mirrors how human memory works: you remember today's events in full detail, last week's in outline, older ones only as headlines.
+
+Set to `[]` to disable recency inlining (L1-only for all entries, same as before v1.1).
+
+**Backward compat:** The old `"recentChildrenCount": N` key is still accepted and treated as `[{ "count": N, "depth": 2 }]`.
+
+---
+
 ## Origin
 
 hmem was developed out of necessity: working on a large AI project across multiple machines meant every new Claude Code session started blind. Agents redid work, lost decisions, and contradicted each other.
