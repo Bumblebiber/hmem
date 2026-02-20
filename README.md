@@ -84,6 +84,8 @@ A dedicated curator agent runs periodically to maintain memory health. It tracks
 
 ## Quick Start
 
+### 1. Build
+
 ```bash
 git clone https://github.com/Bumblebiber/hmem.git
 cd hmem
@@ -91,7 +93,42 @@ npm install
 npm run build
 ```
 
-Place `.mcp.json` in the directory where you open your terminal or IDE — Claude Code, Gemini CLI, and OpenCode discover it from the current working directory.
+### 2. Verify the server starts
+
+Before connecting to your AI tool, test the server directly:
+
+```bash
+# Linux / macOS
+HMEM_PROJECT_DIR="/absolute/path/to/hmem" node dist/mcp-server.js
+
+# Windows (PowerShell)
+$env:HMEM_PROJECT_DIR="C:\path\to\hmem"; node dist\mcp-server.js
+```
+
+Expected output: `[MCP:...] Config: levels=[120,...] depth=5 ...` — then the process waits (that's correct, it's listening on stdio).
+Press `Ctrl+C` to stop.
+
+If you see an error here, fix it before proceeding to step 3.
+
+### 3. Register the MCP server
+
+Choose the method for your AI tool:
+
+---
+
+**Claude Code** — global registration (works in any directory):
+
+```bash
+claude mcp add hmem -s user node "/absolute/path/to/hmem/dist/mcp-server.js" \
+  --env HMEM_PROJECT_DIR="/absolute/path/to/hmem" \
+  --env HMEM_AGENT_ID="YOUR_AGENT_NAME"
+```
+
+> **Windows note:** If your path contains spaces (e.g. `C:\My Documents\...`), verify the entry in `~/.claude.json` after running this command — Claude Code may store the path incorrectly. Open the file and ensure the path uses double backslashes: `"C:\\My Documents\\hmem\\dist\\mcp-server.js"`. Fix manually if needed.
+
+---
+
+**Gemini CLI / OpenCode** — place `.mcp.json` in your project directory:
 
 ```json
 {
@@ -101,24 +138,23 @@ Place `.mcp.json` in the directory where you open your terminal or IDE — Claud
       "command": "node",
       "args": ["/absolute/path/to/hmem/dist/mcp-server.js"],
       "env": {
-        "HMEM_PROJECT_DIR": "/absolute/path/to/your/project"
+        "HMEM_PROJECT_DIR": "/absolute/path/to/hmem",
+        "HMEM_AGENT_ID": "YOUR_AGENT_NAME"
       }
     }
   }
 }
 ```
 
-**All paths must be absolute.** `HMEM_AGENT_ID` is optional — if not set, memories are stored in `memory.hmem` at the project root.
+`HMEM_AGENT_ID` is optional — if not set, memories are stored in `memory.hmem` at the project root.
 
-Fully restart your AI tool after adding `.mcp.json`, then call `read_memory()` to verify.
+---
 
-> **Tip — Global registration (recommended on Windows):** Instead of placing `.mcp.json` in a project directory, register hmem globally so it's available in every Claude Code session regardless of working directory:
-> ```bash
-> claude mcp add hmem node "/absolute/path/to/hmem/dist/mcp-server.js" \
->   --env HMEM_PROJECT_DIR="/absolute/path/to/hmem" \
->   --env HMEM_AGENT_ID="YOUR_AGENT_NAME"
-> ```
-> On Windows, use forward slashes or escaped backslashes in the path. Restart Claude Code after running this command.
+### 4. Verify the connection
+
+Fully restart your AI tool, then run `/hmem-read` (after installing skill files below) or call `read_memory()` directly. You should see a memory listing (empty on first run is fine).
+
+If the tool is not available, run `/mcp` in Claude Code to check the server status.
 
 For complete setup instructions, run `/hmem-setup` in your AI tool (after installing the skill files below).
 
@@ -205,7 +241,7 @@ Place an optional `hmem.config.json` in your `HMEM_PROJECT_DIR` to tune behavior
 
 ```json
 {
-  "maxL1Chars": 500,
+  "maxL1Chars": 120,
   "maxLnChars": 50000,
   "maxDepth": 5,
   "defaultReadLimit": 100,
@@ -223,15 +259,15 @@ Two ways to set per-level character limits:
 **Option A — linear interpolation** (recommended): set only the endpoints; all levels in between are computed automatically.
 
 ```json
-{ "maxL1Chars": 500, "maxLnChars": 50000 }
+{ "maxL1Chars": 120, "maxLnChars": 50000 }
 ```
 
-With 5 depth levels this yields: `[500, 13250, 26000, 38750, 50000]`
+With 5 depth levels this yields: `[120, 12780, 25440, 38120, 50000]`
 
 **Option B — explicit per-level array**: set each level individually. If fewer entries than `maxDepth`, the last value is repeated.
 
 ```json
-{ "maxCharsPerLevel": [500, 5000, 15000, 30000, 50000] }
+{ "maxCharsPerLevel": [120, 2500, 10000, 25000, 50000] }
 ```
 
 ### Recency gradient (`recentDepthTiers`)
