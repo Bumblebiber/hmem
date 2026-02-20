@@ -54,7 +54,8 @@ git push
 
 Skip if there are no changes or no git repo.
 
-## Step 3 — Compact
+## Step 3 — Compact (Claude only)
 
-Run `/compact` to compress the conversation context.
-The next interaction starts fresh with your updated memories already loaded.
+If you are running on **Claude** (Claude Code, claude.ai): run `/compact` to compress the conversation context. The next interaction starts fresh with your updated memories already loaded.
+
+If you are running on **Gemini CLI, OpenCode, or another tool**: skip this step — `/compact` is a Claude-specific command.
