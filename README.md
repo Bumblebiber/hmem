@@ -112,6 +112,14 @@ Place `.mcp.json` in the directory where you open your terminal or IDE — Claud
 
 Fully restart your AI tool after adding `.mcp.json`, then call `read_memory()` to verify.
 
+> **Tip — Global registration (recommended on Windows):** Instead of placing `.mcp.json` in a project directory, register hmem globally so it's available in every Claude Code session regardless of working directory:
+> ```bash
+> claude mcp add hmem node "/absolute/path/to/hmem/dist/mcp-server.js" \
+>   --env HMEM_PROJECT_DIR="/absolute/path/to/hmem" \
+>   --env HMEM_AGENT_ID="YOUR_AGENT_NAME"
+> ```
+> On Windows, use forward slashes or escaped backslashes in the path. Restart Claude Code after running this command.
+
 For complete setup instructions, run `/hmem-setup` in your AI tool (after installing the skill files below).
 
 ---
