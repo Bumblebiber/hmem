@@ -120,6 +120,8 @@ For complete setup instructions, run `/hmem-setup` in your AI tool (after instal
 
 Skill files teach your AI tool how to use hmem correctly. Copy them to your tool's global skills directory:
 
+> **After copying skills, fully restart your terminal and AI tool** — skills are loaded at startup and won't appear in a running session.
+
 **Claude Code:**
 ```bash
 mkdir -p ~/.claude/skills/hmem-read ~/.claude/skills/hmem-write ~/.claude/skills/save ~/.claude/skills/memory-curate
