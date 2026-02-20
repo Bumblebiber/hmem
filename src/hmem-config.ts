@@ -65,7 +65,7 @@ export interface HmemConfig {
 }
 
 export const DEFAULT_CONFIG: HmemConfig = {
-  maxCharsPerLevel: [500, 2_500, 10_000, 25_000, 50_000],
+  maxCharsPerLevel: [120, 2_500, 10_000, 25_000, 50_000],
   maxDepth: 5,
   recentDepthTiers: [
     { count: 10, depth: 2 },
