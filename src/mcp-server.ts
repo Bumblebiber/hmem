@@ -64,14 +64,13 @@ function log(msg: string) {
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
 log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth} tiers=${JSON.stringify(hmemConfig.recentDepthTiers)}`);
 
-// Load catalog once at startup
-let catalog: AgentCatalog;
+// Load catalog once at startup (optional — Althing orchestrator tools inactive if not found)
+let catalog: AgentCatalog = {};
 try {
   catalog = loadCatalog(PROJECT_DIR);
   log(`Catalog loaded: ${Object.keys(catalog).length} templates`);
-} catch (e) {
-  console.error(`FATAL: Cannot load catalog: ${e}`);
-  process.exit(1);
+} catch {
+  log("No AGENT_CATALOG.json found — Das Althing orchestrator tools inactive (standalone hmem mode)");
 }
 
 // Logger stub for validateRequest()
