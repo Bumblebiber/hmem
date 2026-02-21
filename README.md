@@ -87,7 +87,7 @@ A dedicated curator agent runs periodically to maintain memory health. It tracks
 ### Option A: Install from npm (Recommended)
 
 ```bash
-npx hmem init
+npx hmem-mcp init
 ```
 
 That's it. The interactive installer will:
@@ -114,7 +114,7 @@ If you prefer to configure everything yourself:
 #### 1. Install
 
 ```bash
-npm install -g hmem
+npm install -g hmem-mcp
 ```
 
 Or from source: `git clone https://github.com/Bumblebiber/hmem.git && cd hmem && npm install && npm run build`
@@ -124,7 +124,7 @@ Or from source: `git clone https://github.com/Bumblebiber/hmem.git && cd hmem &&
 **Claude Code** — global registration:
 
 ```bash
-claude mcp add hmem -s user -- npx hmem serve \
+claude mcp add hmem -s user -- npx hmem-mcp serve \
   --env HMEM_PROJECT_DIR="$HOME/.hmem"
 ```
 
