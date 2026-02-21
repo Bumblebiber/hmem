@@ -13,6 +13,10 @@ Execute these steps in order. Report results after all complete.
 
 ## Step 1 — Write Memory
 
+**IMPORTANT:** You MUST use the `write_memory` MCP tool. NEVER write directly to `.hmem` files via sqlite3 or shell commands — this bypasses WAL journaling, integrity checks, and tree logic, causing corruption or data loss.
+
+If `write_memory` is not available, **STOP and tell the user** to reconnect the MCP server first (Claude Code: `/mcp` → reconnect; other tools: restart the tool). Do NOT proceed without a working MCP connection.
+
 Your L1 memory summaries are already in your context (injected at session start).
 **Check them first** — do not re-write anything that already exists.
 

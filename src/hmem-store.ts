@@ -83,7 +83,7 @@ export interface WriteResult {
   timestamp: string;
 }
 
-const VALID_PREFIXES = new Set(["P", "L", "T", "E", "D", "M", "F", "S"]);
+// Prefixes are now loaded from config — see this.cfg.prefixes
 
 const ROLE_LEVEL: Record<AgentRole, number> = {
   worker: 0, al: 1, pl: 2, ceo: 3,
@@ -197,8 +197,9 @@ export class HmemStore {
    */
   write(prefix: string, content: string, links?: string[], minRole: AgentRole = "worker"): WriteResult {
     prefix = prefix.toUpperCase();
-    if (!VALID_PREFIXES.has(prefix)) {
-      throw new Error(`Invalid prefix "${prefix}". Valid: ${[...VALID_PREFIXES].join(", ")}`);
+    if (!this.cfg.prefixes[prefix]) {
+      const valid = Object.entries(this.cfg.prefixes).map(([k, v]) => `${k}=${v}`).join(", ");
+      throw new Error(`Invalid prefix "${prefix}". Valid: ${valid}`);
     }
 
     // Determine root ID first so parseTree can use it directly
@@ -355,9 +356,11 @@ export class HmemStore {
     }
 
     // Recency gradient: inline children up to the tier-resolved depth for recent entries
+    // Favorites (F) are always pinned at depth 2 minimum, regardless of recency position
     const tiers: DepthTier[] = opts.recentDepthTiers ?? this.cfg.recentDepthTiers;
     return rows.map((r, i) => {
-      const depth = resolveDepthForPosition(i, tiers);
+      let depth = resolveDepthForPosition(i, tiers);
+      if (r.prefix === "F" && depth < 2) depth = 2;
       const children = depth >= 2 ? this.fetchChildrenDeep(r.id, 2, depth) : undefined;
       return this.rowToEntry(r, children);
     });
@@ -397,15 +400,11 @@ export class HmemStore {
     md += `> ${rows.length} entries\n\n`;
 
     let currentPrefix = "";
-    const prefixNames: Record<string, string> = {
-      P: "Projects", L: "Lessons Learned", T: "Tasks",
-      E: "Errors", D: "Decisions", M: "Milestones", F: "Favorites", S: "Skills",
-    };
 
     for (const row of rows) {
       if (row.prefix !== currentPrefix) {
         currentPrefix = row.prefix;
-        md += `---\n\n## ${prefixNames[currentPrefix] || currentPrefix}\n\n`;
+        md += `---\n\n## ${this.cfg.prefixes[currentPrefix] || currentPrefix}\n\n`;
       }
 
       const date = row.created_at.substring(0, 10);

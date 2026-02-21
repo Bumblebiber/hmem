@@ -8,8 +8,9 @@ description: How to write long-term memories. Follow these rules whenever you ca
 When you need to save a lesson, error, decision, or project insight to long-term memory,
 call the MCP tool `write_memory` following these rules.
 
-If the tool `write_memory` is not available, tell the user:
-"write_memory tool not found. Run `hmem init` to configure the MCP server."
+If the tool `write_memory` is not available:
+1. Tell the user: "write_memory tool not found. Please reconnect the MCP server (in Claude Code: `/mcp`, in other tools: restart the tool)."
+2. **NEVER write directly to the .hmem SQLite file via shell commands.** The database has WAL journaling, integrity checks, and tree-structure logic that raw SQL INSERT will bypass — causing corruption or data loss.
 
 ---
 
@@ -38,7 +39,7 @@ write_memory(
 | **T** | Task | Task notes, work progress |
 | **M** | Milestone | Key milestones, releases |
 | **S** | Skill | Skills, processes, how-to guides |
-| **F** | Favorite | Frequently needed reference info |
+| **F** | Favorite | Frequently needed reference info (always loaded with L2 detail) |
 
 ---
 
@@ -76,6 +77,8 @@ write_memory(
 
 One `write_memory` call per category — entire hierarchy in one `content` string.
 
+**Custom prefixes:** Additional prefixes can be added in `hmem.config.json` under the `"prefixes"` key (e.g. `"R": "Research"`).
+
 ---
 
 ## Anti-Patterns
@@ -87,3 +90,5 @@ One `write_memory` call per category — entire hierarchy in one `content` strin
 | Everything flat, no indentation | Use hierarchy — L2/L3 for details |
 | Save trivial things | Quality over quantity |
 | Forget to write_memory | Always call BEFORE setting Status: Completed |
+| Write to .hmem via sqlite3/SQL | ONLY use `write_memory` MCP tool — never raw SQL |
+| MCP unavailable → skip saving | Reconnect MCP first (`/mcp` or restart tool) |

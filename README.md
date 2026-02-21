@@ -288,9 +288,37 @@ Place an optional `hmem.config.json` in your `HMEM_PROJECT_DIR` to tune behavior
   "recentDepthTiers": [
     { "count": 10, "depth": 2 },
     { "count": 3,  "depth": 3 }
-  ]
+  ],
+  "prefixes": {
+    "P": "Project",
+    "L": "Lesson",
+    "T": "Task",
+    "E": "Error",
+    "D": "Decision",
+    "M": "Milestone",
+    "S": "Skill",
+    "F": "Favorite"
+  }
 }
 ```
+
+### Custom prefixes
+
+The default prefixes (P, L, T, E, D, M, S, F) cover most use cases. To add your own, add entries to the `"prefixes"` key:
+
+```json
+{
+  "prefixes": {
+    "R": "Research",
+    "B": "Bookmark",
+    "Q": "Question"
+  }
+}
+```
+
+Custom prefixes are **merged** with the defaults — you don't need to repeat the built-in ones. After adding prefixes, restart your AI tool so the MCP server picks up the new config.
+
+**Note:** Favorites (F) are special — they are always loaded with L2 detail, regardless of recency position.
 
 ### Character limits
 

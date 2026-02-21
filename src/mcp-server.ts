@@ -23,7 +23,7 @@ import path from "node:path";
 import { searchMemory } from "./memory-search.js";
 import { openAgentMemory, openCompanyMemory, resolveHmemPath, HmemStore } from "./hmem-store.js";
 import type { AgentRole, MemoryNode } from "./hmem-store.js";
-import { loadHmemConfig } from "./hmem-config.js";
+import { loadHmemConfig, formatPrefixList } from "./hmem-config.js";
 
 // ---- Environment ----
 // HMEM_* vars are the canonical names; COUNCIL_* kept for backwards compatibility
@@ -134,6 +134,9 @@ server.tool(
 
 // ---- Humanlike Memory (.hmem) ----
 
+const prefixList = formatPrefixList(hmemConfig.prefixes);
+const prefixKeys = Object.keys(hmemConfig.prefixes);
+
 server.tool(
   "write_memory",
   "Write a new memory entry to your hierarchical long-term memory (.hmem). " +
@@ -144,13 +147,13 @@ server.tool(
     "  Level 4: 3 tabs — fine-grained detail\n" +
     "  Level 5: 4 tabs — raw context/data\n" +
     "The system auto-assigns an ID and timestamp. " +
-    "Use prefix to categorize: P=Project, L=Lesson, T=Task, E=Error, D=Decision, M=Milestone, F=Favorite, S=Skill.\n\n" +
+    `Use prefix to categorize: ${prefixList}.\n\n` +
     "Store types:\n" +
     "  personal (default): Your private memory\n" +
     "  company: Shared knowledge base (FIRMENWISSEN) — requires AL+ role to write",
   {
-    prefix: z.enum(["P", "L", "T", "E", "D", "M", "F", "S"]).describe(
-      "Memory category: P=Project, L=Lesson, T=Task, E=Error, D=Decision, M=Milestone, F=Favorite, S=Skill"
+    prefix: z.string().toUpperCase().describe(
+      `Memory category: ${prefixList}`
     ),
     content: z.string().min(3).describe(
       "The memory content. Use tab indentation for depth levels. Example:\n" +
@@ -252,7 +255,7 @@ server.tool(
   {
     id: z.string().optional().describe("Specific memory ID, e.g. 'P0001' or 'L0023'"),
     depth: z.number().min(1).max(3).optional().describe("How deep to read (1-3). Default: 2 when reading by ID, 1 for listings. L4/L5 accessible via direct node ID only."),
-    prefix: z.string().optional().describe("Filter by category: P, L, T, E, D, M, F, or S"),
+    prefix: z.string().optional().describe(`Filter by category: ${prefixKeys.join(", ")}`),
     after: z.string().optional().describe("Only entries after this date (ISO format, e.g. '2026-02-15')"),
     before: z.string().optional().describe("Only entries before this date (ISO format)"),
     search: z.string().optional().describe("Full-text search across all memory levels"),

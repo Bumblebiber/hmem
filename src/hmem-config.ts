@@ -62,7 +62,24 @@ export interface HmemConfig {
   recentDepthTiers: DepthTier[];
   /** Max entries returned by a default bulk read(). Default: 100 */
   defaultReadLimit: number;
+  /**
+   * Memory category prefixes. Keys are single uppercase letters, values are human-readable names.
+   * Default: P=Project, L=Lesson, T=Task, E=Error, D=Decision, M=Milestone, S=Skill, F=Favorite.
+   * Users can add custom prefixes (e.g. "R": "Research") in hmem.config.json.
+   */
+  prefixes: Record<string, string>;
 }
+
+export const DEFAULT_PREFIXES: Record<string, string> = {
+  P: "Project",
+  L: "Lesson",
+  T: "Task",
+  E: "Error",
+  D: "Decision",
+  M: "Milestone",
+  S: "Skill",
+  F: "Favorite",
+};
 
 export const DEFAULT_CONFIG: HmemConfig = {
   maxCharsPerLevel: [120, 2_500, 10_000, 25_000, 50_000],
@@ -72,7 +89,15 @@ export const DEFAULT_CONFIG: HmemConfig = {
     { count: 3,  depth: 3 },
   ],
   defaultReadLimit: 100,
+  prefixes: { ...DEFAULT_PREFIXES },
 };
+
+/**
+ * Format prefix map as "P=Project, L=Lesson, ..." for tool descriptions.
+ */
+export function formatPrefixList(prefixes: Record<string, string>): string {
+  return Object.entries(prefixes).map(([k, v]) => `${k}=${v}`).join(", ");
+}
 
 /**
  * Compute a linearly interpolated char-limit array between l1 and ln for `depth` levels.
@@ -106,7 +131,7 @@ export function resolveDepthForPosition(i: number, tiers: DepthTier[]): number {
 export function loadHmemConfig(projectDir: string): HmemConfig {
   const configPath = path.join(projectDir, "hmem.config.json");
   if (!fs.existsSync(configPath)) {
-    return { ...DEFAULT_CONFIG, recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers] };
+    return { ...DEFAULT_CONFIG, recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers], prefixes: { ...DEFAULT_PREFIXES } };
   }
 
   try {
@@ -136,6 +161,17 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
         : [];
     }
 
+    // Prefixes: merge user-defined with defaults (user can override or add)
+    if (raw.prefixes && typeof raw.prefixes === "object" && !Array.isArray(raw.prefixes)) {
+      const merged = { ...DEFAULT_PREFIXES };
+      for (const [key, val] of Object.entries(raw.prefixes)) {
+        if (typeof key === "string" && /^[A-Z]$/.test(key) && typeof val === "string" && val.length > 0) {
+          merged[key] = val;
+        }
+      }
+      cfg.prefixes = merged;
+    }
+
     // Resolve char limits: explicit array > linear endpoints > default
     if (Array.isArray(raw.maxCharsPerLevel) && raw.maxCharsPerLevel.length >= 1) {
       const levels = raw.maxCharsPerLevel as number[];
@@ -159,6 +195,6 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     return cfg;
   } catch (e) {
     console.error(`[hmem] Failed to parse hmem.config.json: ${e}. Using defaults.`);
-    return { ...DEFAULT_CONFIG, recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers] };
+    return { ...DEFAULT_CONFIG, recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers], prefixes: { ...DEFAULT_PREFIXES } };
   }
 }

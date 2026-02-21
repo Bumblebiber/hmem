@@ -45,7 +45,7 @@ You are the memory curator. Process **one agent per run**, then terminate.
 | L1 length | Single concise sentence, ~15–20 tokens |
 | L2 | Adds context, does not repeat L1 |
 | Duplicates | Keep the better entry, delete the weaker |
-| Prefix | P=Project L=Lesson E=Error T=Task D=Decision M=Milestone F=Favorite S=Skill |
+| Prefix | P=Project L=Lesson E=Error T=Task D=Decision M=Milestone F=Favorite S=Skill (+ custom prefixes from hmem.config.json) |
 | Personal limit | 300 entries max |
 | Company limit | 200 entries max |
 
