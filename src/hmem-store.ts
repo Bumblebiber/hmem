@@ -149,6 +149,8 @@ export class HmemStore {
   private db: Database.Database;
   private readonly dbPath: string;
   private readonly cfg: HmemConfig;
+  /** True if integrity_check found errors on open (read-only mode recommended). */
+  public readonly corrupted: boolean;
 
   constructor(hmemPath: string, config?: HmemConfig) {
     this.dbPath = hmemPath;
@@ -159,6 +161,27 @@ export class HmemStore {
     }
     this.db = new Database(hmemPath);
     this.db.pragma("journal_mode = WAL");
+
+    // Integrity check — detect corruption before any writes
+    this.corrupted = false;
+    try {
+      const result = this.db.pragma("integrity_check") as Array<{ integrity_check: string }>;
+      const status = result[0]?.integrity_check ?? "unknown";
+      if (status !== "ok") {
+        (this as { corrupted: boolean }).corrupted = true;
+        const backupPath = hmemPath + ".corrupt";
+        console.error(`[hmem] WARNING: Database corrupted! integrity_check: ${status}`);
+        if (!fs.existsSync(backupPath)) {
+          fs.copyFileSync(hmemPath, backupPath);
+          console.error(`[hmem] Backup saved to ${backupPath}`);
+        }
+        console.error(`[hmem] Attempting to continue — reads may be incomplete.`);
+      }
+    } catch (e) {
+      (this as { corrupted: boolean }).corrupted = true;
+      console.error(`[hmem] WARNING: integrity_check failed: ${e}`);
+    }
+
     this.db.exec(SCHEMA);
     this.migrate();
     this.migrateToTree();

@@ -95,9 +95,9 @@ node dist/cli.js init
 
 The installer will:
 - Detect your installed AI coding tools (Claude Code, OpenCode, Cursor, Windsurf, Cline)
-- Ask whether to install system-wide or project-local
+- Ask whether to install **system-wide** (memories in `~/.hmem/`) or **project-local** (memories in current directory)
 - Configure each tool's MCP settings automatically
-- Create a default memory database
+- Create the memory directory and `hmem.config.json`
 
 ### Option B: Manual Setup
 
@@ -228,6 +228,40 @@ cp skills/memory-curate/SKILL.md ~/.config/opencode/skills/memory-curate/SKILL.m
 | `fix_agent_memory` | Correct a specific memory entry |
 | `delete_agent_memory` | Delete a memory entry (use sparingly) |
 | `mark_audited` | Mark an agent as audited |
+
+---
+
+## Memory Directory
+
+hmem stores all memory files (`.hmem` SQLite databases) and its configuration (`hmem.config.json`) in a single directory. The location depends on how you install:
+
+| Install mode | Memory directory | Example |
+|---|---|---|
+| **System-wide** | `~/.hmem/` | `/home/alice/.hmem/` or `C:\Users\Alice\.hmem\` |
+| **Project-local** | Project root (cwd) | `/home/alice/my-project/` |
+
+The `hmem init` installer asks which mode you prefer and creates the directory automatically.
+
+### Directory structure
+
+```
+~/.hmem/                     # System-wide memory directory
+  memory.hmem                # Default agent memory (when no HMEM_AGENT_ID is set)
+  SIGURD.hmem                # Named agent memory (HMEM_AGENT_ID=SIGURD)
+  FIRMENWISSEN.hmem          # Shared company knowledge (optional)
+  hmem.config.json           # Configuration file
+  audit_state.json           # Curator state (optional)
+```
+
+The MCP configuration files are written to each tool's own config directory — not into `~/.hmem/`:
+
+| Tool | Global MCP config path |
+|---|---|
+| Claude Code | `~/.claude/.mcp.json` |
+| OpenCode | `~/.config/opencode/opencode.json` |
+| Cursor | `~/.cursor/mcp.json` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| Cline / Roo Code | `.vscode/mcp.json` (project-only) |
 
 ---
 

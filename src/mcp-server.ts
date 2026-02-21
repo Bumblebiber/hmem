@@ -190,6 +190,18 @@ server.tool(
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
         : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
       try {
+        // Warn if database is corrupted
+        if (hmemStore.corrupted) {
+          return {
+            content: [{ type: "text" as const, text:
+              "WARNING: Memory database is corrupted! A backup (.corrupt) was saved automatically.\n" +
+              "Writing to a corrupted database may cause further data loss.\n" +
+              "Recover via: git show LAST_GOOD_COMMIT:path/to/file.hmem > recovered.hmem"
+            }],
+            isError: true,
+          };
+        }
+
         const effectiveMinRole = storeName === "company" ? (minRole as AgentRole) : ("worker" as AgentRole);
         const result = hmemStore.write(prefix, content, links, effectiveMinRole);
         const storeLabel = storeName === "company" ? "FIRMENWISSEN" : (templateName || "memory");
@@ -268,6 +280,11 @@ server.tool(
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
         : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
       try {
+        // Warn if database is corrupted (but still allow reads)
+        const corruptionWarning = hmemStore.corrupted
+          ? "⚠ WARNING: Memory database is corrupted! Reads may be incomplete. A backup (.corrupt) was saved.\n\n"
+          : "";
+
         // Default depth: 2 for single-ID lookup, 1 for listings
         const effectiveDepth = depth || (id ? 2 : 1);
 
@@ -328,7 +345,7 @@ server.tool(
         return {
           content: [{
             type: "text" as const,
-            text: header + "\n" + lines.join("\n"),
+            text: corruptionWarning + header + "\n" + lines.join("\n"),
           }],
         };
       } finally {
