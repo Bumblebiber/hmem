@@ -1,87 +1,89 @@
 ---
 name: hmem-write
-description: Humanlike Memory schreiben — write_memory Syntax, Praefixe, Qualitaetsregeln.
-  Verwende diesen Skill wann immer du write_memory aufrufst.
+description: How to write long-term memories. Follow these rules whenever you call write_memory.
 ---
 
-# Skill: hmem-write — Speicher schreiben
+# How to use write_memory
+
+When you need to save a lesson, error, decision, or project insight to long-term memory,
+call the MCP tool `write_memory` following these rules.
+
+If the tool `write_memory` is not available, tell the user:
+"write_memory tool not found. Run `hmem init` to configure the MCP server."
+
+---
 
 ## Syntax
 
 ```
 write_memory(
   prefix: "E",
-  content: "L1-Satz — praegnant, ohne Kontext verstaendlich
-	L2-Detail (1 Tab oder 2 Spaces)
-		L3-Detail (2 Tabs oder 4 Spaces)
-			L4-Rohdaten, Stack Traces (3 Tabs — selten)"
+  content: "L1 sentence — concise, understandable without context\n\tL2 detail (1 tab)\n\t\tL3 detail (2 tabs)\n\t\t\tL4 raw data (3 tabs — rarely needed)"
 )
 ```
 
-**Einrueckung:** 1 Tab = 1 Ebene. Alternativ: 2 Spaces oder 4 Spaces pro Ebene — auto-erkannt.
-**IDs und Timestamps** werden automatisch vergeben — nie selbst schreiben.
+**Indentation:** 1 tab = 1 level. Alternatively: 2 or 4 spaces per level (auto-detected).
+**IDs and timestamps** are assigned automatically — never write them yourself.
 
 ---
 
-## Praefixe
+## Prefixes
 
-| Praefix | Kategorie | Wann |
-|---------|-----------|------|
-| **P** | Project | Projekterfahrungen, Zusammenfassungen |
-| **L** | Lesson | Lessons Learned, Best Practices |
-| **E** | Error | Fehler, Bugs + Loesung |
-| **D** | Decision | Architektur-Entscheidungen mit Begruendung |
-| **T** | Task | Aufgaben-Notizen, Arbeitsfortschritt |
-| **M** | Model Insights | Erkenntnisse ueber KI-Modelle, Tools, Infrastruktur |
-| **S** | Skill | Skills, Prozesse, Anleitungen |
-| **F** | Favorite | Haeufig benoetigte Referenz-Infos |
-| **H** | Human | User-/Entwickler-Profil (company store) |
-| **C** | Collaboration | Interaktionen mit anderen Agenten |
+| Prefix | Category | When to use |
+|--------|----------|-------------|
+| **P** | Project | Project experiences, summaries |
+| **L** | Lesson | Lessons learned, best practices |
+| **E** | Error | Bugs, errors + their fix |
+| **D** | Decision | Architecture decisions with reasoning |
+| **T** | Task | Task notes, work progress |
+| **M** | Milestone | Key milestones, releases |
+| **S** | Skill | Skills, processes, how-to guides |
+| **F** | Favorite | Frequently needed reference info |
 
 ---
 
-## L1-Qualitaetsregel
+## L1 Quality Rule
 
-- **Ein vollstaendiger, informativer Satz** — ~15–20 Tokens
-- Muss ohne jeden Kontext verstaendlich sein
-- Kein "Fixed a bug" → stattdessen "SQLite-Verbindung schlug fehl wegen falschem Pfad in .mcp.json"
+- **One complete, informative sentence** — ~15–20 tokens
+- Must be understandable without any context
+- Not "Fixed a bug" — instead "SQLite connection failed due to wrong path in .mcp.json"
 
 ---
 
-## Firmenwissen schreiben (AL+)
+## Company Knowledge (requires AL+ role)
 
 ```
 write_memory(
   prefix: "S",
   store: "company",
-  min_role: "worker",   # worker=alle, al=AL+, pl=PL+, ceo=nur CEO
+  min_role: "worker",
   content: "..."
 )
 ```
 
 ---
 
-## Wann speichern?
+## When to save?
 
-**Pflicht vor dem Terminieren.** Nur was in 6 Monaten noch wertvoll ist.
+**Mandatory before terminating.** Only save what is still valuable in 6 months.
 
-| Speichern ✓ | Nicht speichern ✗ |
-|-------------|------------------|
-| Neue Fehlerursache + Fix | Routine-Aktionen ohne Lernwert |
-| Erkenntnis die kuenftige Arbeit veraendert | Was schon in der Codebasis steht |
-| Architektur-Entscheidung mit Begruendung | Temporaere Debugging-Notizen |
-| Unerwartetes Tool/API-Verhalten | Was in der Dokumentation steht |
+| Save | Don't save |
+|------|-----------|
+| New root cause + fix | Routine actions without learning value |
+| Insight that changes future work | What's already in the codebase |
+| Architecture decision + reasoning | Temporary debugging notes |
+| Unexpected tool/API behavior | What's in the documentation |
 
-Ein `write_memory`-Aufruf pro Kategorie — gesamte Hierarchie in einem `content`-String.
+One `write_memory` call per category — entire hierarchy in one `content` string.
 
 ---
 
 ## Anti-Patterns
 
-| Falsch | Richtig |
-|--------|---------|
-| L1 zu kurz: "Fixed bug" | Vollstaendiger Satz mit Ursache |
-| Spaces gemischt mit Tabs | Konsistent bleiben — entweder Tabs oder Spaces |
-| Alles flach ohne Einrueckung | Hierarchie nutzen — L2/L3 fuer Details |
-| Triviales speichern | Qualitaet vor Quantitaet |
-| write_memory vergessen | Immer VOR Status: Completed aufrufen |
+| Wrong | Right |
+|-------|-------|
+| L1 too short: "Fixed bug" | Full sentence with root cause |
+| Mixed spaces and tabs | Stay consistent — either tabs or spaces |
+| Everything flat, no indentation | Use hierarchy — L2/L3 for details |
+| Save trivial things | Quality over quantity |
+| Forget to write_memory | Always call BEFORE setting Status: Completed |
