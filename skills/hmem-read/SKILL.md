@@ -1,69 +1,66 @@
 ---
 name: hmem-read
-description: Humanlike Memory lesen — Lazy Loading Protocol fuer read_memory und search_memory.
-  Verwende diesen Skill wann immer du read_memory oder search_memory aufrufst.
+description: Load your long-term memory. Call this skill at session start or after context reset.
 ---
 
-# Skill: hmem-read — Speicher lesen
+# ACTION REQUIRED: Call read_memory() NOW
 
-## Was beim Start injiziert wird
-
-```
-## Your Memory (Level 1 — use read_memory for details)
-[E0042] SQLite-Datei nicht gefunden beim MCP-Start
-[L0003] Schema-Migrationen immer mit IF NOT EXISTS absichern
-
-## Company Knowledge (FIRMENWISSEN — use read_memory with store: "company")
-[S0001] Company Philosophy: Quality Over Speed — read before write, test before done
-```
-
-L1-Summaries aller Eintraege — direkt nutzbar. Fuer Details gezielt aufklappen.
-
----
-
-## Lazy Loading Protocol
+When this skill is invoked, you MUST immediately call the MCP tool `read_memory` with no arguments.
+Do NOT just read this document — execute the tool call.
 
 ```
-# Schritt 1 — Ueberblick (bereits in deinem Kontext — nur noetig bei Kontext-Reset)
 read_memory()
+```
 
-# Schritt 2 — Kategorie filtern
-read_memory(prefix="E")          # nur Fehler
-read_memory(store="company")     # nur Firmenwissen
+This returns your Level 1 memory summaries. Show them to the user.
 
-# Schritt 3 — Root-Eintrag aufklappen → zeigt L2-Kinder
+If the tool `read_memory` is not available, tell the user:
+"read_memory tool not found. Run `hmem init` to configure the MCP server."
+
+---
+
+## Lazy Loading Protocol (for subsequent reads)
+
+After the initial `read_memory()`, use these patterns to drill deeper:
+
+```
+# Filter by category
+read_memory(prefix="E")          # only errors
+read_memory(store="company")     # shared company knowledge
+
+# Expand a root entry → shows L2 children
 read_memory(id="E0042")
 
-# Schritt 4 — L2-Knoten aufklappen → zeigt L3-Kinder
+# Expand an L2 node → shows L3 children
 read_memory(id="E0042.2")
 
-# Schritt 5 — L3-Knoten aufklappen → zeigt L4-Kinder (selten noetig)
+# Expand further (rarely needed)
 read_memory(id="E0042.2.1")
 ```
 
-**Regel: depth-Parameter ist nur fuer Listings sinnvoll (max 3), nicht fuer ID-Queries.**
+**Rule: depth parameter is only useful for listings (max 3), not for ID queries.**
 
 ```
-read_memory(depth=2)             # alle Eintraege mit L2-Kindern — kompakter Ueberblick
-read_memory(prefix="L", depth=2) # alle Lessons mit Details
+read_memory(depth=2)             # all entries with L2 children
+read_memory(prefix="L", depth=2) # all lessons with details
 ```
 
 ---
 
-## Suche
+## Search
 
 ```
 search_memory(query="Node.js startup crash")
-search_memory(query="auth token", scope="memories")   # nur .hmem Stores
-search_memory(query="delegation", scope="skills")      # nur Skill-Dateien
+search_memory(query="auth token", scope="memories")
 ```
 
 ---
 
 ## Anti-Patterns
 
-| Falsch | Richtig |
-|--------|---------|
+| Wrong | Right |
+|-------|-------|
 | `read_memory(id="E0042", depth=3)` | `read_memory(id="E0042.2")` — branch by branch |
-| Alle Eintraege laden ohne Ziel | Erst L1 pruefen, dann gezielt aufklappen |
-| .hmem-Datei direkt lesen | Immer ueber MCP-Tools — SQLite-Binaerdatei |
+| Load everything without purpose | Check L1 first, then expand selectively |
+| Read .hmem file directly | Always use MCP tools — it's a SQLite binary |
+| Just display this skill text | **Call read_memory() immediately** |
