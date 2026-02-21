@@ -84,7 +84,21 @@ A dedicated curator agent runs periodically to maintain memory health. It tracks
 
 ## Quick Start
 
-### Option A: Interactive Installer (Recommended)
+### Option A: Install from npm (Recommended)
+
+```bash
+npx hmem init
+```
+
+That's it. The interactive installer will:
+- Detect your installed AI coding tools (Claude Code, OpenCode, Cursor, Windsurf, Cline)
+- Ask whether to install **system-wide** (memories in `~/.hmem/`) or **project-local** (memories in current directory)
+- Configure each tool's MCP settings automatically
+- Create the memory directory and `hmem.config.json`
+
+After the installer finishes, restart your AI tool and call `read_memory()` to verify.
+
+### Option B: Install from source
 
 ```bash
 git clone https://github.com/Bumblebiber/hmem.git
@@ -93,42 +107,25 @@ npm install && npm run build
 node dist/cli.js init
 ```
 
-The installer will:
-- Detect your installed AI coding tools (Claude Code, OpenCode, Cursor, Windsurf, Cline)
-- Ask whether to install **system-wide** (memories in `~/.hmem/`) or **project-local** (memories in current directory)
-- Configure each tool's MCP settings automatically
-- Create the memory directory and `hmem.config.json`
+### Option C: Manual Setup (no installer)
 
-### Option B: Manual Setup
+If you prefer to configure everything yourself:
 
-#### 1. Build
+#### 1. Install
 
 ```bash
-git clone https://github.com/Bumblebiber/hmem.git
-cd hmem
-npm install
-npm run build
+npm install -g hmem
 ```
 
-#### 2. Verify the server starts
+Or from source: `git clone https://github.com/Bumblebiber/hmem.git && cd hmem && npm install && npm run build`
 
-```bash
-# Linux / macOS
-HMEM_PROJECT_DIR="$(pwd)" node dist/mcp-server.js
-
-# Windows (PowerShell)
-$env:HMEM_PROJECT_DIR="C:\path\to\hmem"; node dist\mcp-server.js
-```
-
-Expected output: `[hmem:default] Config: levels=[120,...] depth=5 ...` — then the process waits (that's correct, it's listening on stdio). Press `Ctrl+C` to stop.
-
-#### 3. Register the MCP server
+#### 2. Register the MCP server
 
 **Claude Code** — global registration:
 
 ```bash
-claude mcp add hmem -s user node "/absolute/path/to/hmem/dist/mcp-server.js" \
-  --env HMEM_PROJECT_DIR="/absolute/path/to/hmem"
+claude mcp add hmem -s user -- npx hmem serve \
+  --env HMEM_PROJECT_DIR="$HOME/.hmem"
 ```
 
 **OpenCode** — add to `~/.config/opencode/opencode.json` (or project-level `opencode.json`):
@@ -138,9 +135,9 @@ claude mcp add hmem -s user node "/absolute/path/to/hmem/dist/mcp-server.js" \
   "mcp": {
     "hmem": {
       "type": "local",
-      "command": ["node", "/absolute/path/to/hmem/dist/mcp-server.js"],
+      "command": ["npx", "hmem", "serve"],
       "environment": {
-        "HMEM_PROJECT_DIR": "/absolute/path/to/hmem"
+        "HMEM_PROJECT_DIR": "~/.hmem"
       },
       "enabled": true
     }
@@ -154,19 +151,19 @@ claude mcp add hmem -s user node "/absolute/path/to/hmem/dist/mcp-server.js" \
 {
   "mcpServers": {
     "hmem": {
-      "command": "node",
-      "args": ["/absolute/path/to/hmem/dist/mcp-server.js"],
+      "command": "npx",
+      "args": ["hmem", "serve"],
       "env": {
-        "HMEM_PROJECT_DIR": "/absolute/path/to/hmem"
+        "HMEM_PROJECT_DIR": "~/.hmem"
       }
     }
   }
 }
 ```
 
-> **Windows note:** Use double backslashes in JSON paths: `"C:\\Users\\name\\hmem\\dist\\mcp-server.js"`.
+> **Windows note:** Use forward slashes or double backslashes in JSON paths.
 
-#### 4. Verify the connection
+#### 3. Verify the connection
 
 Fully restart your AI tool, then call `read_memory()`. You should see a memory listing (empty on first run is fine).
 
@@ -176,35 +173,43 @@ In Claude Code, run `/mcp` to check the server status.
 
 ## Skill Files
 
-Skill files teach your AI tool how to use hmem correctly. Copy them to your tool's global skills directory:
+Skill files teach your AI tool how to use hmem correctly. Copy them to your tool's global skills directory.
+
+> **Note:** `hmem init` copies skills automatically. Only use the manual steps below if you skipped the installer.
 
 > **After copying skills, fully restart your terminal and AI tool** — skills are loaded at startup and won't appear in a running session.
 
+If you installed via npm, find the skills in the package directory:
+
+```bash
+HMEM_DIR="$(npm root -g)/hmem"   # global install
+# or: HMEM_DIR="$(dirname $(realpath $(which hmem)))"
+```
+
+If you cloned from source, the skills are in the `skills/` directory.
+
 **Claude Code:**
 ```bash
-mkdir -p ~/.claude/skills/hmem-read ~/.claude/skills/hmem-write ~/.claude/skills/save ~/.claude/skills/memory-curate
-cp skills/hmem-read/SKILL.md ~/.claude/skills/hmem-read/SKILL.md
-cp skills/hmem-write/SKILL.md ~/.claude/skills/hmem-write/SKILL.md
-cp skills/save/SKILL.md ~/.claude/skills/save/SKILL.md
-cp skills/memory-curate/SKILL.md ~/.claude/skills/memory-curate/SKILL.md
+for skill in hmem-read hmem-write save memory-curate; do
+  mkdir -p ~/.claude/skills/$skill
+  cp "$HMEM_DIR/skills/$skill/SKILL.md" ~/.claude/skills/$skill/SKILL.md
+done
 ```
 
 **Gemini CLI:**
 ```bash
-mkdir -p ~/.gemini/skills/hmem-read ~/.gemini/skills/hmem-write ~/.gemini/skills/save ~/.gemini/skills/memory-curate
-cp skills/hmem-read/SKILL.md ~/.gemini/skills/hmem-read/SKILL.md
-cp skills/hmem-write/SKILL.md ~/.gemini/skills/hmem-write/SKILL.md
-cp skills/save/SKILL.md ~/.gemini/skills/save/SKILL.md
-cp skills/memory-curate/SKILL.md ~/.gemini/skills/memory-curate/SKILL.md
+for skill in hmem-read hmem-write save memory-curate; do
+  mkdir -p ~/.gemini/skills/$skill
+  cp "$HMEM_DIR/skills/$skill/SKILL.md" ~/.gemini/skills/$skill/SKILL.md
+done
 ```
 
 **OpenCode:**
 ```bash
-mkdir -p ~/.config/opencode/skills/hmem-read ~/.config/opencode/skills/hmem-write ~/.config/opencode/skills/save ~/.config/opencode/skills/memory-curate
-cp skills/hmem-read/SKILL.md ~/.config/opencode/skills/hmem-read/SKILL.md
-cp skills/hmem-write/SKILL.md ~/.config/opencode/skills/hmem-write/SKILL.md
-cp skills/save/SKILL.md ~/.config/opencode/skills/save/SKILL.md
-cp skills/memory-curate/SKILL.md ~/.config/opencode/skills/memory-curate/SKILL.md
+for skill in hmem-read hmem-write save memory-curate; do
+  mkdir -p ~/.config/opencode/skills/$skill
+  cp "$HMEM_DIR/skills/$skill/SKILL.md" ~/.config/opencode/skills/$skill/SKILL.md
+done
 ```
 
 ---
