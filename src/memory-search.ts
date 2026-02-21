@@ -1,13 +1,11 @@
-// Semantic Memory Search — Full-text search over agent memories, project docs and skills.
+// Semantic Memory Search — Full-text search over .hmem files and optionally project docs.
 //
 // Lightweight: No external dependencies (no ChromaDB/Faiss).
 // Uses keyword matching with TF-based relevance scoring.
 //
 // Searches:
-//   - Agents/{name}/{name}.hmem  (Agent memories — SQLite, hierarchical)
-//   - Agents/{name}/Personality.md    (Agent roles, capabilities)
-//   - Projects/{name}/*.md            (Project documentation)
-//   - skills/{name}/SKILL.md          (Skill documentation)
+//   - *.hmem files in PROJECT_DIR and subdirectories (agent memories — SQLite, hierarchical)
+//   - Optional: Personality.md, project docs, skill docs (if directories exist)
 
 import fs from "node:fs";
 import path from "node:path";
@@ -87,27 +85,40 @@ function searchHmemFile(
 
 /**
  * Collects all .hmem files for the memories scope.
+ * Scans PROJECT_DIR root + common subdirectory patterns (Agents/, Assistenten/, agents/).
  */
 function collectHmemFiles(projectDir: string): { hmemPath: string; agentName: string }[] {
   const results: { hmemPath: string; agentName: string }[] = [];
-  const agentsDir = path.join(projectDir, "Agents");
 
+  // Scan common agent directory patterns
+  for (const subdir of ["Agents", "Assistenten", "agents"]) {
+    const dir = path.join(projectDir, subdir);
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const d of entries) {
+        if (!d.isDirectory()) continue;
+        const hmemPath = path.join(dir, d.name, `${d.name}.hmem`);
+        if (fs.existsSync(hmemPath)) {
+          results.push({ hmemPath, agentName: d.name });
+        }
+      }
+    } catch { /* dir does not exist */ }
+  }
+
+  // Check for standalone .hmem files in PROJECT_DIR root
   try {
-    const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
-    for (const d of entries) {
-      if (!d.isDirectory()) continue;
-      const hmemPath = path.join(agentsDir, d.name, `${d.name}.hmem`);
-      if (fs.existsSync(hmemPath)) {
-        results.push({ hmemPath, agentName: d.name });
+    const rootEntries = fs.readdirSync(projectDir, { withFileTypes: true });
+    for (const entry of rootEntries) {
+      if (entry.isFile() && entry.name.endsWith(".hmem")) {
+        const name = entry.name.replace(/\.hmem$/, "");
+        const hmemPath = path.join(projectDir, entry.name);
+        // Avoid duplicates (agent dirs already scanned above)
+        if (!results.some(r => r.hmemPath === hmemPath)) {
+          results.push({ hmemPath, agentName: name === "memory" ? "default" : name });
+        }
       }
     }
-  } catch { /* dir does not exist */ }
-
-  // Also check FIRMENWISSEN.hmem at project root
-  const firmenwissen = path.join(projectDir, "FIRMENWISSEN.hmem");
-  if (fs.existsSync(firmenwissen)) {
-    results.push({ hmemPath: firmenwissen, agentName: "FIRMENWISSEN" });
-  }
+  } catch { /* */ }
 
   return results;
 }

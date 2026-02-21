@@ -2,14 +2,14 @@
 /**
  * hmem — Humanlike Memory MCP Server.
  *
- * Provides persistent, humanlike memory for AI agents via MCP.
- * Also bundles Das Althing orchestrator tools (spawn_agent, etc.) —
- * these are inactive if you're not running the Das Althing orchestrator.
+ * Provides persistent, hierarchical memory for AI agents via MCP.
+ * SQLite-backed, 5-level lazy loading, role-based access control.
  *
  * Environment variables:
  *   HMEM_PROJECT_DIR         — Root directory where .hmem files are stored (required)
  *   HMEM_AGENT_ID            — Agent identifier (optional; defaults to memory.hmem)
  *   HMEM_AGENT_ROLE          — Role: worker | al | pl | ceo (default: worker)
+ *   HMEM_AUDIT_STATE_PATH    — Path to audit_state.json (default: {PROJECT_DIR}/audit_state.json)
  *
  * Legacy fallbacks (Das Althing):
  *   COUNCIL_PROJECT_DIR, COUNCIL_AGENT_ID, COUNCIL_AGENT_ROLE
@@ -20,14 +20,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
-import { loadCatalog } from "./config.js";
-import { validateRequest } from "./json-parser.js";
 import { searchMemory } from "./memory-search.js";
 import { openAgentMemory, openCompanyMemory, resolveHmemPath, HmemStore } from "./hmem-store.js";
 import type { AgentRole, MemoryNode } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
-import type { AgentRequest, AgentCatalog, OrchestratorState } from "./types.js";
 
 // ---- Environment ----
 // HMEM_* vars are the canonical names; COUNCIL_* kept for backwards compatibility
@@ -43,6 +39,7 @@ let AGENT_ID = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "";
 let DEPTH = parseInt(process.env.HMEM_DEPTH || process.env.COUNCIL_DEPTH || "0", 10);
 let ROLE = process.env.HMEM_AGENT_ROLE || process.env.COUNCIL_AGENT_ROLE || "worker";
 
+// Optional: PID-based identity override (used by Das Althing orchestrator)
 const ppid = process.ppid;
 const ctxFile = path.join(PROJECT_DIR, "orchestrator", ".mcp_contexts", `${ppid}.json`);
 try {
@@ -53,903 +50,28 @@ try {
     ROLE = ctx.role || ROLE;
   }
 } catch {
-  // Fallback to env vars
+  // Fallback to env vars — context file is optional
 }
 
 function log(msg: string) {
-  console.error(`[MCP:${AGENT_ID}] ${msg}`);
+  console.error(`[hmem:${AGENT_ID || "default"}] ${msg}`);
 }
 
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
 log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth} tiers=${JSON.stringify(hmemConfig.recentDepthTiers)}`);
 
-// Load catalog once at startup (optional — Althing orchestrator tools inactive if not found)
-let catalog: AgentCatalog = {};
-try {
-  catalog = loadCatalog(PROJECT_DIR);
-  log(`Catalog loaded: ${Object.keys(catalog).length} templates`);
-} catch {
-  log("No AGENT_CATALOG.json found — Das Althing orchestrator tools inactive (standalone hmem mode)");
-}
-
-// Logger stub for validateRequest()
-const validationLog = {
-  info: (msg: string) => log(`[validate] ${msg}`),
-  warn: (msg: string) => log(`[validate:WARN] ${msg}`),
-  error: (msg: string) => log(`[validate:ERROR] ${msg}`),
-  action: (msg: string) => log(`[validate] ${msg}`),
-  debug: (_msg: string) => {},
-} as any;
-
-const MAX_SPAWN_DEPTH = parseInt(process.env.HMEM_MAX_SPAWN_DEPTH || process.env.COUNCIL_MAX_SPAWN_DEPTH || "3", 10);
-
-// ---- Helper: Read agent.json for a template ----
-function readAgentJson(templateName: string): { model?: string; tool?: string } {
-  // Check Agents/{templateName}/agent.json
-  let agentJsonPath = path.join(PROJECT_DIR, "Agents", templateName, "agent.json");
-
-  if (!fs.existsSync(agentJsonPath)) {
-    // Check Assistenten/{templateName}/agent.json
-    agentJsonPath = path.join(PROJECT_DIR, "Assistenten", templateName, "agent.json");
-  }
-
-  if (!fs.existsSync(agentJsonPath)) {
-    // No agent.json found — system template, return empty
-    return {};
-  }
-
-  try {
-    const data = JSON.parse(fs.readFileSync(agentJsonPath, "utf-8"));
-    return {
-      model: data.model,
-      tool: data.tool,
-    };
-  } catch (e) {
-    log(`Failed to read agent.json for template "${templateName}": ${e}`);
-    return {};
-  }
-}
-
 // ---- Server ----
 const server = new McpServer({
   name: "hmem",
-  version: "1.0.0",
+  version: "1.1.0",
 });
-
-// ---- Tool: spawn_agent ----
-server.tool(
-  "spawn_agent",
-  "Spawn a sub-agent via the Das Althing orchestrator. " +
-    "Creates a REQ_*.json file that the orchestrator picks up and launches as a CLI process. " +
-    "Returns immediate feedback (success or validation error). " +
-    "Do NOT wait for the result — the orchestrator will notify you when children complete.",
-  {
-    Template: z.string().describe(
-      "Agent template from AGENT_CATALOG.json (e.g. 'coder', 'coder_fast', 'reviewer', 'architect')"
-    ),
-    Agent_ID: z
-      .string()
-      .regex(/^[A-Za-z0-9_-]+$/)
-      .describe("Unique identifier (A-Z, 0-9, _, -). Used in filenames."),
-    Command: z
-      .string()
-      .min(1)
-      .max(50_000)
-      .describe(
-        "Full task description. Output path is set automatically by the orchestrator."
-      ),
-    Model: z
-      .string()
-      .optional()
-      .describe("Optional model override (opus, sonnet, haiku, gemini-pro, gemini-flash)"),
-    Tool: z
-      .enum(["opencode", "opencode-run", "gemini-cli", "claude", "ollama"])
-      .optional()
-      .describe("Optional tool override. Default comes from template."),
-    Cwd: z
-      .string()
-      .optional()
-      .describe(
-        "Optional working directory relative to project root (e.g. 'Projects/P3_Council_Dashboard_PL/02_Execution_AL'). " +
-        "Agent runs and writes output here. Default: project root."
-      ),
-  },
-  async ({ Template, Agent_ID, Command, Model, Tool, Cwd: cwdParam }) => {
-    // 0. Worker spawn block: Workers are not allowed to spawn sub-agents
-    if (ROLE === "worker") {
-      log(`spawn_agent BLOCKED: Worker ${AGENT_ID} is not allowed to spawn sub-agents`);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: "ERROR: Workers are not allowed to spawn sub-agents. You are a worker — execute your task yourself. If you need help, write a question (Status: Question) in your output.",
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    // 1. Validate template
-    if (!catalog[Template]) {
-      const available = Object.keys(catalog).slice(0, 20).join(", ");
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `ERROR: Template "${Template}" not found. Available: ${available}...`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    // 2. Build AgentRequest
-    const childDepth = DEPTH + 1;
-    const tpl = catalog[Template];
-
-    // Read model and tool from agent.json (if exists)
-    const agentJson = readAgentJson(Template);
-
-    const req: AgentRequest = {
-      Type: "LAUNCH_AGENT",
-      Template,
-      Agent_ID,
-      Command,
-      Depth: childDepth,
-      SpawnedBy: AGENT_ID,
-      ReportTo: AGENT_ID,
-      Request_ID: Agent_ID,
-      Cwd: cwdParam ? path.join(PROJECT_DIR, cwdParam) : PROJECT_DIR,
-      Terminate_After: tpl.Terminate_After ?? true,
-      Tool: (Tool || agentJson.tool || tpl.Tool || "opencode") as any,
-      Role: (tpl as any).Role || "worker",
-    };
-    if (Model) req.Model = Model;
-    else if (agentJson.model) req.Model = agentJson.model;
-    else if (tpl.Model) req.Model = tpl.Model;
-
-    // 3. Validate (Agent_ID, tool whitelist, depth, command length)
-    if (!validateRequest(req, MAX_SPAWN_DEPTH, validationLog)) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `ERROR: Validation failed. Depth=${childDepth} (max=${MAX_SPAWN_DEPTH}), Agent_ID="${Agent_ID}". Details in stderr.`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    // 4. Write REQ file (atomic: tmp + rename)
-    const resolvedCwd = cwdParam ? path.join(PROJECT_DIR, cwdParam) : PROJECT_DIR;
-    if (!fs.existsSync(resolvedCwd)) {
-      fs.mkdirSync(resolvedCwd, { recursive: true });
-    }
-    const reqFileName = `REQ_${Agent_ID}.json`;
-    const reqFilePath = path.join(resolvedCwd, reqFileName);
-    const tmpPath = reqFilePath + `.${crypto.randomBytes(4).toString("hex")}.tmp`;
-
-    try {
-      fs.writeFileSync(tmpPath, JSON.stringify(req, null, 2), "utf-8");
-      fs.renameSync(tmpPath, reqFilePath);
-    } catch (e) {
-      try {
-        fs.unlinkSync(tmpPath);
-      } catch {}
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `ERROR: Could not write ${reqFileName}: ${e}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    log(`spawn_agent: ${reqFileName} (Template=${Template}, Depth=${childDepth}, SpawnedBy=${AGENT_ID})`);
-
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: [
-            `Agent spawned successfully.`,
-            `  Request_ID: ${Agent_ID}`,
-            `  Template: ${Template}`,
-            `  Depth: ${childDepth}`,
-            `  SpawnedBy: ${AGENT_ID}`,
-            `  REQ file: ${reqFileName}`,
-            `  Output expected at: ${cwdParam || '.'}/${Agent_ID}_OUTPUT.md`,
-            `  Working directory: ${cwdParam || '(project root)'}`,
-            ``,
-            `The orchestrator will process the request and start the agent.`,
-            `Do NOT wait for the result — write your output and finish.`,
-          ].join("\n"),
-        },
-      ],
-    };
-  }
-);
-
-// ---- Tool: list_templates ----
-server.tool(
-  "list_templates",
-  "List available agent templates from AGENT_CATALOG.json with descriptions and configuration.",
-  {
-    category: z
-      .string()
-      .optional()
-      .describe("Optional filter keyword (e.g. 'code', 'review', 'test', 'architect'). All if omitted."),
-  },
-  async ({ category }) => {
-    // Reload catalog on each call (catches changes)
-    let currentCatalog: AgentCatalog;
-    try {
-      currentCatalog = loadCatalog(PROJECT_DIR);
-    } catch {
-      currentCatalog = catalog;
-    }
-
-    let entries = Object.entries(currentCatalog)
-      .filter(([_, entry]) => !(entry as any).Internal);  // Hide meta agents
-
-    if (category) {
-      const filter = category.toLowerCase();
-      entries = entries.filter(
-        ([name, entry]) =>
-          name.toLowerCase().includes(filter) ||
-          (entry.Description || "").toLowerCase().includes(filter)
-      );
-    }
-
-    if (entries.length === 0) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `No templates found${category ? ` for "${category}"` : ""}. Total: ${Object.keys(currentCatalog).length}`,
-          },
-        ],
-      };
-    }
-
-    const lines = entries.map(([name, entry]) => {
-      const parts = [`- **${name}**`];
-      // Agent Directory format: Name, Department, Specializations — NO Model/Tool
-      if ((entry as any).Department) {
-        parts.push(` (${(entry as any).Department})`);
-      }
-      if ((entry as any).Specializations?.length) {
-        parts.push(`: ${(entry as any).Specializations.join(", ")}`);
-      } else if (entry.Description) {
-        parts.push(`: ${entry.Description}`);
-      }
-      // Show costs (for budget planning), but NOT Model/Tool
-      if ((entry as any).Cost_Per_Min_USD != null) {
-        parts.push(`  |  ~$${(entry as any).Cost_Per_Min_USD}/Min`);
-      }
-      if (entry.Role) parts.push(`  [${entry.Role.toUpperCase()}]`);
-      return parts.join("");
-    });
-
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Agent Directory (${entries.length} agents):\n\n${lines.join("\n")}`,
-        },
-      ],
-    };
-  }
-);
-
-// ---- Tool: get_budget_status ----
-server.tool(
-  "get_budget_status",
-  "Shows budget status: cost per agent, total spent, broken down by model. Use project_prefix to filter costs for a specific project.",
-  {
-    project_prefix: z
-      .string()
-      .optional()
-      .describe("Filter Agent-IDs by prefix (e.g. 'P3_'). Empty = all costs."),
-  },
-  async ({ project_prefix }) => {
-    const costFile = path.join(PROJECT_DIR, "orchestrator", "logs", "cost_tracking.jsonl");
-    if (!fs.existsSync(costFile)) {
-      return {
-        content: [{ type: "text" as const, text: "No cost data available." }],
-      };
-    }
-
-    const lines = fs.readFileSync(costFile, "utf-8").trim().split("\n");
-    const byAgent: Record<string, number> = {};
-    const byModel: Record<string, number> = {};
-    let totalCost = 0;
-    let totalRuns = 0;
-
-    for (const line of lines) {
-      if (!line) continue;
-      try {
-        const entry = JSON.parse(line);
-        if (project_prefix && !entry.agent_id.startsWith(project_prefix)) continue;
-        const cost = entry.estimated_cost_usd || 0;
-        totalCost += cost;
-        totalRuns++;
-        byAgent[entry.agent_id] = (byAgent[entry.agent_id] || 0) + cost;
-        byModel[entry.model] = (byModel[entry.model] || 0) + cost;
-      } catch { /* skip */ }
-    }
-
-    const agentLines = Object.entries(byAgent)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 20)
-      .map(([id, cost]) => `  ${id}: $${cost.toFixed(4)}`);
-
-    const modelLines = Object.entries(byModel)
-      .sort((a, b) => b[1] - a[1])
-      .map(([model, cost]) => `  ${model}: $${cost.toFixed(4)}`);
-
-    const text = [
-      `Budget status${project_prefix ? ` (Prefix: ${project_prefix})` : " (total)"}:`,
-      ``,
-      `Total cost: $${totalCost.toFixed(4)}  (${totalRuns} agent runs)`,
-      ``,
-      `Top agents:`,
-      ...agentLines,
-      ``,
-      `By model:`,
-      ...modelLines,
-    ].join("\n");
-
-    return { content: [{ type: "text" as const, text }] };
-  }
-);
-
-// ---- Tool: get_agent_status ----
-server.tool(
-  "get_agent_status",
-  "Check the status of a spawned agent by looking for its output file.",
-  {
-    agent_id: z.string().describe("The Agent_ID of the agent to check"),
-    include_preview: z
-      .boolean()
-      .optional()
-      .describe("If true, include first 500 chars of output. Default: false."),
-  },
-  async ({ agent_id, include_preview }) => {
-    // Look up agent's output directory from state.json
-    let outputPath = "";
-    const stateFile = path.join(PROJECT_DIR, "orchestrator", "state.json");
-    if (fs.existsSync(stateFile)) {
-      try {
-        const state: OrchestratorState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-        const agentState = state.agents.find((a) => a.id === agent_id);
-        if (agentState?.outputDir) {
-          outputPath = path.join(agentState.outputDir, `${agent_id}_OUTPUT.md`);
-        }
-      } catch { /* fallback below */ }
-    }
-    // Fallback: check project root directly
-    if (!outputPath || !fs.existsSync(outputPath)) {
-      outputPath = path.join(PROJECT_DIR, `${agent_id}_OUTPUT.md`);
-    }
-
-    if (!fs.existsSync(outputPath)) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: [
-              `Agent "${agent_id}": NO OUTPUT`,
-              `  Expected file: ${agent_id}_OUTPUT.md`,
-              `  Status: Agent has not written any output yet or has not been started.`,
-            ].join("\n"),
-          },
-        ],
-      };
-    }
-
-    const stat = fs.statSync(outputPath);
-
-    if (stat.size === 0) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: [
-              `Agent "${agent_id}": ACK (working)`,
-              `  File exists but is empty (= agent has received the task).`,
-              `  Status: Agent is working on the task.`,
-            ].join("\n"),
-          },
-        ],
-      };
-    }
-
-    const lines = [
-      `Agent "${agent_id}": OUTPUT AVAILABLE`,
-      `  File: ${path.relative(PROJECT_DIR, outputPath)}`,
-      `  Size: ${stat.size} bytes`,
-      `  Modified: ${stat.mtime.toISOString()}`,
-      `  Status: Agent has written output.`,
-    ];
-
-    if (include_preview) {
-      try {
-        const content = fs.readFileSync(outputPath, "utf-8");
-        const preview = content.slice(0, 500);
-        lines.push(`\n--- Preview (first 500 characters) ---\n${preview}`);
-        if (content.length > 500) lines.push(`\n... (${content.length - 500} more characters)`);
-      } catch {
-        lines.push(`\n(File could not be read)`);
-      }
-    }
-
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: lines.join("\n"),
-        },
-      ],
-    };
-  }
-);
-
-// ---- Tool: send_message ----
-server.tool(
-  "send_message",
-  "Send a message to another agent via a MSG file. " +
-    "The recipient can read it from their working directory. The orchestrator's MsgRouter will log it.",
-  {
-    recipient_agent_id: z
-      .string()
-      .regex(/^[A-Za-z0-9_-]+$/)
-      .describe("Agent_ID of the recipient"),
-    message: z
-      .string()
-      .min(1)
-      .max(50_000)
-      .describe("Message content (markdown)"),
-  },
-  async ({ recipient_agent_id, message }) => {
-    const ts = Date.now();
-    const msgFileName = `MSG_${ts}_${AGENT_ID}_TO_${recipient_agent_id}.md`;
-    const msgFilePath = path.join(PROJECT_DIR, msgFileName);
-
-    try {
-      fs.writeFileSync(
-        msgFilePath,
-        `# Message from ${AGENT_ID} to ${recipient_agent_id}\n\n${message}\n`,
-        "utf-8"
-      );
-    } catch (e) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `ERROR: Could not write message: ${e}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    log(`send_message: ${msgFileName}`);
-
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: [
-            `Message sent.`,
-            `  From: ${AGENT_ID}`,
-            `  To: ${recipient_agent_id}`,
-            `  File: ${msgFileName}`,
-          ].join("\n"),
-        },
-      ],
-    };
-  }
-);
-
-// ---- Tool: get_all_agents ----
-server.tool(
-  "get_all_agents",
-  "Get the status of all agents currently tracked by the orchestrator. " +
-    "Reads from orchestrator/state.json (written by the orchestrator each tick).",
-  {
-    status_filter: z
-      .enum(["busy", "idle", "delegating", "offline"])
-      .optional()
-      .describe("Optional: Only show agents with this status."),
-  },
-  async ({ status_filter }) => {
-    const stateFile = path.join(PROJECT_DIR, "orchestrator", "state.json");
-
-    if (!fs.existsSync(stateFile)) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: "No state available (orchestrator/state.json does not exist). Orchestrator may not be running yet or has not executed a tick yet.",
-          },
-        ],
-      };
-    }
-
-    let state: OrchestratorState;
-    try {
-      state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-    } catch (e) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `ERROR: Could not read state.json: ${e}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    let agents = state.agents;
-    if (status_filter) {
-      agents = agents.filter((a) => a.status === status_filter);
-    }
-
-    if (agents.length === 0) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `No agents found${status_filter ? ` with status "${status_filter}"` : ""}. (State from ${state.timestamp})`,
-          },
-        ],
-      };
-    }
-
-    const lines = agents.map((a) => {
-      const elapsed = a.busySince ? Math.round((Date.now() - a.busySince) / 1000) : 0;
-      return [
-        `- **${a.id}** [${a.status}]`,
-        `  Tool: ${a.tool}, Model: ${a.model || "-"}, PID: ${a.pid || "-"}`,
-        `  Depth: ${a.depth}, SpawnedBy: ${a.spawnedBy || "-"}`,
-        a.busySince ? `  Runtime: ${elapsed}s` : "",
-        a.childAgentIds.length > 0 ? `  Children: ${a.childAgentIds.join(", ")}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-    });
-
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Agents (${agents.length}${status_filter ? `, Filter: ${status_filter}` : ""}, As of: ${state.timestamp}):\n\n${lines.join("\n\n")}`,
-        },
-      ],
-    };
-  }
-);
-
-// ---- Tool: cancel_agent ----
-server.tool(
-  "cancel_agent",
-  "Cancel a running child agent. Sends SIGTERM to the agent's process. " +
-    "Only the spawning parent agent can cancel its children.",
-  {
-    agent_id: z
-      .string()
-      .regex(/^[A-Za-z0-9_-]+$/)
-      .describe("Agent_ID of the agent to cancel"),
-    reason: z
-      .string()
-      .max(1000)
-      .optional()
-      .describe("Optional reason for cancellation"),
-  },
-  async ({ agent_id, reason }) => {
-    // 1. Load state
-    const stateFile = path.join(PROJECT_DIR, "orchestrator", "state.json");
-    if (!fs.existsSync(stateFile)) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: "ERROR: state.json not found — orchestrator may not be running.",
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    let state: OrchestratorState;
-    try {
-      state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-    } catch (e) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `ERROR: state.json not readable: ${e}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    // 2. Find target agent
-    const target = state.agents.find((a) => a.id === agent_id);
-    if (!target) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `ERROR: Agent "${agent_id}" not found in state.`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    // 3. Check permission: Only parent may cancel
-    if (target.spawnedBy !== AGENT_ID) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `ERROR: No permission. "${agent_id}" was spawned by "${target.spawnedBy}", not by you (${AGENT_ID}).`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    // 4. Agent already offline?
-    if (target.status === "offline") {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Agent "${agent_id}" is already offline. No cancellation needed.`,
-          },
-        ],
-      };
-    }
-
-    // 5. Send SIGTERM
-    let killed = false;
-    if (target.pid > 0) {
-      try {
-        process.kill(target.pid, "SIGTERM");
-        killed = true;
-      } catch {
-        // Process no longer exists
-      }
-    }
-
-    // 6. Write CANCELLED file (in agent's output directory or project root)
-    let cancelDir = PROJECT_DIR;
-    if (fs.existsSync(stateFile)) {
-      try {
-        const freshState: OrchestratorState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-        const agentState = freshState.agents.find((a) => a.id === agent_id);
-        if (agentState?.outputDir) cancelDir = agentState.outputDir;
-      } catch { /* use PROJECT_DIR */ }
-    }
-    const cancelFile = path.join(cancelDir, `${target.currentRequestId}_CANCELLED.md`);
-    const cancelContent = [
-      `# Agent cancelled: ${agent_id}`,
-      ``,
-      `**Cancelled by:** ${AGENT_ID}`,
-      `**Reason:** ${reason || "No reason given"}`,
-      `**Timestamp:** ${new Date().toISOString()}`,
-      `**PID:** ${target.pid}`,
-      `**Signal sent:** ${killed ? "Yes (SIGTERM)" : "No (process not found)"}`,
-      ``,
-      `**Status**: Cancelled`,
-    ].join("\n");
-
-    try {
-      fs.writeFileSync(cancelFile, cancelContent, "utf-8");
-    } catch {
-      // Best effort
-    }
-
-    log(`cancel_agent: ${agent_id} (PID=${target.pid}, killed=${killed}, by=${AGENT_ID})`);
-
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: [
-            `Agent "${agent_id}" cancelled.`,
-            `  PID: ${target.pid}`,
-            `  SIGTERM: ${killed ? "sent" : "process not found"}`,
-            `  Cancel file: ${target.currentRequestId}_CANCELLED.md`,
-            reason ? `  Reason: ${reason}` : "",
-          ]
-            .filter(Boolean)
-            .join("\n"),
-        },
-      ],
-    };
-  }
-);
-
-// ---- Tool: suggest_brainstorm_team ----
-server.tool(
-  "suggest_brainstorm_team",
-  "Suggests a cross-departmental brainstorming team. " +
-    "Selects agents from different departments based on the topic. " +
-    "These agents can later take on the corresponding tasks in the execution phase.",
-  {
-    topic: z.string().min(3).describe(
-      "Project description or brainstorming topic (e.g. 'E-Commerce portal with payment integration')"
-    ),
-    team_size: z
-      .number()
-      .int()
-      .min(3)
-      .max(10)
-      .optional()
-      .describe("Desired team size (default: 6)"),
-  },
-  async ({ topic, team_size }) => {
-    const teamSize = team_size || 6;
-    log(`suggest_brainstorm_team: topic="${topic}", size=${teamSize}, by=${AGENT_ID}`);
-
-    // Reload catalog (may have changed)
-    let freshCatalog: AgentCatalog;
-    try {
-      freshCatalog = loadCatalog(PROJECT_DIR);
-    } catch {
-      freshCatalog = catalog;
-    }
-
-    // Extract keywords from topic
-    const stopwords = new Set([
-      "der", "die", "das", "ein", "eine", "und", "oder", "in", "von", "zu",
-      "mit", "auf", "fuer", "ist", "sind", "the", "a", "an", "and", "or",
-      "for", "with", "to", "of", "we", "wir", "soll", "muss", "kann",
-    ]);
-    const keywords = topic
-      .toLowerCase()
-      .replace(/[^a-z0-9äöüß-]/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length > 2 && !stopwords.has(w));
-
-    // Score candidates: only non-internal workers + department leads
-    interface Candidate {
-      id: string;
-      name: string;
-      department: string;
-      specializations: string[];
-      role: string;
-      cost: number;
-      score: number;
-    }
-
-    const candidates: Candidate[] = [];
-
-    for (const [id, entry] of Object.entries(freshCatalog)) {
-      if ((entry as any).Internal) continue;
-      const role = (entry as any).Role || "worker";
-      if (role === "ceo" || role === "pl") continue; // PLs/CEO not in brainstorming
-      if (id.startsWith("_")) continue; // Metadata
-
-      const specs = ((entry as any).Specializations || []).join(" ").toLowerCase();
-      const dept = ((entry as any).Department || "").toLowerCase();
-      const name = (entry as any).Name || id;
-
-      // Scoring: Keywords against specializations and department
-      let score = 0;
-      for (const kw of keywords) {
-        if (specs.includes(kw)) score += 2;
-        if (dept.includes(kw)) score += 1;
-      }
-      // Worker bonus: Brainstorming agents should later work on the project
-      // Workers are the executors, department leads are only coordinators
-      if (role === "worker") score += 0.5;
-      // Base score so all agents have a chance even with 0 keyword matches
-      score += 0.1;
-
-      candidates.push({
-        id,
-        name,
-        department: (entry as any).Department || "Unknown",
-        specializations: (entry as any).Specializations || [],
-        role,
-        cost: (entry as any).Cost_Per_Min_USD || 0.05,
-        score,
-      });
-    }
-
-    // Sort by score
-    candidates.sort((a, b) => b.score - a.score);
-
-    // Greedy selection with department diversity
-    const selected: Candidate[] = [];
-    const usedDepts = new Set<string>();
-    const remaining = [...candidates];
-
-    while (selected.length < teamSize && remaining.length > 0) {
-      // Prefer agents from departments not yet represented
-      const idx = remaining.findIndex((c) => !usedDepts.has(c.department));
-      const pick = idx >= 0 ? remaining.splice(idx, 1)[0] : remaining.shift()!;
-      selected.push(pick);
-      usedDepts.add(pick.department);
-    }
-
-    if (selected.length === 0) {
-      return {
-        content: [{
-          type: "text" as const,
-          text: "No suitable agents found in the catalog.",
-        }],
-        isError: true,
-      };
-    }
-
-    // Derive perspective from specialization
-    function derivePerspective(c: Candidate): string {
-      const dept = c.department.toLowerCase();
-      if (dept.includes("backend")) return "Technical feasibility, API design, data model";
-      if (dept.includes("frontend")) return "User experience, UI structure, interaction patterns";
-      if (dept.includes("qa") || dept.includes("test")) return "Risks, edge cases, testability";
-      if (dept.includes("security")) return "Security, authentication, attack vectors";
-      if (dept.includes("operations") || dept.includes("devops")) return "Deployment, infrastructure, scaling";
-      if (dept.includes("doku") || dept.includes("research")) return "User perspective, clarity, research";
-      if (dept.includes("architektur")) return "System design, trade-offs, scaling";
-      if (dept.includes("visualis")) return "Diagrams, presentation, information architecture";
-      if (dept.includes("analyse")) return "Data analysis, metrics, feasibility";
-      if (dept.includes("fullstack") || dept.includes("integration")) return "End-to-end perspective, interfaces";
-      if (dept.includes("performance")) return "Performance, optimization, bottlenecks";
-      if (dept.includes("experimental")) return "Unconventional ideas, creativity, moonshots";
-      return c.specializations.slice(0, 2).join(", ") || "General perspective";
-    }
-
-    // Format output
-    const rows = selected
-      .map((c, i) => {
-        const perspective = derivePerspective(c);
-        const roleTag = c.role === "al" ? " [AL]" : "";
-        return `| ${i + 1} | **${c.id}** | ${c.department}${roleTag} | ${perspective} | ~$${c.cost}/Min |`;
-      })
-      .join("\n");
-
-    const totalCost = selected.reduce((sum, c) => sum + c.cost, 0);
-
-    const output = [
-      `## Brainstorming team for: "${topic}"`,
-      ``,
-      `| # | Agent | Department | Perspective | ~Cost/Min |`,
-      `|---|-------|------------|-------------|-----------|`,
-      rows,
-      ``,
-      `**Team cost:** ~$${totalCost.toFixed(2)}/min total (${selected.length} agents)`,
-      `**Departments:** ${Array.from(usedDepts).join(", ")}`,
-      ``,
-      `> **Note:** These agents can later take on the corresponding tasks in the`,
-      `> execution phase — they already gather domain knowledge about the project`,
-      `> during brainstorming.`,
-    ].join("\n");
-
-    return {
-      content: [{ type: "text" as const, text: output }],
-    };
-  }
-);
 
 // ---- Tool: search_memory ----
 server.tool(
   "search_memory",
-  "Searches the collective memory of the Council: agent memories (lessons learned, " +
-    "evaluations), personalities, project documentation, and skills. " +
+  "Searches the collective memory: agent memories (lessons learned, evaluations), " +
+    "and optionally personalities, project documentation, and skills. " +
     "Use this tool to learn from past experiences before starting a task.",
   {
     query: z.string().min(2).describe(
@@ -1126,6 +248,9 @@ server.tool(
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Source store: 'personal' (your own memory) or 'company' (shared FIRMENWISSEN)"
     ),
+    curator: z.boolean().optional().describe(
+      "Set true to show full metadata (access counts, roles, dates). For curators only."
+    ),
   },
   async ({ id, depth, prefix, after, before, search, limit: maxResults, store: storeName }) => {
     if (AGENT_ID === "UNKNOWN") {
@@ -1162,17 +287,14 @@ server.tool(
         }
 
         // Format output — tree-aware
-        // Entries with compound IDs (id contains ".") are sub-nodes, not root entries.
         const lines: string[] = [];
         for (const e of entries) {
           const isNode = e.id.includes(".");
 
           if (isNode) {
-            // Sub-node: show depth + content + children
             const depth = (e.id.match(/\./g) || []).length + 1;
             lines.push(`[${e.id}] L${depth}: ${e.level_1}`);
           } else {
-            // Root entry: show date + L1 + children
             const date = e.created_at.substring(0, 10);
             const accessed = e.access_count > 0 ? ` (${e.access_count}x accessed)` : "";
             const roleTag = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
@@ -1190,8 +312,6 @@ server.tool(
                 : "";
               lines.push(`  [${child.id}] L${childDepth}: ${child.content}${hint}`);
             }
-          } else if (e.children !== undefined && e.children.length === 0 && !e.id.includes(".")) {
-            // Root with no children — show nothing extra
           }
 
           if (e.links && e.links.length > 0) lines.push(`  Links: ${e.links.join(", ")}`);
@@ -1223,9 +343,10 @@ server.tool(
   }
 );
 
-// ---- Curator Tools (YGGDRASIL / ceo role only) ----
+// ---- Curator Tools (ceo role only) ----
 
-const AUDIT_STATE_FILE = path.join(PROJECT_DIR, "orchestrator", "audit_state.json");
+const AUDIT_STATE_FILE = process.env.HMEM_AUDIT_STATE_PATH
+  || path.join(PROJECT_DIR, "audit_state.json");
 
 function loadAuditState(): Record<string, string> {
   try {
@@ -1237,6 +358,8 @@ function loadAuditState(): Record<string, string> {
 }
 
 function saveAuditState(state: Record<string, string>): void {
+  const dir = path.dirname(AUDIT_STATE_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   const tmp = AUDIT_STATE_FILE + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(state, null, 2), "utf-8");
   fs.renameSync(tmp, AUDIT_STATE_FILE);
@@ -1248,26 +371,28 @@ function isCurator(): boolean {
 
 server.tool(
   "get_audit_queue",
-  "CURATOR ONLY (ceo role). Returns agents whose .hmem has changed since YGGDRASIL's last audit. " +
+  "CURATOR ONLY (ceo role). Returns agents whose .hmem has changed since last audit. " +
     "Use this at the start of each curation run to get the list of agents to process. " +
     "Each agent should be audited in a separate spawn to keep context bounded.",
   {},
   async () => {
     if (!isCurator()) {
       return {
-        content: [{ type: "text" as const, text: "ERROR: get_audit_queue is only available to the ceo/curator role (YGGDRASIL)." }],
+        content: [{ type: "text" as const, text: "ERROR: get_audit_queue is only available to the ceo/curator role." }],
         isError: true,
       };
     }
 
     const auditState = loadAuditState();
-    const agentsDir = path.join(PROJECT_DIR, "Agents");
-    const assistDir = path.join(PROJECT_DIR, "Assistenten");
 
+    // Scan for .hmem files in PROJECT_DIR and subdirectories (1 level deep)
     const queue: Array<{ name: string; hmemPath: string; modified: string; lastAudit: string | null }> = [];
 
-    for (const dir of [agentsDir, assistDir]) {
+    // Check common agent directory patterns
+    for (const subdir of ["Agents", "Assistenten", "agents", "."]) {
+      const dir = path.join(PROJECT_DIR, subdir);
       if (!fs.existsSync(dir)) continue;
+
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
         const name = entry.name;
@@ -1281,6 +406,17 @@ server.tool(
         if (!lastAudit || new Date(modified) > new Date(lastAudit)) {
           queue.push({ name, hmemPath, modified, lastAudit });
         }
+      }
+    }
+
+    // Also check for standalone memory.hmem in PROJECT_DIR
+    const defaultHmem = path.join(PROJECT_DIR, "memory.hmem");
+    if (fs.existsSync(defaultHmem)) {
+      const stat = fs.statSync(defaultHmem);
+      const modified = stat.mtime.toISOString();
+      const lastAudit = auditState["default"] || null;
+      if (!lastAudit || new Date(modified) > new Date(lastAudit)) {
+        queue.push({ name: "default", hmemPath: defaultHmem, modified, lastAudit });
       }
     }
 
@@ -1316,7 +452,7 @@ server.tool(
   async ({ agent_name, depth }) => {
     if (!isCurator()) {
       return {
-        content: [{ type: "text" as const, text: "ERROR: read_agent_memory is only available to the ceo/curator role (YGGDRASIL)." }],
+        content: [{ type: "text" as const, text: "ERROR: read_agent_memory is only available to the ceo/curator role." }],
         isError: true,
       };
     }
@@ -1376,7 +512,7 @@ server.tool(
   async ({ agent_name, entry_id, level_1, level_2, level_3, min_role }) => {
     if (!isCurator()) {
       return {
-        content: [{ type: "text" as const, text: "ERROR: fix_agent_memory is only available to the ceo/curator role (YGGDRASIL)." }],
+        content: [{ type: "text" as const, text: "ERROR: fix_agent_memory is only available to the ceo/curator role." }],
         isError: true,
       };
     }
@@ -1426,7 +562,7 @@ server.tool(
   async ({ agent_name, entry_id }) => {
     if (!isCurator()) {
       return {
-        content: [{ type: "text" as const, text: "ERROR: delete_agent_memory is only available to the ceo/curator role (YGGDRASIL)." }],
+        content: [{ type: "text" as const, text: "ERROR: delete_agent_memory is only available to the ceo/curator role." }],
         isError: true,
       };
     }
@@ -1469,7 +605,7 @@ server.tool(
   async ({ agent_name }) => {
     if (!isCurator()) {
       return {
-        content: [{ type: "text" as const, text: "ERROR: mark_audited is only available to the ceo/curator role (YGGDRASIL)." }],
+        content: [{ type: "text" as const, text: "ERROR: mark_audited is only available to the ceo/curator role." }],
         isError: true,
       };
     }

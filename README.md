@@ -84,7 +84,24 @@ A dedicated curator agent runs periodically to maintain memory health. It tracks
 
 ## Quick Start
 
-### 1. Build
+### Option A: Interactive Installer (Recommended)
+
+```bash
+git clone https://github.com/Bumblebiber/hmem.git
+cd hmem
+npm install && npm run build
+node dist/cli.js init
+```
+
+The installer will:
+- Detect your installed AI coding tools (Claude Code, OpenCode, Cursor, Windsurf, Cline)
+- Ask whether to install system-wide or project-local
+- Configure each tool's MCP settings automatically
+- Create a default memory database
+
+### Option B: Manual Setup
+
+#### 1. Build
 
 ```bash
 git clone https://github.com/Bumblebiber/hmem.git
@@ -93,70 +110,67 @@ npm install
 npm run build
 ```
 
-### 2. Verify the server starts
-
-Before connecting to your AI tool, test the server directly:
+#### 2. Verify the server starts
 
 ```bash
 # Linux / macOS
-HMEM_PROJECT_DIR="/absolute/path/to/hmem" node dist/mcp-server.js
+HMEM_PROJECT_DIR="$(pwd)" node dist/mcp-server.js
 
 # Windows (PowerShell)
 $env:HMEM_PROJECT_DIR="C:\path\to\hmem"; node dist\mcp-server.js
 ```
 
-Expected output: `[MCP:...] Config: levels=[120,...] depth=5 ...` — then the process waits (that's correct, it's listening on stdio).
-Press `Ctrl+C` to stop.
+Expected output: `[hmem:default] Config: levels=[120,...] depth=5 ...` — then the process waits (that's correct, it's listening on stdio). Press `Ctrl+C` to stop.
 
-If you see an error here, fix it before proceeding to step 3.
+#### 3. Register the MCP server
 
-### 3. Register the MCP server
-
-Choose the method for your AI tool:
-
----
-
-**Claude Code** — global registration (works in any directory):
+**Claude Code** — global registration:
 
 ```bash
 claude mcp add hmem -s user node "/absolute/path/to/hmem/dist/mcp-server.js" \
-  --env HMEM_PROJECT_DIR="/absolute/path/to/hmem" \
-  --env HMEM_AGENT_ID="YOUR_AGENT_NAME"
+  --env HMEM_PROJECT_DIR="/absolute/path/to/hmem"
 ```
 
-> **Windows note:** If your path contains spaces (e.g. `C:\My Documents\...`), verify the entry in `~/.claude.json` after running this command — Claude Code may store the path incorrectly. Open the file and ensure the path uses double backslashes: `"C:\\My Documents\\hmem\\dist\\mcp-server.js"`. Fix manually if needed.
+**OpenCode** — add to `~/.config/opencode/opencode.json` (or project-level `opencode.json`):
 
----
+```json
+{
+  "mcp": {
+    "hmem": {
+      "type": "local",
+      "command": ["node", "/absolute/path/to/hmem/dist/mcp-server.js"],
+      "environment": {
+        "HMEM_PROJECT_DIR": "/absolute/path/to/hmem"
+      },
+      "enabled": true
+    }
+  }
+}
+```
 
-**Gemini CLI / OpenCode** — place `.mcp.json` in your project directory:
+**Cursor / Windsurf / Cline** — add to `~/.cursor/mcp.json` (or equivalent):
 
 ```json
 {
   "mcpServers": {
     "hmem": {
-      "type": "stdio",
       "command": "node",
       "args": ["/absolute/path/to/hmem/dist/mcp-server.js"],
       "env": {
-        "HMEM_PROJECT_DIR": "/absolute/path/to/hmem",
-        "HMEM_AGENT_ID": "YOUR_AGENT_NAME"
+        "HMEM_PROJECT_DIR": "/absolute/path/to/hmem"
       }
     }
   }
 }
 ```
 
-`HMEM_AGENT_ID` is optional — if not set, memories are stored in `memory.hmem` at the project root.
+> **Windows note:** Use double backslashes in JSON paths: `"C:\\Users\\name\\hmem\\dist\\mcp-server.js"`.
 
----
+#### 4. Verify the connection
 
-### 4. Verify the connection
+Fully restart your AI tool, then call `read_memory()`. You should see a memory listing (empty on first run is fine).
 
-Fully restart your AI tool, then run `/hmem-read` (after installing skill files below) or call `read_memory()` directly. You should see a memory listing (empty on first run is fine).
-
-If the tool is not available, run `/mcp` in Claude Code to check the server status.
-
-For complete setup instructions, run `/hmem-setup` in your AI tool (after installing the skill files below).
+In Claude Code, run `/mcp` to check the server status.
 
 ---
 
@@ -214,14 +228,6 @@ cp skills/memory-curate/SKILL.md ~/.config/opencode/skills/memory-curate/SKILL.m
 | `fix_agent_memory` | Correct a specific memory entry |
 | `delete_agent_memory` | Delete a memory entry (use sparingly) |
 | `mark_audited` | Mark an agent as audited |
-
-### Das Althing Integration Tools
-
-hmem also bundles tools for the [Das Althing](https://github.com/Bumblebiber/das-althing) multi-agent orchestrator. If you're not using Das Althing, these tools will be visible but inactive:
-
-`spawn_agent`, `list_templates`, `get_budget_status`, `get_agent_status`, `send_message`, `get_all_agents`, `cancel_agent`, `suggest_brainstorm_team`
-
-These will be split into a separate package in a future release.
 
 ---
 

@@ -10,8 +10,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "declaration": false,
-    "sourceMap": false
+    "declaration": true,
+    "sourceMap": true
   },
   "include": ["src/**/*"]
 }
