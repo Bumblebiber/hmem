@@ -71,6 +71,15 @@ const TOOLS: Record<string, ToolConfig> = {
     format: "standard",
     detect: () => fs.existsSync(path.join(HOME, ".vscode")),
   },
+  "gemini-cli": {
+    name: "Gemini CLI",
+    globalDir: path.join(HOME, ".gemini"),
+    globalFile: "settings.json",
+    projectDir: ".gemini",
+    projectFile: "settings.json",
+    format: "standard",
+    detect: () => fs.existsSync(path.join(HOME, ".gemini")),
+  },
 };
 
 // ---- Readline helpers ----
@@ -230,7 +239,7 @@ export async function runInit(): Promise<void> {
 
     if (allToolIds.length === 0) {
       console.log("\n  No supported tools detected for this scope.");
-      console.log("  Install Claude Code, OpenCode, Cursor, or Windsurf first.\n");
+      console.log("  Install Claude Code, OpenCode, Cursor, Windsurf, or Gemini CLI first.\n");
       return;
     }
 
