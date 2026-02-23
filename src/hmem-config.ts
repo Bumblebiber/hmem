@@ -79,6 +79,7 @@ export const DEFAULT_PREFIXES: Record<string, string> = {
   M: "Milestone",
   S: "Skill",
   F: "Favorite",
+  N: "Navigator",
 };
 
 export const DEFAULT_CONFIG: HmemConfig = {

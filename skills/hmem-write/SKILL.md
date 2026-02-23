@@ -40,6 +40,29 @@ write_memory(
 | **M** | Milestone | Key milestones, releases |
 | **S** | Skill | Skills, processes, how-to guides |
 | **F** | Favorite | Frequently needed reference info (always loaded with L2 detail) |
+| **N** | Navigator | Code pointers — where something lives in the codebase |
+
+### N — Navigator (Code Pointers)
+
+Use `N` to save a pointer to a specific file, function, or code location so you don't have to search for it next session.
+
+```
+write_memory(
+  prefix="N",
+  content="Link-Auflösung beim read_memory-Aufruf
+	src/hmem-store.ts ~line 269 — read() method, ID branch
+	Guard: resolveLinks !== false prevents circular refs
+	Introduced in v1.4.0",
+  links=["E0069"]
+)
+```
+
+**L1:** What it is — one sentence describing the concept/feature
+**L2:** Exact file path + line range + function/method name
+**L3:** Context, caveats, related patterns
+**Links:** Related entries (errors, decisions, lessons)
+
+Update an `N` entry whenever code moves or the logic changes — stale pointers are worse than none.
 
 ---
 
