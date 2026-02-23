@@ -429,7 +429,7 @@ server.tool(
     after: z.string().optional().describe("Only entries after this date (ISO format, e.g. '2026-02-15')"),
     before: z.string().optional().describe("Only entries before this date (ISO format)"),
     search: z.string().optional().describe("Full-text search across all memory levels"),
-    limit: z.number().optional().describe("Max results (default: 50)"),
+    limit: z.number().optional().describe("Max results (default: unlimited — all L1 entries are returned)"),
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Source store: 'personal' (your own memory) or 'company' (shared FIRMENWISSEN)"
     ),
@@ -463,7 +463,7 @@ server.tool(
 
         const entries = hmemStore.read({
           id, depth: effectiveDepth, prefix, after, before, search,
-          limit: maxResults || 50,
+          limit: maxResults,
           agentRole: storeName === "company" ? agentRole : undefined,
         });
 

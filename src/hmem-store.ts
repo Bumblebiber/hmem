@@ -287,7 +287,7 @@ export class HmemStore {
    * For bulk queries: returns L1 summaries (depth=1 default).
    */
   read(opts: ReadOptions = {}): MemoryEntry[] {
-    const limit = opts.limit || this.cfg.defaultReadLimit;
+    const limit = opts.limit; // undefined = no limit (all entries)
     const roleFilter = this.buildRoleFilter(opts.agentRole);
 
     // Single entry by ID (root or compound node)
@@ -336,14 +336,16 @@ export class HmemStore {
       const where = roleFilter ? `WHERE ${searchCondition} AND ${roleFilter}` : `WHERE ${searchCondition}`;
 
       // Also search memory_nodes content
+      const nodeLimitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
       const nodeRows = this.db.prepare(
-        `SELECT DISTINCT root_id FROM memory_nodes WHERE content LIKE ? LIMIT ?`
-      ).all(pattern, limit) as any[];
+        `SELECT DISTINCT root_id FROM memory_nodes WHERE content LIKE ?${nodeLimitClause}`
+      ).all(pattern) as any[];
       const nodeRootIds = new Set(nodeRows.map(r => r.root_id));
 
+      const memLimitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
       const memRows = this.db.prepare(
-        `SELECT * FROM memories ${where} ORDER BY created_at DESC LIMIT ?`
-      ).all(pattern, limit) as any[];
+        `SELECT * FROM memories ${where} ORDER BY created_at DESC${memLimitClause}`
+      ).all(pattern) as any[];
 
       // Merge: include any roots found in node search too
       const allIds = new Set(memRows.map((r: any) => r.id));
@@ -388,6 +390,7 @@ export class HmemStore {
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     // Sort by effective_date: the most recent of root created_at OR latest child node created_at.
     // This ensures entries with recently appended L2 nodes surface alongside genuinely new entries.
+    const limitClause = limit !== undefined ? `LIMIT ${limit}` : "";
     const rows = this.db.prepare(`
       SELECT m.*,
         COALESCE(
@@ -397,8 +400,8 @@ export class HmemStore {
       FROM memories m
       ${where}
       ORDER BY effective_date DESC
-      LIMIT ?
-    `).all(...params, limit) as any[];
+      ${limitClause}
+    `).all(...params) as any[];
 
     if (opts.prefix || opts.after || opts.before) {
       for (const row of rows) this.bumpAccess(row.id);
