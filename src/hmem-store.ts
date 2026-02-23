@@ -49,7 +49,22 @@ export interface MemoryEntry {
   last_accessed: string | null;
   links: string[] | null;
   min_role: AgentRole;
-  children?: MemoryNode[];       // populated for ID-based reads
+  /** True if the entry has been marked as no longer valid. Shown with [⚠ OBSOLETE] in reads. */
+  obsolete?: boolean;
+  /**
+   * Set by bulk reads to indicate why this entry received extra depth inline.
+   * 'favorite' = F prefix, 'access' = top-N by access_count.
+   * Rendered as [♥] or [★] in output.
+   */
+  promoted?: "access" | "favorite";
+  /**
+   * In bulk reads: number of direct children NOT shown (only the latest child is included).
+   * undefined = ID-based read (all direct children shown as usual).
+   * 0 = bulk read, entry has exactly 1 child (nothing hidden).
+   * N>0 = bulk read, N additional children exist beyond the one shown.
+   */
+  hiddenChildrenCount?: number;
+  children?: MemoryNode[];       // populated for ID-based reads and bulk reads (latest child)
   linkedEntries?: MemoryEntry[]; // auto-resolved linked entries (ID-based reads only)
 }
 
@@ -114,7 +129,8 @@ CREATE TABLE IF NOT EXISTS memories (
     access_count  INTEGER DEFAULT 0,
     last_accessed TEXT,
     links         TEXT,
-    min_role      TEXT DEFAULT 'worker'
+    min_role      TEXT DEFAULT 'worker',
+    obsolete      INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_prefix ON memories(prefix);
 CREATE INDEX IF NOT EXISTS idx_created ON memories(created_at);
@@ -141,9 +157,10 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 `;
 
-// Migration: add min_role to existing databases that lack it
+// Migration: add columns to existing databases that lack them
 const MIGRATIONS = [
   "ALTER TABLE memories ADD COLUMN min_role TEXT DEFAULT 'worker'",
+  "ALTER TABLE memories ADD COLUMN obsolete INTEGER DEFAULT 0",
 ];
 
 // ---- HmemStore class ----
@@ -364,9 +381,19 @@ export class HmemStore {
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const rows = this.db.prepare(
-      `SELECT * FROM memories ${where} ORDER BY created_at DESC LIMIT ?`
-    ).all(...params, limit) as any[];
+    // Sort by effective_date: the most recent of root created_at OR latest child node created_at.
+    // This ensures entries with recently appended L2 nodes surface alongside genuinely new entries.
+    const rows = this.db.prepare(`
+      SELECT m.*,
+        COALESCE(
+          (SELECT MAX(n.created_at) FROM memory_nodes n WHERE n.root_id = m.id),
+          m.created_at
+        ) AS effective_date
+      FROM memories m
+      ${where}
+      ORDER BY effective_date DESC
+      LIMIT ?
+    `).all(...params, limit) as any[];
 
     if (opts.prefix || opts.after || opts.before) {
       for (const row of rows) this.bumpAccess(row.id);
@@ -390,10 +417,32 @@ export class HmemStore {
 
     return rows.map((r, i) => {
       let depth = resolveDepthForPosition(i, tiers);
-      if (r.prefix === "F" && depth < 2) depth = 2;
-      if (topAccessIds.has(r.id) && depth < 2) depth = 2;
-      const children = depth >= 2 ? this.fetchChildrenDeep(r.id, 2, depth) : undefined;
-      return this.rowToEntry(r, children);
+      let promoted: "access" | "favorite" | undefined;
+      if (r.prefix === "F") {
+        promoted = "favorite";
+        if (depth < 2) depth = 2;
+      } else if (topAccessIds.has(r.id)) {
+        promoted = "access";
+        if (depth < 2) depth = 2;
+      }
+
+      let children: MemoryNode[] | undefined;
+      let hiddenChildrenCount: number | undefined;
+
+      if (depth >= 2) {
+        const latest = this.fetchLatestChild(r.id, depth);
+        if (latest) {
+          children = [latest.node];
+          hiddenChildrenCount = latest.totalSiblings - 1;
+        } else {
+          hiddenChildrenCount = 0;
+        }
+      }
+
+      const entry = this.rowToEntry(r, children);
+      entry.promoted = promoted;
+      entry.hiddenChildrenCount = hiddenChildrenCount;
+      return entry;
     });
   }
 
@@ -480,13 +529,19 @@ export class HmemStore {
   /**
    * Update specific fields of an existing root entry (curator use only).
    */
-  update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role">>): boolean {
+  update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete">>): boolean {
     const sets: string[] = [];
     const params: any[] = [];
 
     for (const [key, val] of Object.entries(fields)) {
       sets.push(`${key} = ?`);
-      params.push(key === "links" && Array.isArray(val) ? JSON.stringify(val) : val);
+      if (key === "links" && Array.isArray(val)) {
+        params.push(JSON.stringify(val));
+      } else if (key === "obsolete") {
+        params.push(val ? 1 : 0);
+      } else {
+        params.push(val);
+      }
     }
     if (sets.length === 0) return false;
 
@@ -514,7 +569,7 @@ export class HmemStore {
    * For sub-nodes: updates node content only.
    * Does NOT modify children — use appendChildren to extend the tree.
    */
-  updateNode(id: string, newContent: string, links?: string[]): boolean {
+  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean): boolean {
     const trimmed = newContent.trim();
     if (id.includes(".")) {
       // Sub-node in memory_nodes — check char limit for its depth
@@ -537,6 +592,10 @@ export class HmemStore {
       if (links !== undefined) {
         sets.push("links = ?");
         params.push(links.length > 0 ? JSON.stringify(links) : null);
+      }
+      if (obsolete !== undefined) {
+        sets.push("obsolete = ?");
+        params.push(obsolete ? 1 : 0);
       }
       params.push(id);
       const result = this.db.prepare(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`).run(...params);
@@ -706,6 +765,34 @@ export class HmemStore {
   }
 
   /**
+   * Fetch only the single most recently created direct child of a parent,
+   * along with the total sibling count. Used for token-efficient bulk reads.
+   * Returns null if no children exist.
+   */
+  private fetchLatestChild(parentId: string, maxDepth: number):
+    { node: MemoryNode; totalSiblings: number } | null {
+    const rows = this.db.prepare(
+      "SELECT * FROM memory_nodes WHERE parent_id = ? ORDER BY created_at DESC, seq DESC LIMIT 1"
+    ).all(parentId) as any[];
+    if (rows.length === 0) return null;
+
+    const totalRow = this.db.prepare(
+      "SELECT COUNT(*) as c FROM memory_nodes WHERE parent_id = ?"
+    ).get(parentId) as any;
+
+    const grandchildCount = (this.db.prepare(
+      "SELECT COUNT(*) as c FROM memory_nodes WHERE parent_id = ?"
+    ).get(rows[0].id) as any).c;
+
+    const node = this.rowToNode(rows[0], grandchildCount);
+    if (maxDepth >= 3 && grandchildCount > 0) {
+      node.children = this.fetchChildrenDeep(rows[0].id, 3, maxDepth);
+    }
+
+    return { node, totalSiblings: totalRow.c };
+  }
+
+  /**
    * Fetch children recursively up to maxDepth.
    * currentDepth: the depth level of the children being fetched (2 = L2, 3 = L3, …)
    * maxDepth: stop recursing when currentDepth > maxDepth
@@ -757,6 +844,7 @@ export class HmemStore {
       last_accessed: row.last_accessed,
       links: row.links ? JSON.parse(row.links) : null,
       min_role: row.min_role || "worker",
+      obsolete: row.obsolete === 1,
       children,
     };
   }

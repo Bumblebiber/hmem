@@ -34,6 +34,7 @@ Read the file and show the user a clear table of current values vs. defaults:
 | `maxDepth` | … | 5 | How many nesting levels are available (1–5). 5 is the maximum. |
 | `defaultReadLimit` | … | 100 | Max entries returned by a single `read_memory()` call. |
 | `recentDepthTiers` | … | [{count:10,depth:2},{count:3,depth:3}] | How much detail is auto-inlined for the most recent entries. See explanation below. |
+| `accessCountTopN` | … | 5 | Top-N most-accessed entries always get L2 inlined in bulk reads ("organic favorites"). These are shown with a [★] marker. Set to 0 to disable. |
 | `prefixes` | … | P,L,T,E,D,M,S,F | Category labels for memory entries. Custom prefixes are merged with defaults. |
 
 ### recentDepthTiers explained
@@ -66,6 +67,7 @@ Ask the user which parameter(s) they want to adjust. For each one:
 | `maxLnChars` | 1000 | 100000 | Higher = more detail possible, but rarely read. |
 | `maxDepth` | 2 | 5 | 3 is enough for most users. 5 for complex multi-agent setups. |
 | `defaultReadLimit` | 20 | 500 | Lower if startup feels slow. Higher if you have many entries. |
+| `accessCountTopN` | 0 | 20 | 0 = disabled. 5 is a good default. Raise if you have many frequently-accessed entries you want always visible. |
 
 **For custom prefixes:** Ask for a single letter + label (e.g. `R = Research`). Remind the user that custom prefixes are added on top of the defaults — they don't replace them.
 

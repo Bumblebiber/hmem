@@ -240,10 +240,14 @@ server.tool(
   "update_memory",
   "Update the text of an existing memory entry or sub-node (your own personal memory). " +
     "Only modifies the text at the specified ID — children are preserved unchanged.\n\n" +
-    "Use this when a memory entry has become outdated and needs a corrected summary.\n\n" +
-    "- Root entry (e.g. 'L0003'): updates the L1 summary, optionally updates links\n" +
-    "- Sub-node (e.g. 'L0003.2'): updates that node's content only\n\n" +
-    "To add new child nodes to an existing entry, use append_memory instead.\n" +
+    "Use cases:\n" +
+    "- Correct outdated wording: update_memory(id='L0003', content='corrected summary')\n" +
+    "- Fix a sub-node: update_memory(id='L0003.2', content='corrected detail')\n" +
+    "- Mark as no longer valid: update_memory(id='E0042', content='...', obsolete=true)\n\n" +
+    "Obsolete entries remain visible in reads with a [⚠ OBSOLETE] marker — " +
+    "they are not deleted, as past errors still carry learning value. " +
+    "The curator may eventually prune them.\n\n" +
+    "To add new child nodes, use append_memory. " +
     "To replace the entire tree, use delete_agent_memory + write_memory (curator only).",
   {
     id: z.string().describe("ID of the entry or node to update, e.g. 'L0003' or 'L0003.2'"),
@@ -251,11 +255,15 @@ server.tool(
     links: z.array(z.string()).optional().describe(
       "Optional: update linked entry IDs (root entries only). Replaces existing links."
     ),
+    obsolete: z.boolean().optional().describe(
+      "Mark this root entry as no longer valid (root entries only). " +
+      "Shown with [⚠ OBSOLETE] in reads. Does not delete the entry."
+    ),
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Target store: 'personal' (your own memory) or 'company' (shared FIRMENWISSEN, AL+ only)"
     ),
   },
-  async ({ id, content, links, store: storeName }) => {
+  async ({ id, content, links, obsolete, store: storeName }) => {
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker") as AgentRole;
 
@@ -281,19 +289,21 @@ server.tool(
           };
         }
 
-        const ok = hmemStore.updateNode(id, content, links);
+        const ok = hmemStore.updateNode(id, content, links, obsolete);
         const storeLabel = storeName === "company" ? "FIRMENWISSEN" : (templateName || "memory");
-        log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}`);
+        log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}`);
 
-        return {
-          content: [{
-            type: "text" as const,
-            text: ok
-              ? `Updated: ${id}` + (links !== undefined ? ` (links updated)` : "")
-              : `ERROR: Entry "${id}" not found in ${storeLabel}.`,
-          }],
-          isError: !ok,
-        };
+        if (!ok) {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: Entry "${id}" not found in ${storeLabel}.` }],
+            isError: true,
+          };
+        }
+
+        const parts: string[] = [`Updated: ${id}`];
+        if (links !== undefined) parts.push("links updated");
+        if (obsolete === true) parts.push("marked as [⚠ OBSOLETE]");
+        return { content: [{ type: "text" as const, text: parts.join(" | ") }] };
       } finally {
         hmemStore.close();
       }
@@ -466,21 +476,47 @@ server.tool(
             lines.push(`[${e.id}] L${depth}: ${e.level_1}`);
           } else {
             const date = e.created_at.substring(0, 10);
-            const accessed = e.access_count > 0 ? ` (${e.access_count}x accessed)` : "";
             const roleTag = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
-            lines.push(`[${e.id}] ${date}${roleTag}${accessed}`);
+            const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
+            const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
+            lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${obsoleteTag}`);
             lines.push(`  L1: ${e.level_1}`);
           }
 
-          // Children (populated for ID-based reads)
+          // Children
           if (e.children && e.children.length > 0) {
-            lines.push(`  ${e.children.length} ${e.children.length === 1 ? "child" : "children"}:`);
-            for (const child of e.children as MemoryNode[]) {
+            const isBulkRead = e.hiddenChildrenCount !== undefined;
+
+            if (isBulkRead) {
+              // Bulk read: show only the latest child with its date
+              const child = e.children[0] as MemoryNode;
+              const childDate = child.created_at.substring(0, 10);
               const childDepth = (child.id.match(/\./g) || []).length + 1;
-              const hint = (child.child_count ?? 0) > 0
-                ? `  (${child.child_count} ${child.child_count === 1 ? "child" : "children"} — use id="${child.id}" to expand)`
+              const childHint = (child.child_count ?? 0) > 0
+                ? ` (+${child.child_count} deeper — id="${child.id}")`
                 : "";
-              lines.push(`  [${child.id}] L${childDepth}: ${child.content}${hint}`);
+              lines.push(`  [${child.id}] ${childDate} L${childDepth}: ${child.content}${childHint}`);
+              // Render grandchildren if present
+              if (child.children && child.children.length > 0) {
+                for (const gc of child.children as MemoryNode[]) {
+                  const gcDepth = (gc.id.match(/\./g) || []).length + 1;
+                  const gcHint = (gc.child_count ?? 0) > 0 ? ` (id="${gc.id}")` : "";
+                  lines.push(`    [${gc.id}] L${gcDepth}: ${gc.content}${gcHint}`);
+                }
+              }
+              if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
+                lines.push(`  (+${e.hiddenChildrenCount} more — id="${e.id}" to see all)`);
+              }
+            } else {
+              // ID-based read: show all direct children
+              lines.push(`  ${e.children.length} ${e.children.length === 1 ? "child" : "children"}:`);
+              for (const child of e.children as MemoryNode[]) {
+                const childDepth = (child.id.match(/\./g) || []).length + 1;
+                const hint = (child.child_count ?? 0) > 0
+                  ? `  (${child.child_count} ${child.child_count === 1 ? "child" : "children"} — use id="${child.id}" to expand)`
+                  : "";
+                lines.push(`  [${child.id}] L${childDepth}: ${child.content}${hint}`);
+              }
             }
           }
 
@@ -694,18 +730,32 @@ server.tool(
 
 server.tool(
   "fix_agent_memory",
-  "CURATOR ONLY (ceo role). Correct a specific entry in any agent's memory. " +
-    "Use to fix wrong content, re-categorize (wrong prefix cannot be changed — delete + re-add), " +
-    "or adjust min_role clearance.",
+  "CURATOR ONLY (ceo role). Correct a specific entry or node in any agent's memory.\n\n" +
+    "Accepts both root IDs ('L0003') and compound node IDs ('L0003.2'):\n" +
+    "- Root ID: updates L1 summary text, min_role clearance, and/or obsolete flag\n" +
+    "- Compound node ID: updates the content of that specific node\n\n" +
+    "To fix wrong prefix: delete + re-add (prefix cannot be changed in-place).\n" +
+    "To consolidate fragmented P entries: use read_agent_memory to read them, " +
+    "fix_agent_memory to update the keeper entry, delete_agent_memory to remove duplicates.",
   {
     agent_name: z.string().describe("Template name of the agent, e.g. 'THOR'"),
-    entry_id: z.string().describe("Entry ID to fix, e.g. 'L0003'"),
-    level_1: z.string().optional().describe("Corrected Level 1 summary"),
-    level_2: z.string().optional().describe("Corrected Level 2 detail (null to clear)"),
-    level_3: z.string().optional().describe("Corrected Level 3 detail (null to clear)"),
-    min_role: z.enum(["worker", "al", "pl", "ceo"]).optional().describe("Update access clearance"),
+    entry_id: z.string().describe(
+      "Root entry ID ('L0003') or compound node ID ('L0003.2'). " +
+      "Node IDs update memory_nodes.content directly."
+    ),
+    content: z.string().optional().describe(
+      "New text content. For root entries: replaces the L1 summary. " +
+      "For node IDs: replaces that node's content."
+    ),
+    min_role: z.enum(["worker", "al", "pl", "ceo"]).optional().describe(
+      "Update access clearance (root entries only)."
+    ),
+    obsolete: z.boolean().optional().describe(
+      "Mark or unmark as obsolete (root entries only). " +
+      "Obsolete entries stay in memory but are shown with [⚠ OBSOLETE]."
+    ),
   },
-  async ({ agent_name, entry_id, level_1, level_2, level_3, min_role }) => {
+  async ({ agent_name, entry_id, content, min_role, obsolete }) => {
     if (!isCurator()) {
       return {
         content: [{ type: "text" as const, text: "ERROR: fix_agent_memory is only available to the ceo/curator role." }],
@@ -723,20 +773,49 @@ server.tool(
 
     const store = new HmemStore(hmemPath, hmemConfig);
     try {
-      const fields: any = {};
-      if (level_1 !== undefined) fields.level_1 = level_1;
-      if (level_2 !== undefined) fields.level_2 = level_2;
-      if (level_3 !== undefined) fields.level_3 = level_3;
-      if (min_role !== undefined) fields.min_role = min_role;
+      const isNode = entry_id.includes(".");
+      let ok = false;
+      const changed: string[] = [];
 
-      const ok = store.update(entry_id, fields);
-      log(`fix_agent_memory [CURATOR]: ${agent_name} ${entry_id} → ${ok ? "updated" : "not found"}`);
+      if (isNode) {
+        // Compound node ID — update memory_nodes.content
+        if (!content) {
+          return {
+            content: [{ type: "text" as const, text: "ERROR: 'content' is required when fixing a compound node ID." }],
+            isError: true,
+          };
+        }
+        ok = store.updateNode(entry_id, content);
+        if (ok) changed.push("content");
+      } else {
+        // Root entry — update memories table
+        if (!content && min_role === undefined && obsolete === undefined) {
+          return {
+            content: [{ type: "text" as const, text: "ERROR: Provide at least one of: content, min_role, obsolete." }],
+            isError: true,
+          };
+        }
+        if (content) {
+          ok = store.updateNode(entry_id, content, undefined, obsolete);
+          changed.push("L1");
+          if (obsolete !== undefined) changed.push("obsolete");
+        } else {
+          const fields: any = {};
+          if (min_role !== undefined) fields.min_role = min_role;
+          if (obsolete !== undefined) fields.obsolete = obsolete;
+          ok = store.update(entry_id, fields);
+        }
+        if (min_role !== undefined) changed.push("min_role");
+        if (!content && obsolete !== undefined) changed.push("obsolete");
+      }
+
+      log(`fix_agent_memory [CURATOR]: ${agent_name} ${entry_id} → ${ok ? "updated" : "not found"} (${changed.join(", ")})`);
 
       return {
         content: [{
           type: "text" as const,
           text: ok
-            ? `Fixed: ${agent_name}/${entry_id} (fields: ${Object.keys(fields).join(", ")})`
+            ? `Fixed: ${agent_name}/${entry_id} (${changed.join(", ")})`
             : `ERROR: Entry "${entry_id}" not found in ${agent_name}'s memory.`,
         }],
         isError: !ok,

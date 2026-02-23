@@ -42,6 +42,18 @@ write_memory(
 | **F** | Favorite | Frequently needed reference info (always loaded with L2 detail) |
 | **N** | Navigator | Code pointers — where something lives in the codebase |
 
+### Marking entries as obsolete
+
+When you notice that an entry is outdated — superseded by a newer approach, a fixed bug, or changed architecture — do **not** delete it. Mark it as obsolete:
+
+```
+update_memory(id="E0023", content="[original or corrected L1]", obsolete=true)
+```
+
+The entry stays in memory with a `[⚠ OBSOLETE]` marker. Past errors still carry learning value ("we tried this and it failed because..."). The curator may eventually prune it, but that's their decision, not yours.
+
+---
+
 ### N — Navigator (Code Pointers)
 
 Use `N` to save a pointer to a specific file, function, or code location so you don't have to search for it next session.
@@ -62,7 +74,7 @@ write_memory(
 **L3:** Context, caveats, related patterns
 **Links:** Related entries (errors, decisions, lessons)
 
-Update an `N` entry whenever code moves or the logic changes — stale pointers are worse than none.
+**Your responsibility:** Update your N entries whenever you notice code has moved or logic has changed. You don't need the curator for this — use `update_memory` directly. Stale pointers are worse than none. If you cannot verify whether the pointer is still valid, mark it obsolete: `update_memory(id="N0012", content="...", obsolete=true)`.
 
 ---
 
