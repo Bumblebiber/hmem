@@ -50,8 +50,6 @@ The SQLite file is created automatically on first write — just create the fold
 mkdir -p /your/project/Agents/YOUR_NAME
 ```
 
-For shared team knowledge (optional), hmem uses a `FIRMENWISSEN.hmem` file at the
-project root — created automatically on first `write_memory(store="company")`.
 
 ---
 
@@ -91,7 +89,7 @@ Add hmem to your `.mcp.json` (create it at your project root if it doesn't exist
 | `HMEM_AGENT_ID` | Unique identifier for this agent (e.g. `ALICE`, `DEVELOPER`) |
 | `HMEM_AGENT_ROLE` | Permission level: `worker` · `al` · `pl` · `ceo` |
 
-Roles control what entries in the shared `FIRMENWISSEN` store are visible.
+Roles control what entries in the shared company store are visible.
 `worker` sees everything marked `min_role: worker`. Higher roles unlock more.
 
 ---

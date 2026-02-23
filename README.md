@@ -109,7 +109,6 @@ A dedicated curator agent runs periodically to maintain memory health. It detect
 - **Effective-date sorting** — entries with recent appends surface to the top (old P entries grow over time without losing their position)
 - **Token-efficient bulk reads** — only the most recent L2 child is shown in bulk reads, with a "+N more" hint
 - **Per-agent memory** — each agent has its own `.hmem` file (SQLite)
-- **Shared company knowledge** — `company` store with role-based access control
 - **Skill-file driven** — agents are instructed via skill files, no hardcoded logic
 - **MCP-native** — works with Claude Code, Gemini CLI, OpenCode, and any MCP-compatible tool
 
@@ -298,7 +297,6 @@ The `hmem init` installer asks which mode you prefer and creates the directory a
 ~/.hmem/                     # System-wide memory directory
   memory.hmem                # Default agent memory (when no HMEM_AGENT_ID is set)
   SIGURD.hmem                # Named agent memory (HMEM_AGENT_ID=SIGURD)
-  company.hmem          # Shared company knowledge (optional)
   hmem.config.json           # Configuration file
   audit_state.json           # Curator state (optional)
 ```

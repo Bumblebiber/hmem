@@ -149,8 +149,7 @@ server.tool(
     "The system auto-assigns an ID and timestamp. " +
     `Use prefix to categorize: ${prefixList}.\n\n` +
     "Store types:\n" +
-    "  personal (default): Your private memory\n" +
-    "  company: Shared knowledge base ( company store) — requires AL+ role to write",
+    "  personal (default): Your private memory\n",
   {
     prefix: z.string().toUpperCase().describe(
       `Memory category: ${prefixList}`
@@ -170,10 +169,10 @@ server.tool(
       "Use for reference info you need to see every session, regardless of category."
     ),
     store: z.enum(["personal", "company"]).default("personal").describe(
-      "Target store: 'personal' (your own memory) or 'company' (shared company store, AL+ only)"
+      "Target store: 'personal' or 'company'"
     ),
     min_role: z.enum(["worker", "al", "pl", "ceo"]).default("worker").describe(
-      "Minimum role to see this entry (company store only). 'worker' = everyone, 'al' = AL+PL+CEO, etc."
+      "Minimum role to see this entry"
     ),
   },
   async ({ prefix, content, links, favorite, store: storeName, min_role: minRole }) => {
@@ -268,7 +267,7 @@ server.tool(
       "Favorites are always shown with L2 detail in bulk reads."
     ),
     store: z.enum(["personal", "company"]).default("personal").describe(
-      "Target store: 'personal' (your own memory) or 'company' (shared company store, AL+ only)"
+      "Target store: 'personal' or 'company'"
     ),
   },
   async ({ id, content, links, obsolete, favorite, store: storeName }) => {
@@ -348,7 +347,7 @@ server.tool(
       "Example: 'New point\\n\\tSub-detail'"
     ),
     store: z.enum(["personal", "company"]).default("personal").describe(
-      "Target store: 'personal' (your own memory) or 'company' (shared company store, AL+ only)"
+      "Target store: 'personal' or 'company'"
     ),
   },
   async ({ id, content, store: storeName }) => {
@@ -420,8 +419,7 @@ server.tool(
     "Lazy loading: ID queries always return the node + its DIRECT children only.\n" +
     "To go deeper, call read_memory(id=child_id). depth parameter is ignored for ID queries.\n\n" +
     "Store types:\n" +
-    "  personal (default): Your private memory\n" +
-    "  company: Shared knowledge base ( company store) — filtered by your role clearance",
+    "  personal (default): Your private memory\n",
   {
     id: z.string().optional().describe("Specific memory ID, e.g. 'P0001' or 'L0023'"),
     depth: z.number().min(1).max(3).optional().describe("How deep to read (1-3). Default: 2 when reading by ID, 1 for listings. L4/L5 accessible via direct node ID only."),
@@ -431,7 +429,7 @@ server.tool(
     search: z.string().optional().describe("Full-text search across all memory levels"),
     limit: z.number().optional().describe("Max results (default: unlimited — all L1 entries are returned)"),
     store: z.enum(["personal", "company"]).default("personal").describe(
-      "Source store: 'personal' (your own memory) or 'company' (shared company store)"
+      "Source store: 'personal' or 'company'"
     ),
     curator: z.boolean().optional().describe(
       "Set true to show full metadata (access counts, roles, dates). For curators only."

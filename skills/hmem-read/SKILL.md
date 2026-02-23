@@ -46,7 +46,6 @@ After the initial `read_memory()`, use these patterns to drill deeper:
 ```
 # Filter by category
 read_memory(prefix="E")          # only errors
-read_memory(store="company")     # shared company knowledge
 
 # Expand a root entry → shows L2 children
 read_memory(id="E0042")
