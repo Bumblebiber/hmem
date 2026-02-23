@@ -173,24 +173,32 @@ In Claude Code, run `/mcp` to check the server status.
 
 ## Skill Files
 
-Skill files teach your AI tool how to use hmem correctly. Copy them to your tool's global skills directory.
-
-> **Note:** `hmem init` copies skills automatically. Only use the manual steps below if you skipped the installer.
+Skill files teach your AI tool how to use hmem correctly. Copy them to your tool's global skills directory, then restart your AI tool.
 
 > **After copying skills, fully restart your terminal and AI tool** — skills are loaded at startup and won't appear in a running session.
 
-If you installed via npm, find the skills in the package directory:
+### Available skills
+
+| Slash command | What it does | Notes |
+|---|---|---|
+| `/hmem-read` | Load your memory at session start | Call this at the beginning of every session |
+| `/save` | Save session learnings to memory, then commit + push | Commit/push only runs if you are inside a git repo with uncommitted changes |
+| `/hmem-config` | View and adjust memory settings (`hmem.config.json`) | Explains each parameter, lets you change values interactively |
+| `/memory-curate` | Audit and clean up memory entries | Advanced — untested, use with caution |
+
+### Copy skills to your tool
+
+Find the skills directory in the installed package:
 
 ```bash
-HMEM_DIR="$(npm root -g)/hmem"   # global install
-# or: HMEM_DIR="$(dirname $(realpath $(which hmem)))"
+HMEM_DIR="$(npm root -g)/hmem-mcp"
 ```
 
 If you cloned from source, the skills are in the `skills/` directory.
 
 **Claude Code:**
 ```bash
-for skill in hmem-read hmem-write save memory-curate; do
+for skill in hmem-read hmem-write save hmem-config memory-curate; do
   mkdir -p ~/.claude/skills/$skill
   cp "$HMEM_DIR/skills/$skill/SKILL.md" ~/.claude/skills/$skill/SKILL.md
 done
@@ -198,7 +206,7 @@ done
 
 **Gemini CLI:**
 ```bash
-for skill in hmem-read hmem-write save memory-curate; do
+for skill in hmem-read hmem-write save hmem-config memory-curate; do
   mkdir -p ~/.gemini/skills/$skill
   cp "$HMEM_DIR/skills/$skill/SKILL.md" ~/.gemini/skills/$skill/SKILL.md
 done
@@ -206,7 +214,7 @@ done
 
 **OpenCode:**
 ```bash
-for skill in hmem-read hmem-write save memory-curate; do
+for skill in hmem-read hmem-write save hmem-config memory-curate; do
   mkdir -p ~/.config/opencode/skills/$skill
   cp "$HMEM_DIR/skills/$skill/SKILL.md" ~/.config/opencode/skills/$skill/SKILL.md
 done

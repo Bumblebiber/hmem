@@ -473,7 +473,15 @@ export async function runInit(): Promise<void> {
 
     console.log(`\n  Done! Restart your AI tool(s) to activate hmem.\n`);
     console.log(`  Memory directory: ${absMemDir}`);
-    console.log(`\n  Test: Open your AI tool and call read_memory() — it should respond.\n`);
+    console.log(`\n  Available slash commands (after copying skill files — see README):\n`);
+    console.log(`    /hmem-read     — Load your memory at session start`);
+    console.log(`    /save          — Save session learnings to memory,`);
+    console.log(`                     then commit + push (only if in a git repo with uncommitted changes)`);
+    console.log(`    /hmem-config   — View and adjust memory settings`);
+    console.log(`    /memory-curate — Audit and clean up memory entries`);
+    console.log(`                     (advanced — untested, use with caution)\n`);
+    console.log(`  Skill files: https://github.com/Bumblebiber/hmem#skill-files\n`);
+    console.log(`  Test: Open your AI tool and call read_memory() — it should respond.\n`);
 
   } finally {
     rl.close();
