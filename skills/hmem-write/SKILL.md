@@ -39,8 +39,28 @@ write_memory(
 | **T** | Task | Task notes, work progress |
 | **M** | Milestone | Key milestones, releases |
 | **S** | Skill | Skills, processes, how-to guides |
-| **F** | Favorite | Frequently needed reference info (always loaded with L2 detail) |
 | **N** | Navigator | Code pointers — where something lives in the codebase |
+
+**Custom prefixes:** If none of the above fit, you can use any single uppercase letter. To register it officially (so the system validates it), add it to `hmem.config.json` under `"prefixes"`:
+```json
+{ "prefixes": { "R": "Research" } }
+```
+Custom prefixes are merged with the defaults — they don't replace them. Without registering, the system will reject the prefix.
+
+### Marking entries as favorites
+
+Mark any entry as a favorite to ensure it always appears with its L2 detail in bulk reads (alongside a `[♥]` marker). Use this for reference info you need to see every session — API endpoints, key decisions, frequently looked-up patterns.
+
+```
+write_memory(prefix="D", content="...", favorite=true)           # set at creation
+update_memory(id="D0010", content="...", favorite=true)          # set on existing
+update_memory(id="D0010", content="...", favorite=false)         # clear
+```
+
+Favorites are **not** a prefix — they are a flag on any entry regardless of category.
+Use sparingly: if everything is a favorite, nothing is. Prefer high-value reference entries over fleeting notes.
+
+---
 
 ### Marking entries as obsolete
 
@@ -111,8 +131,6 @@ write_memory(
 | Unexpected tool/API behavior | What's in the documentation |
 
 One `write_memory` call per category — entire hierarchy in one `content` string.
-
-**Custom prefixes:** Additional prefixes can be added in `hmem.config.json` under the `"prefixes"` key (e.g. `"R": "Research"`).
 
 ---
 

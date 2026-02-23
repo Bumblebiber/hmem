@@ -1,7 +1,7 @@
 ---
-name: save
+name: hmem-save
 description: >
-  End-of-session save routine. Use when the user types /save or asks to
+  End-of-session save routine. Use when the user types /hmem-save or /save or asks to
   "save", "save session", or "save progress".
   Saves session learnings to memory via write_memory, commits git changes,
   then compacts the conversation context.

@@ -14,7 +14,7 @@
  *   Root entries: PREFIX + zero-padded sequence (e.g., P0001, L0023, T0042)
  *   Sub-nodes:    root_id + "." + sibling_seq, recursively (e.g., E0006.1, E0006.1.2)
  *
- * Prefixes: P=Project, L=Lesson, T=Task, E=Error, D=Decision, M=Milestone, F=Favorite, S=Skill
+ * Prefixes: P=Project, L=Lesson, T=Task, E=Error, D=Decision, M=Milestone, S=Skill, N=Navigator
  *
  * Role hierarchy: worker < al < pl < ceo
  * Each entry has a min_role — agents only see entries at or below their clearance.
@@ -51,9 +51,11 @@ export interface MemoryEntry {
   min_role: AgentRole;
   /** True if the entry has been marked as no longer valid. Shown with [⚠ OBSOLETE] in reads. */
   obsolete?: boolean;
+  /** True if the agent explicitly marked this entry as a favorite. Shown with [♥] in reads. */
+  favorite?: boolean;
   /**
    * Set by bulk reads to indicate why this entry received extra depth inline.
-   * 'favorite' = F prefix, 'access' = top-N by access_count.
+   * 'favorite' = favorite flag set, 'access' = top-N by access_count.
    * Rendered as [♥] or [★] in output.
    */
   promoted?: "access" | "favorite";
@@ -130,7 +132,8 @@ CREATE TABLE IF NOT EXISTS memories (
     last_accessed TEXT,
     links         TEXT,
     min_role      TEXT DEFAULT 'worker',
-    obsolete      INTEGER DEFAULT 0
+    obsolete      INTEGER DEFAULT 0,
+    favorite      INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_prefix ON memories(prefix);
 CREATE INDEX IF NOT EXISTS idx_created ON memories(created_at);
@@ -161,6 +164,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 const MIGRATIONS = [
   "ALTER TABLE memories ADD COLUMN min_role TEXT DEFAULT 'worker'",
   "ALTER TABLE memories ADD COLUMN obsolete INTEGER DEFAULT 0",
+  "ALTER TABLE memories ADD COLUMN favorite INTEGER DEFAULT 0",
 ];
 
 // ---- HmemStore class ----
@@ -215,7 +219,7 @@ export class HmemStore {
    * Each indented line → its own memory_nodes row with compound ID
    * Multiple lines at the same indent depth → siblings (new capability)
    */
-  write(prefix: string, content: string, links?: string[], minRole: AgentRole = "worker"): WriteResult {
+  write(prefix: string, content: string, links?: string[], minRole: AgentRole = "worker", favorite?: boolean): WriteResult {
     prefix = prefix.toUpperCase();
     if (!this.cfg.prefixes[prefix]) {
       const valid = Object.entries(this.cfg.prefixes).map(([k, v]) => `${k}=${v}`).join(", ");
@@ -248,8 +252,8 @@ export class HmemStore {
     }
 
     const insertRoot = this.db.prepare(`
-      INSERT INTO memories (id, prefix, seq, created_at, level_1, level_2, level_3, level_4, level_5, links, min_role)
-      VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+      INSERT INTO memories (id, prefix, seq, created_at, level_1, level_2, level_3, level_4, level_5, links, min_role, favorite)
+      VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?)
     `);
 
     const insertNode = this.db.prepare(`
@@ -263,7 +267,8 @@ export class HmemStore {
         rootId, prefix, seq, timestamp,
         level1,
         links ? JSON.stringify(links) : null,
-        minRole
+        minRole,
+        favorite ? 1 : 0
       );
       for (const node of nodes) {
         insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.content, timestamp);
@@ -418,7 +423,7 @@ export class HmemStore {
     return rows.map((r, i) => {
       let depth = resolveDepthForPosition(i, tiers);
       let promoted: "access" | "favorite" | undefined;
-      if (r.prefix === "F") {
+      if (r.favorite === 1) {
         promoted = "favorite";
         if (depth < 2) depth = 2;
       } else if (topAccessIds.has(r.id)) {
@@ -529,7 +534,7 @@ export class HmemStore {
   /**
    * Update specific fields of an existing root entry (curator use only).
    */
-  update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete">>): boolean {
+  update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite">>): boolean {
     const sets: string[] = [];
     const params: any[] = [];
 
@@ -537,7 +542,7 @@ export class HmemStore {
       sets.push(`${key} = ?`);
       if (key === "links" && Array.isArray(val)) {
         params.push(JSON.stringify(val));
-      } else if (key === "obsolete") {
+      } else if (key === "obsolete" || key === "favorite") {
         params.push(val ? 1 : 0);
       } else {
         params.push(val);
@@ -569,7 +574,7 @@ export class HmemStore {
    * For sub-nodes: updates node content only.
    * Does NOT modify children — use appendChildren to extend the tree.
    */
-  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean): boolean {
+  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean): boolean {
     const trimmed = newContent.trim();
     if (id.includes(".")) {
       // Sub-node in memory_nodes — check char limit for its depth
@@ -596,6 +601,10 @@ export class HmemStore {
       if (obsolete !== undefined) {
         sets.push("obsolete = ?");
         params.push(obsolete ? 1 : 0);
+      }
+      if (favorite !== undefined) {
+        sets.push("favorite = ?");
+        params.push(favorite ? 1 : 0);
       }
       params.push(id);
       const result = this.db.prepare(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`).run(...params);
@@ -845,6 +854,7 @@ export class HmemStore {
       links: row.links ? JSON.parse(row.links) : null,
       min_role: row.min_role || "worker",
       obsolete: row.obsolete === 1,
+      favorite: row.favorite === 1,
       children,
     };
   }

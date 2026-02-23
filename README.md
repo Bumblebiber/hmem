@@ -56,16 +56,38 @@ write_memory(prefix="L", content="Always restart MCP server after recompiling Ty
 On spawn, the agent receives all Level 1 summaries. Deeper levels are fetched on demand — by ID, one branch at a time.
 
 ```
-read_memory()              # → all L1 summaries (~20 tokens)
+read_memory()              # → all L1 summaries
 read_memory(id="L0003")    # → L1 + direct L2 children for this entry
 read_memory(id="L0003.2")  # → that L2 node + its L3 children
 ```
 
 Each node gets a compound ID (`L0003.2.1`) so any branch is individually addressable.
 
+### Updating Memory
+
+Entries can be updated without deleting and recreating them:
+
+```
+update_memory(id="L0003", content="Corrected L1 summary")
+update_memory(id="L0003.2", content="Fixed sub-node text")
+append_memory(id="L0003", content="New finding\n\tSub-detail")
+```
+
+`update_memory` replaces the text of a single node (children preserved). `append_memory` adds new child nodes to an existing entry.
+
+### Obsolete Entries
+
+When an entry is outdated but still carries learning value, mark it as obsolete rather than deleting it:
+
+```
+update_memory(id="E0023", content="...", obsolete=true)
+```
+
+Obsolete entries stay visible with a `[⚠ OBSOLETE]` marker. Past errors still teach future agents what not to do. The curator may prune them eventually.
+
 ### Memory Curation
 
-A dedicated curator agent runs periodically to maintain memory health. It tracks retrieval counts per entry, promotes frequently accessed memories, and prunes rarely accessed ones — a form of the Ebbinghaus Forgetting Curve.
+A dedicated curator agent runs periodically to maintain memory health. It detects duplicates, merges fragmented entries, marks stale pointers, and prunes low-value content — a form of the Ebbinghaus Forgetting Curve.
 
 ---
 
@@ -74,9 +96,14 @@ A dedicated curator agent runs periodically to maintain memory health. It tracks
 - **Hierarchical retrieval** — lazy loading of detail levels saves tokens
 - **True tree structure** — multiple siblings at the same depth (not just one chain)
 - **Persistent across sessions** — agents remember previous work even after restart
+- **Editable without deletion** — `update_memory` and `append_memory` modify entries in place
+- **Obsolete flag** — mark outdated entries as `[⚠ OBSOLETE]` without losing their lessons
+- **Favorite flag** — mark any entry as `[♥]` to always see it with L2 detail, regardless of category
+- **Access-count promotion** — the top-N most-accessed entries are automatically shown with L2 detail (`[★]`)
+- **Effective-date sorting** — entries with recent appends surface to the top (old P entries grow over time without losing their position)
+- **Token-efficient bulk reads** — only the most recent L2 child is shown in bulk reads, with a "+N more" hint
 - **Per-agent memory** — each agent has its own `.hmem` file (SQLite)
 - **Shared company knowledge** — `FIRMENWISSEN` store with role-based access control
-- **Retrieval counting** — built-in importance scoring based on access frequency
 - **Skill-file driven** — agents are instructed via skill files, no hardcoded logic
 - **MCP-native** — works with Claude Code, Gemini CLI, OpenCode, and any MCP-compatible tool
 
@@ -179,12 +206,13 @@ Skill files teach your AI tool how to use hmem correctly. Copy them to your tool
 
 ### Available skills
 
-| Slash command | What it does | Notes |
-|---|---|---|
-| `/hmem-read` | Load your memory at session start | Call this at the beginning of every session |
-| `/save` | Save session learnings to memory, then commit + push | Commit/push only runs if you are inside a git repo with uncommitted changes |
-| `/hmem-config` | View and adjust memory settings (`hmem.config.json`) | Explains each parameter, lets you change values interactively |
-| `/memory-curate` | Audit and clean up memory entries | Advanced — untested, use with caution |
+| Slash command | What it does |
+|---|---|
+| `/hmem-read` | Load your memory at session start — call at the beginning of every session |
+| `/hmem-write` | Protocol for writing memories correctly (prefixes, hierarchy, anti-patterns) |
+| `/hmem-save` | Save session learnings to memory, then commit + push |
+| `/hmem-config` | View and adjust memory settings (`hmem.config.json`) interactively |
+| `/hmem-curate` | Audit and clean up memory entries (curator role required) |
 
 ### Copy skills to your tool
 
@@ -198,7 +226,7 @@ If you cloned from source, the skills are in the `skills/` directory.
 
 **Claude Code:**
 ```bash
-for skill in hmem-read hmem-write save hmem-config memory-curate; do
+for skill in hmem-read hmem-write hmem-save hmem-config hmem-curate; do
   mkdir -p ~/.claude/skills/$skill
   cp "$HMEM_DIR/skills/$skill/SKILL.md" ~/.claude/skills/$skill/SKILL.md
 done
@@ -206,7 +234,7 @@ done
 
 **Gemini CLI:**
 ```bash
-for skill in hmem-read hmem-write save hmem-config memory-curate; do
+for skill in hmem-read hmem-write hmem-save hmem-config hmem-curate; do
   mkdir -p ~/.gemini/skills/$skill
   cp "$HMEM_DIR/skills/$skill/SKILL.md" ~/.gemini/skills/$skill/SKILL.md
 done
@@ -214,7 +242,7 @@ done
 
 **OpenCode:**
 ```bash
-for skill in hmem-read hmem-write save hmem-config memory-curate; do
+for skill in hmem-read hmem-write hmem-save hmem-config hmem-curate; do
   mkdir -p ~/.config/opencode/skills/$skill
   cp "$HMEM_DIR/skills/$skill/SKILL.md" ~/.config/opencode/skills/$skill/SKILL.md
 done
@@ -240,7 +268,8 @@ done
 |------|-------------|
 | `get_audit_queue` | List agents whose memory has changed since last audit |
 | `read_agent_memory` | Read any agent's full memory (for curation) |
-| `fix_agent_memory` | Correct a specific memory entry |
+| `fix_agent_memory` | Correct a specific entry or sub-node in any agent's memory |
+| `append_agent_memory` | Add content to an existing entry in any agent's memory (for merging duplicates) |
 | `delete_agent_memory` | Delete a memory entry (use sparingly) |
 | `mark_audited` | Mark an agent as audited |
 
@@ -300,57 +329,70 @@ Place an optional `hmem.config.json` in your `HMEM_PROJECT_DIR` to tune behavior
   "maxLnChars": 50000,
   "maxDepth": 5,
   "defaultReadLimit": 100,
+  "accessCountTopN": 5,
   "recentDepthTiers": [
     { "count": 10, "depth": 2 },
     { "count": 3,  "depth": 3 }
   ],
   "prefixes": {
-    "P": "Project",
-    "L": "Lesson",
-    "T": "Task",
-    "E": "Error",
-    "D": "Decision",
-    "M": "Milestone",
-    "S": "Skill",
-    "F": "Favorite"
+    "R": "Research"
   }
 }
 ```
 
-### Custom prefixes
+### Memory prefixes
 
-The default prefixes (P, L, T, E, D, M, S, F) cover most use cases. To add your own, add entries to the `"prefixes"` key:
+The default prefixes cover most use cases:
 
-```json
-{
-  "prefixes": {
-    "R": "Research",
-    "B": "Bookmark",
-    "Q": "Question"
-  }
-}
+| Prefix | Category | When to use |
+|--------|----------|-------------|
+| `P` | Project | Project experiences, summaries |
+| `L` | Lesson | Lessons learned, best practices |
+| `E` | Error | Bugs, errors + their fix |
+| `D` | Decision | Architecture decisions with reasoning |
+| `T` | Task | Task notes, work progress |
+| `M` | Milestone | Key milestones, releases |
+| `S` | Skill | Skills, processes, how-to guides |
+| `N` | Navigator | Code pointers — where something lives in the codebase |
+
+To add your own, add entries to the `"prefixes"` key in `hmem.config.json`. Custom prefixes are **merged** with the defaults — you don't need to repeat the built-in ones.
+
+### Favorites
+
+Any entry can be marked as a **favorite** — regardless of its prefix category. Favorites always appear with their L2 detail in bulk reads, marked with `[♥]`.
+
+```
+write_memory(prefix="D", content="...", favorite=true)     # set at creation
+update_memory(id="D0010", content="...", favorite=true)    # set on existing entry
+update_memory(id="D0010", content="...", favorite=false)   # clear the flag
 ```
 
-Custom prefixes are **merged** with the defaults — you don't need to repeat the built-in ones. After adding prefixes, restart your AI tool so the MCP server picks up the new config.
-
-**Note:** Favorites (F) are special — they are always loaded with L2 detail, regardless of recency position.
+Use favorites for reference info you need to see every session — key decisions, API endpoints, frequently consulted patterns. Use sparingly: if everything is a favorite, nothing is.
 
 ### Access-count auto-promotion (`accessCountTopN`)
 
-The top-N most-accessed entries are automatically treated like Favorites (L2 inlined in bulk reads), regardless of recency.
+The top-N most-accessed entries are automatically promoted to L2 depth in bulk reads, marked with `[★]`. This creates "organic favorites" — entries that proved important in practice rise to the surface automatically.
 
 ```json
 { "accessCountTopN": 5 }
 ```
 
-This creates "organic favorites" — entries that proved important in practice rise to the surface automatically.
+Set to `0` to disable. Default: `5`.
 
 | Mechanism | When useful |
 |---|---|
-| **F prefix** | Entries you know are important from day 1 (reference data, cheatsheets) — even with zero access history |
+| **favorite flag** | Entries you know are important from day 1 — even with zero access history |
 | **accessCountTopN** | Entries that proved important over time — emerges from actual usage |
 
-Set `accessCountTopN: 0` to disable. Default: 5.
+### Token-efficient bulk reads
+
+In a default `read_memory()` call, each entry shows only its **most recently added** L2 child (with that child's timestamp). A `+N more` hint indicates when additional L2 nodes exist. This keeps the bulk output compact while remaining discoverable.
+
+To see all children of an entry, use `read_memory(id="P0005")`.
+
+### Effective-date sorting
+
+Entries are sorted by `effective_date` — the most recent timestamp across the entry and all its nodes. This means a project entry (`P0005`) that was first written months ago but had a new session note appended today will appear near the top of the listing, alongside truly recent entries.
 
 ### Character limits
 
@@ -392,7 +434,7 @@ Result:
 
 This mirrors how human memory works: you remember today's events in full detail, last week's in outline, older ones only as headlines.
 
-Set to `[]` to disable recency inlining (L1-only for all entries, same as before v1.1).
+Set to `[]` to disable recency inlining (L1-only for all entries).
 
 **Backward compat:** The old `"recentChildrenCount": N` key is still accepted and treated as `[{ "count": N, "depth": 2 }]`.
 

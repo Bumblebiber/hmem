@@ -64,7 +64,7 @@ export interface HmemConfig {
   defaultReadLimit: number;
   /**
    * Memory category prefixes. Keys are single uppercase letters, values are human-readable names.
-   * Default: P=Project, L=Lesson, T=Task, E=Error, D=Decision, M=Milestone, S=Skill, F=Favorite.
+   * Default: P=Project, L=Lesson, T=Task, E=Error, D=Decision, M=Milestone, S=Skill, N=Navigator.
    * Users can add custom prefixes (e.g. "R": "Research") in hmem.config.json.
    */
   prefixes: Record<string, string>;
@@ -84,7 +84,6 @@ export const DEFAULT_PREFIXES: Record<string, string> = {
   D: "Decision",
   M: "Milestone",
   S: "Skill",
-  F: "Favorite",
   N: "Navigator",
 };
 

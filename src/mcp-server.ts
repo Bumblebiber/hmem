@@ -165,6 +165,10 @@ server.tool(
     links: z.array(z.string()).optional().describe(
       "Optional: IDs of related memories, e.g. ['P0001', 'L0005']"
     ),
+    favorite: z.boolean().optional().describe(
+      "Mark this entry as a favorite — shown with [♥] in bulk reads and always inlined with L2 detail. " +
+      "Use for reference info you need to see every session, regardless of category."
+    ),
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Target store: 'personal' (your own memory) or 'company' (shared FIRMENWISSEN, AL+ only)"
     ),
@@ -172,7 +176,7 @@ server.tool(
       "Minimum role to see this entry (company store only). 'worker' = everyone, 'al' = AL+PL+CEO, etc."
     ),
   },
-  async ({ prefix, content, links, store: storeName, min_role: minRole }) => {
+  async ({ prefix, content, links, favorite, store: storeName, min_role: minRole }) => {
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker") as AgentRole;
     const isFirstTime = !AGENT_ID && !fs.existsSync(resolveHmemPath(PROJECT_DIR, ""));
@@ -206,7 +210,7 @@ server.tool(
         }
 
         const effectiveMinRole = storeName === "company" ? (minRole as AgentRole) : ("worker" as AgentRole);
-        const result = hmemStore.write(prefix, content, links, effectiveMinRole);
+        const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite);
         const storeLabel = storeName === "company" ? "FIRMENWISSEN" : (templateName || "memory");
         log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix}, min_role=${effectiveMinRole})`);
 
@@ -259,11 +263,15 @@ server.tool(
       "Mark this root entry as no longer valid (root entries only). " +
       "Shown with [⚠ OBSOLETE] in reads. Does not delete the entry."
     ),
+    favorite: z.boolean().optional().describe(
+      "Set or clear the [♥] favorite flag on this root entry (root entries only). " +
+      "Favorites are always shown with L2 detail in bulk reads."
+    ),
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Target store: 'personal' (your own memory) or 'company' (shared FIRMENWISSEN, AL+ only)"
     ),
   },
-  async ({ id, content, links, obsolete, store: storeName }) => {
+  async ({ id, content, links, obsolete, favorite, store: storeName }) => {
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker") as AgentRole;
 
@@ -289,9 +297,9 @@ server.tool(
           };
         }
 
-        const ok = hmemStore.updateNode(id, content, links, obsolete);
+        const ok = hmemStore.updateNode(id, content, links, obsolete, favorite);
         const storeLabel = storeName === "company" ? "FIRMENWISSEN" : (templateName || "memory");
-        log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}`);
+        log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}`);
 
         if (!ok) {
           return {
@@ -303,6 +311,8 @@ server.tool(
         const parts: string[] = [`Updated: ${id}`];
         if (links !== undefined) parts.push("links updated");
         if (obsolete === true) parts.push("marked as [⚠ OBSOLETE]");
+        if (favorite === true) parts.push("marked as [♥] favorite");
+        if (favorite === false) parts.push("favorite flag cleared");
         return { content: [{ type: "text" as const, text: parts.join(" | ") }] };
       } finally {
         hmemStore.close();
@@ -754,8 +764,11 @@ server.tool(
       "Mark or unmark as obsolete (root entries only). " +
       "Obsolete entries stay in memory but are shown with [⚠ OBSOLETE]."
     ),
+    favorite: z.boolean().optional().describe(
+      "Set or clear the [♥] favorite flag (root entries only)."
+    ),
   },
-  async ({ agent_name, entry_id, content, min_role, obsolete }) => {
+  async ({ agent_name, entry_id, content, min_role, obsolete, favorite }) => {
     if (!isCurator()) {
       return {
         content: [{ type: "text" as const, text: "ERROR: fix_agent_memory is only available to the ceo/curator role." }],
@@ -789,24 +802,27 @@ server.tool(
         if (ok) changed.push("content");
       } else {
         // Root entry — update memories table
-        if (!content && min_role === undefined && obsolete === undefined) {
+        if (!content && min_role === undefined && obsolete === undefined && favorite === undefined) {
           return {
-            content: [{ type: "text" as const, text: "ERROR: Provide at least one of: content, min_role, obsolete." }],
+            content: [{ type: "text" as const, text: "ERROR: Provide at least one of: content, min_role, obsolete, favorite." }],
             isError: true,
           };
         }
         if (content) {
-          ok = store.updateNode(entry_id, content, undefined, obsolete);
+          ok = store.updateNode(entry_id, content, undefined, obsolete, favorite);
           changed.push("L1");
           if (obsolete !== undefined) changed.push("obsolete");
+          if (favorite !== undefined) changed.push("favorite");
         } else {
           const fields: any = {};
           if (min_role !== undefined) fields.min_role = min_role;
           if (obsolete !== undefined) fields.obsolete = obsolete;
+          if (favorite !== undefined) fields.favorite = favorite;
           ok = store.update(entry_id, fields);
         }
         if (min_role !== undefined) changed.push("min_role");
         if (!content && obsolete !== undefined) changed.push("obsolete");
+        if (!content && favorite !== undefined) changed.push("favorite");
       }
 
       log(`fix_agent_memory [CURATOR]: ${agent_name} ${entry_id} → ${ok ? "updated" : "not found"} (${changed.join(", ")})`);
@@ -819,6 +835,68 @@ server.tool(
             : `ERROR: Entry "${entry_id}" not found in ${agent_name}'s memory.`,
         }],
         isError: !ok,
+      };
+    } finally {
+      store.close();
+    }
+  }
+);
+
+server.tool(
+  "append_agent_memory",
+  "CURATOR ONLY (ceo role). Append new child nodes to an existing entry in any agent's memory. " +
+    "Use exclusively for merging/consolidating entries — e.g. when collapsing two P entries into one, " +
+    "carry over the best content from the entry being deleted into the keeper before deleting.\n\n" +
+    "Content is tab-indented relative to the parent (same as append_memory):\n" +
+    "  0 tabs = direct child of id\n" +
+    "  1 tab  = grandchild, etc.",
+  {
+    agent_name: z.string().describe("Template name of the agent, e.g. 'THOR'"),
+    id: z.string().describe(
+      "Root entry ID or parent node ID to append children to, e.g. 'P0004' or 'P0004.2'"
+    ),
+    content: z.string().min(1).describe(
+      "Tab-indented content to append. 0 tabs = direct child of id."
+    ),
+  },
+  async ({ agent_name, id, content }) => {
+    if (!isCurator()) {
+      return {
+        content: [{ type: "text" as const, text: "ERROR: append_agent_memory is only available to the ceo/curator role." }],
+        isError: true,
+      };
+    }
+
+    const hmemPath = resolveHmemPath(PROJECT_DIR, agent_name);
+    if (!fs.existsSync(hmemPath)) {
+      return {
+        content: [{ type: "text" as const, text: `No .hmem found for agent "${agent_name}".` }],
+        isError: true,
+      };
+    }
+
+    const store = new HmemStore(hmemPath, hmemConfig);
+    try {
+      const result = store.appendChildren(id, content);
+      log(`append_agent_memory [CURATOR]: ${agent_name} ${id} + ${result.count} nodes → [${result.ids.join(", ")}]`);
+
+      if (result.count === 0) {
+        return {
+          content: [{ type: "text" as const, text: "No nodes appended — content was empty or contained no valid lines." }],
+        };
+      }
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Appended ${result.count} node${result.count === 1 ? "" : "s"} to ${agent_name}/${id}.\n` +
+            `New top-level children: ${result.ids.join(", ")}`,
+        }],
+      };
+    } catch (e) {
+      return {
+        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        isError: true,
       };
     } finally {
       store.close();
