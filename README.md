@@ -77,13 +77,19 @@ append_memory(id="L0003", content="New finding\n\tSub-detail")
 
 ### Obsolete Entries
 
-When an entry is outdated but still carries learning value, mark it as obsolete rather than deleting it:
+When an entry is outdated, mark it as obsolete — never delete it:
 
 ```
 update_memory(id="E0023", content="...", obsolete=true)
 ```
 
-Obsolete entries stay visible with a `[⚠ OBSOLETE]` marker. Past errors still teach future agents what not to do. The curator may prune them eventually.
+Obsolete entries are **hidden from bulk reads** and replaced by a summary line at the bottom:
+
+```
+--- 3 obsolete entries hidden (E0023, D0007, L0012) — use read_memory(id=X) to view ---
+```
+
+They remain fully searchable and accessible by ID. Past errors still teach future agents what not to do — knowledge is never destroyed, only archived.
 
 ### Memory Curation
 
@@ -97,7 +103,7 @@ A dedicated curator agent runs periodically to maintain memory health. It detect
 - **True tree structure** — multiple siblings at the same depth (not just one chain)
 - **Persistent across sessions** — agents remember previous work even after restart
 - **Editable without deletion** — `update_memory` and `append_memory` modify entries in place
-- **Obsolete flag** — mark outdated entries as `[⚠ OBSOLETE]` without losing their lessons
+- **Obsolete flag** — mark outdated entries as obsolete; hidden from bulk reads but still searchable — knowledge is never destroyed, only archived
 - **Favorite flag** — mark any entry as `[♥]` to always see it with L2 detail, regardless of category
 - **Access-count promotion** — the top-N most-accessed entries are automatically shown with L2 detail (`[★]`)
 - **Effective-date sorting** — entries with recent appends surface to the top (old P entries grow over time without losing their position)
@@ -270,7 +276,7 @@ done
 | `read_agent_memory` | Read any agent's full memory (for curation) |
 | `fix_agent_memory` | Correct a specific entry or sub-node in any agent's memory |
 | `append_agent_memory` | Add content to an existing entry in any agent's memory (for merging duplicates) |
-| `delete_agent_memory` | Delete a memory entry (use sparingly) |
+| `delete_agent_memory` | Delete a memory entry (prefer `fix_agent_memory(obsolete=true)` — deletion is permanent) |
 | `mark_audited` | Mark an agent as audited |
 
 ---
@@ -328,7 +334,6 @@ Place an optional `hmem.config.json` in your `HMEM_PROJECT_DIR` to tune behavior
   "maxL1Chars": 120,
   "maxLnChars": 50000,
   "maxDepth": 5,
-  "defaultReadLimit": 100,
   "accessCountTopN": 5,
   "recentDepthTiers": [
     { "count": 10, "depth": 2 },
