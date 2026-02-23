@@ -12,14 +12,30 @@ import readline from "node:readline";
 
 // ---- Tool definitions ----
 
+interface InstructionsTarget {
+  /** Absolute path to the file to write. */
+  path: string;
+  /**
+   * standalone = create a dedicated hmem.md file inside a rules directory.
+   * append     = append an ## hmem section to an existing shared file (CLAUDE.md etc.)
+   */
+  mode: "standalone" | "append";
+}
+
 interface ToolConfig {
   name: string;
-  globalDir: string | null;      // null = no global config supported
+  globalDir: string | null;      // null = no global MCP config supported
   globalFile: string | null;
   projectDir: string;
   projectFile: string;
   format: "standard" | "opencode";
   detect: () => boolean;
+  /** Global instructions file. null = show manual hint instead. */
+  globalInstructions: InstructionsTarget | null;
+  /** Project-local instructions file (relative paths resolved against cwd). */
+  projectInstructions: InstructionsTarget | null;
+  /** Shown when globalInstructions is null (e.g. Cursor). */
+  instructionsManual?: string;
 }
 
 // In WSL, os.homedir() may return the Windows path — prefer the Linux home directory
@@ -36,6 +52,14 @@ const TOOLS: Record<string, ToolConfig> = {
     projectFile: ".mcp.json",
     format: "standard",
     detect: () => fs.existsSync(path.join(HOME, ".claude")),
+    globalInstructions: {
+      path: path.join(HOME, ".claude", "CLAUDE.md"),
+      mode: "append",
+    },
+    projectInstructions: {
+      path: "CLAUDE.md",
+      mode: "append",
+    },
   },
   "opencode": {
     name: "OpenCode",
@@ -45,6 +69,11 @@ const TOOLS: Record<string, ToolConfig> = {
     projectFile: "opencode.json",
     format: "opencode",
     detect: () => fs.existsSync(path.join(HOME, ".config", "opencode")),
+    // OpenCode reads CLAUDE.md as fallback — skip to avoid duplicate writes
+    globalInstructions: null,
+    projectInstructions: null,
+    instructionsManual:
+      "OpenCode reads CLAUDE.md automatically — no separate file needed.",
   },
   "cursor": {
     name: "Cursor",
@@ -54,6 +83,15 @@ const TOOLS: Record<string, ToolConfig> = {
     projectFile: "mcp.json",
     format: "standard",
     detect: () => fs.existsSync(path.join(HOME, ".cursor")),
+    // Cursor has no global instructions file — only GUI (Settings > Rules)
+    globalInstructions: null,
+    projectInstructions: {
+      path: path.join(".cursor", "rules", "hmem.mdc"),
+      mode: "standalone",
+    },
+    instructionsManual:
+      "Cursor: add the following to Settings → Rules (cursor.com/settings):\n" +
+      "  \"At the start of every session, call read_memory() to load your long-term memory.\"",
   },
   "windsurf": {
     name: "Windsurf",
@@ -62,8 +100,17 @@ const TOOLS: Record<string, ToolConfig> = {
     projectDir: ".windsurf",
     projectFile: "mcp.json",
     format: "standard",
-    detect: () => fs.existsSync(path.join(HOME, ".codeium", "windsurf"))
-      || fs.existsSync(path.join(HOME, ".windsurf")),
+    detect: () =>
+      fs.existsSync(path.join(HOME, ".codeium", "windsurf")) ||
+      fs.existsSync(path.join(HOME, ".windsurf")),
+    globalInstructions: {
+      path: path.join(HOME, ".codeium", "windsurf", "memories", "global_rules.md"),
+      mode: "append",
+    },
+    projectInstructions: {
+      path: path.join(".windsurf", "rules", "hmem.md"),
+      mode: "standalone",
+    },
   },
   "cline": {
     name: "Cline / Roo Code (VS Code)",
@@ -73,6 +120,16 @@ const TOOLS: Record<string, ToolConfig> = {
     projectFile: "mcp.json",
     format: "standard",
     detect: () => fs.existsSync(path.join(HOME, ".vscode")),
+    // Cline: ~/Documents/Cline/Rules/  |  Roo Code: ~/.roo/rules/
+    // Both are directory-based → create a dedicated hmem.md file in each
+    globalInstructions: {
+      path: path.join(HOME, "Documents", "Cline", "Rules", "hmem.md"),
+      mode: "standalone",
+    },
+    projectInstructions: {
+      path: path.join(".clinerules", "hmem.md"),
+      mode: "standalone",
+    },
   },
   "gemini-cli": {
     name: "Gemini CLI",
@@ -82,8 +139,62 @@ const TOOLS: Record<string, ToolConfig> = {
     projectFile: "settings.json",
     format: "standard",
     detect: () => fs.existsSync(path.join(HOME, ".gemini")),
+    globalInstructions: {
+      path: path.join(HOME, ".gemini", "GEMINI.md"),
+      mode: "append",
+    },
+    projectInstructions: {
+      path: "GEMINI.md",
+      mode: "append",
+    },
   },
 };
+
+// ---- Instructions content ----
+
+const HMEM_MARKER = "## hmem — Persistent Memory";
+
+const HMEM_APPEND_SECTION = `
+
+## hmem — Persistent Memory
+
+At the start of every session, call \`read_memory()\` to load your long-term memory before doing anything else.
+`;
+
+const HMEM_STANDALONE_CONTENT = `# hmem — Persistent Memory
+
+At the start of every session, call \`read_memory()\` to load your long-term memory before doing anything else.
+`;
+
+/**
+ * Writes hmem instructions to a file.
+ * - append mode:     appends a section to an existing file; skips if already present.
+ * - standalone mode: creates a dedicated file; skips if already exists.
+ * Returns "created" | "updated" | "skipped".
+ */
+function writeInstructions(target: InstructionsTarget): "created" | "updated" | "skipped" {
+  const dir = path.dirname(target.path);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  if (target.mode === "standalone") {
+    if (fs.existsSync(target.path)) return "skipped";
+    fs.writeFileSync(target.path, HMEM_STANDALONE_CONTENT, "utf-8");
+    return "created";
+  }
+
+  // append mode
+  if (fs.existsSync(target.path)) {
+    const content = fs.readFileSync(target.path, "utf-8");
+    if (content.includes(HMEM_MARKER)) return "skipped";
+    fs.appendFileSync(target.path, HMEM_APPEND_SECTION, "utf-8");
+    return "updated";
+  } else {
+    fs.writeFileSync(target.path, HMEM_APPEND_SECTION.trimStart(), "utf-8");
+    return "created";
+  }
+}
 
 // ---- Readline helpers ----
 
@@ -133,7 +244,7 @@ function standardMcpEntry(projectDir: string): Record<string, unknown> {
     mcpServers: {
       hmem: {
         command: "npx",
-        args: ["-y", "hmem", "serve"],
+        args: ["-y", "hmem-mcp", "serve"],
         env: {
           HMEM_PROJECT_DIR: projectDir,
         },
@@ -150,7 +261,7 @@ function opencodeMcpEntry(projectDir: string): Record<string, unknown> {
     mcp: {
       hmem: {
         type: "local",
-        command: ["npx", "-y", "hmem", "serve"],
+        command: ["npx", "-y", "hmem-mcp", "serve"],
         environment: {
           HMEM_PROJECT_DIR: projectDir,
         },
@@ -242,7 +353,7 @@ export async function runInit(): Promise<void> {
 
     if (allToolIds.length === 0) {
       console.log("\n  No supported tools detected for this scope.");
-      console.log("  Install Claude Code, OpenCode, Cursor, Windsurf, or Gemini CLI first.\n");
+      console.log("  Install Claude Code, OpenCode, Cursor, Windsurf, Gemini CLI, or Cline first.\n");
       return;
     }
 
@@ -267,8 +378,8 @@ export async function runInit(): Promise<void> {
       console.log(`  Created: ${absMemDir}`);
     }
 
-    // Step 5: Write configs
-    console.log("\n  Writing configuration...\n");
+    // Step 5: Write MCP configs
+    console.log("\n  Writing MCP configuration...\n");
 
     for (const toolId of selectedTools) {
       const tool = TOOLS[toolId];
@@ -282,13 +393,10 @@ export async function runInit(): Promise<void> {
         configPath = path.join(projDir, tool.projectFile);
       }
 
-      // Build project dir for env var
-      const envProjectDir = absMemDir;
-
       // Generate MCP entry
       const entry = tool.format === "opencode"
-        ? opencodeMcpEntry(envProjectDir)
-        : standardMcpEntry(envProjectDir);
+        ? opencodeMcpEntry(absMemDir)
+        : standardMcpEntry(absMemDir);
 
       // Read existing config (if any) and merge
       let existing: Record<string, unknown> = {};
@@ -305,6 +413,47 @@ export async function runInit(): Promise<void> {
       console.log(`  [ok] ${tool.name}: ${configPath}`);
     }
 
+    // Step 6: Write instructions files (session-start memory trigger)
+    console.log("\n  Writing session-start instructions...\n");
+
+    const manualHints: string[] = [];
+
+    for (const toolId of selectedTools) {
+      const tool = TOOLS[toolId];
+      const target = isGlobal ? tool.globalInstructions : tool.projectInstructions;
+
+      if (target) {
+        // Resolve project-local paths against cwd
+        const resolvedTarget: InstructionsTarget = isGlobal
+          ? target
+          : { ...target, path: path.resolve(process.cwd(), target.path) };
+
+        const result = writeInstructions(resolvedTarget);
+        const label = result === "skipped" ? "already set" : result;
+        console.log(`  [${label}] ${tool.name}: ${resolvedTarget.path}`);
+      } else if (tool.instructionsManual) {
+        manualHints.push(`  ${tool.name}: ${tool.instructionsManual}`);
+      }
+    }
+
+    // Also write Roo Code global instructions alongside Cline (both use cline toolId)
+    if (selectedTools.includes("cline") && isGlobal) {
+      const rooTarget: InstructionsTarget = {
+        path: path.join(HOME, ".roo", "rules", "hmem.md"),
+        mode: "standalone",
+      };
+      const result = writeInstructions(rooTarget);
+      const label = result === "skipped" ? "already set" : result;
+      console.log(`  [${label}] Roo Code: ${rooTarget.path}`);
+    }
+
+    if (manualHints.length > 0) {
+      console.log("\n  Manual steps required:");
+      for (const hint of manualHints) {
+        console.log(`\n${hint}`);
+      }
+    }
+
     // Step 7: Create default hmem.config.json if not exists
     const hmemConfigPath = path.join(absMemDir, "hmem.config.json");
     if (!fs.existsSync(hmemConfigPath)) {
@@ -319,7 +468,7 @@ export async function runInit(): Promise<void> {
         ],
       };
       writeConfigFile(hmemConfigPath, defaultConfig);
-      console.log(`  [ok] Config: ${hmemConfigPath}`);
+      console.log(`\n  [ok] Config: ${hmemConfigPath}`);
     }
 
     console.log(`\n  Done! Restart your AI tool(s) to activate hmem.\n`);
