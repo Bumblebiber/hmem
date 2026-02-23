@@ -230,6 +230,8 @@ done
 |------|-------------|
 | `read_memory` | Read hierarchical memories — L1 summaries or drill into any node by ID |
 | `write_memory` | Save new memory entries with tab-indented hierarchy |
+| `update_memory` | Update the text of an existing entry or sub-node (children preserved) |
+| `append_memory` | Append new child nodes to an existing entry without overwriting it |
 | `search_memory` | Full-text search across all agent `.hmem` databases |
 
 ### Curator Tools (role: ceo)

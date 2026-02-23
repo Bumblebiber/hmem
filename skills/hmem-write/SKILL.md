@@ -104,6 +104,55 @@ One `write_memory` call per category — entire hierarchy in one `content` strin
 
 ---
 
+## Updating Existing Memories
+
+Use `update_memory` and `append_memory` to modify entries without deleting and recreating them.
+
+### update_memory — Fix outdated text
+
+Updates the text of a single node. Children are **not** touched.
+
+```
+update_memory(id="L0003", content="Corrected L1 summary — new wording")
+update_memory(id="L0003.2", content="Fixed L2 detail")
+update_memory(id="D0010", content="New L1", links=["E0042"])  # also update links
+```
+
+Use when: the wording is wrong, outdated, or needs clarification.
+
+### append_memory — Add detail to existing entry
+
+Appends new child nodes under an existing root or node. Existing children are preserved.
+
+Content indentation is **relative to the parent** — 0 tabs = direct child of `id`.
+
+```
+append_memory(
+  id="L0003",
+  content="New finding discovered later\n\tSub-detail about it"
+)
+# → adds L0003.N (L2) and L0003.N.1 (L3)
+
+append_memory(
+  id="L0003.2",
+  content="Extra note under L0003.2"
+)
+# → adds L0003.2.M (L3)
+```
+
+Use when: you have new context to add without replacing what's there.
+
+### When to use which
+
+| Situation | Tool |
+|-----------|------|
+| L1 wording is wrong/outdated | `update_memory` |
+| A sub-node has wrong detail | `update_memory` |
+| You have new info to add | `append_memory` |
+| Entry is completely wrong | curator: `delete_agent_memory` + `write_memory` |
+
+---
+
 ## Anti-Patterns
 
 | Wrong | Right |

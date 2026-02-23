@@ -494,6 +494,105 @@ export class HmemStore {
     return result.changes > 0;
   }
 
+  /**
+   * Update the text content of an existing root entry or sub-node.
+   * For root entries: updates level_1, optionally updates links.
+   * For sub-nodes: updates node content only.
+   * Does NOT modify children — use appendChildren to extend the tree.
+   */
+  updateNode(id: string, newContent: string, links?: string[]): boolean {
+    const trimmed = newContent.trim();
+    if (id.includes(".")) {
+      // Sub-node in memory_nodes — check char limit for its depth
+      const nodeRow = this.db.prepare("SELECT depth FROM memory_nodes WHERE id = ?").get(id) as any;
+      if (!nodeRow) return false;
+      const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(nodeRow.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
+      if (trimmed.length > nodeLimit) {
+        throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
+      }
+      const result = this.db.prepare("UPDATE memory_nodes SET content = ? WHERE id = ?").run(trimmed, id);
+      return result.changes > 0;
+    } else {
+      // Root entry in memories — check L1 char limit
+      const l1Limit = this.cfg.maxCharsPerLevel[0];
+      if (trimmed.length > l1Limit) {
+        throw new Error(`Level 1 exceeds ${l1Limit} character limit (${trimmed.length} chars). Keep L1 compact.`);
+      }
+      const sets: string[] = ["level_1 = ?"];
+      const params: any[] = [trimmed];
+      if (links !== undefined) {
+        sets.push("links = ?");
+        params.push(links.length > 0 ? JSON.stringify(links) : null);
+      }
+      params.push(id);
+      const result = this.db.prepare(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+      return result.changes > 0;
+    }
+  }
+
+  /**
+   * Append new child nodes under an existing entry (root or node).
+   * Content is tab-indented relative to the parent:
+   *   0 tabs = direct child of parentId (L_parent+1)
+   *   1 tab  = grandchild (L_parent+2), etc.
+   * Existing children are preserved; new nodes are added after them.
+   * Returns the IDs of newly created top-level children.
+   */
+  appendChildren(parentId: string, content: string): { count: number; ids: string[] } {
+    const parentIsRoot = !parentId.includes(".");
+
+    // Verify parent exists
+    if (parentIsRoot) {
+      if (!this.db.prepare("SELECT id FROM memories WHERE id = ?").get(parentId)) {
+        throw new Error(`Root entry "${parentId}" not found.`);
+      }
+    } else {
+      if (!this.db.prepare("SELECT id FROM memory_nodes WHERE id = ?").get(parentId)) {
+        throw new Error(`Node "${parentId}" not found.`);
+      }
+    }
+
+    const parentDepth = parentIsRoot ? 1 : (parentId.match(/\./g)!.length + 1);
+    const rootId = parentIsRoot ? parentId : parentId.split(".")[0];
+
+    // Find next available seq for direct children of parent
+    const maxSeqRow = this.db.prepare(
+      "SELECT MAX(seq) as maxSeq FROM memory_nodes WHERE parent_id = ?"
+    ).get(parentId) as any;
+    const startSeq = (maxSeqRow?.maxSeq ?? 0) + 1;
+
+    const nodes = this.parseRelativeTree(content, parentId, parentDepth, startSeq);
+    if (nodes.length === 0) return { count: 0, ids: [] };
+
+    // Validate char limits before writing
+    for (const node of nodes) {
+      const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(node.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
+      if (node.content.length > nodeLimit) {
+        throw new Error(
+          `L${node.depth} content exceeds ${nodeLimit} character limit ` +
+          `(${node.content.length} chars). Split into multiple calls or use file references.`
+        );
+      }
+    }
+
+    const timestamp = new Date().toISOString();
+    const insertNode = this.db.prepare(`
+      INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, content, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const topLevelIds: string[] = [];
+
+    this.db.transaction(() => {
+      for (const node of nodes) {
+        insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.content, timestamp);
+        if (node.parent_id === parentId) topLevelIds.push(node.id);
+      }
+    })();
+
+    return { count: nodes.length, ids: topLevelIds };
+  }
+
   close(): void {
     this.db.close();
   }
@@ -742,6 +841,68 @@ export class HmemStore {
     }
 
     return { level1, nodes };
+  }
+
+  /**
+   * Parse tab-indented content relative to a parent node.
+   * relDepth 0 = direct child of parent (absDepth = parentDepth + 1).
+   * startSeq: the first seq number to assign to direct children (continuing after existing siblings).
+   */
+  private parseRelativeTree(
+    content: string,
+    parentId: string,
+    parentDepth: number,
+    startSeq: number
+  ): Array<{ id: string; parent_id: string; depth: number; seq: number; content: string }> {
+    const seqAtParent = new Map<string, number>();
+    // Pre-seed parent so first direct child gets startSeq
+    seqAtParent.set(parentId, startSeq - 1);
+    const lastIdAtRelDepth = new Map<number, string>();
+    const nodes: Array<{ id: string; parent_id: string; depth: number; seq: number; content: string }> = [];
+
+    const rawLines = content.split("\n").map(l => l.trimEnd()).filter(Boolean);
+    // Auto-detect space unit if no tabs used
+    let spaceUnit = 4;
+    if (!rawLines.some(l => l.startsWith("\t"))) {
+      for (const l of rawLines) {
+        const leading = l.length - l.trimStart().length;
+        if (leading > 0) { spaceUnit = leading; break; }
+      }
+    }
+
+    const maxAbsDepth = this.cfg.maxDepth;
+
+    for (const line of rawLines) {
+      const text = line.trim();
+      if (!text) continue;
+
+      // Count leading tabs; fall back to space-based detection
+      const tabMatch = line.match(/^\t*/);
+      const leadingTabs = tabMatch ? tabMatch[0].length : 0;
+      let relDepth: number;
+      if (leadingTabs > 0) {
+        relDepth = leadingTabs;
+      } else {
+        const leading = line.length - line.trimStart().length;
+        relDepth = leading > 0 ? Math.floor(leading / spaceUnit) : 0;
+      }
+
+      const absDepth = parentDepth + 1 + relDepth;
+      if (absDepth > maxAbsDepth) continue; // silently skip beyond max depth
+
+      const myParentId = relDepth === 0
+        ? parentId
+        : (lastIdAtRelDepth.get(relDepth - 1) ?? parentId);
+
+      const seq = (seqAtParent.get(myParentId) ?? 0) + 1;
+      seqAtParent.set(myParentId, seq);
+      const nodeId = `${myParentId}.${seq}`;
+      lastIdAtRelDepth.set(relDepth, nodeId);
+
+      nodes.push({ id: nodeId, parent_id: myParentId, depth: absDepth, seq, content: text });
+    }
+
+    return nodes;
   }
 }
 

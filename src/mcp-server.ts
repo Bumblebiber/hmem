@@ -237,6 +237,156 @@ server.tool(
 );
 
 server.tool(
+  "update_memory",
+  "Update the text of an existing memory entry or sub-node (your own personal memory). " +
+    "Only modifies the text at the specified ID — children are preserved unchanged.\n\n" +
+    "Use this when a memory entry has become outdated and needs a corrected summary.\n\n" +
+    "- Root entry (e.g. 'L0003'): updates the L1 summary, optionally updates links\n" +
+    "- Sub-node (e.g. 'L0003.2'): updates that node's content only\n\n" +
+    "To add new child nodes to an existing entry, use append_memory instead.\n" +
+    "To replace the entire tree, use delete_agent_memory + write_memory (curator only).",
+  {
+    id: z.string().describe("ID of the entry or node to update, e.g. 'L0003' or 'L0003.2'"),
+    content: z.string().min(1).describe("New text content for this node (plain text, no indentation)"),
+    links: z.array(z.string()).optional().describe(
+      "Optional: update linked entry IDs (root entries only). Replaces existing links."
+    ),
+    store: z.enum(["personal", "company"]).default("personal").describe(
+      "Target store: 'personal' (your own memory) or 'company' (shared FIRMENWISSEN, AL+ only)"
+    ),
+  },
+  async ({ id, content, links, store: storeName }) => {
+    const templateName = AGENT_ID.replace(/_\d+$/, "");
+    const agentRole = (ROLE || "worker") as AgentRole;
+
+    if (storeName === "company") {
+      const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
+      if ((ROLE_LEVEL[agentRole] || 0) < 1) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: Only AL, PL, and CEO roles can write to company memory (FIRMENWISSEN)." }],
+          isError: true,
+        };
+      }
+    }
+
+    try {
+      const hmemStore = storeName === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+      try {
+        if (hmemStore.corrupted) {
+          return {
+            content: [{ type: "text" as const, text: "WARNING: Memory database is corrupted! Aborting update to prevent further data loss." }],
+            isError: true,
+          };
+        }
+
+        const ok = hmemStore.updateNode(id, content, links);
+        const storeLabel = storeName === "company" ? "FIRMENWISSEN" : (templateName || "memory");
+        log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}`);
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: ok
+              ? `Updated: ${id}` + (links !== undefined ? ` (links updated)` : "")
+              : `ERROR: Entry "${id}" not found in ${storeLabel}.`,
+          }],
+          isError: !ok,
+        };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return {
+        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "append_memory",
+  "Append new child nodes to an existing memory entry or node (your own personal memory). " +
+    "Existing children are preserved — new nodes are added after them.\n\n" +
+    "Use this to extend an existing entry with additional detail without overwriting it.\n\n" +
+    "Content uses tab indentation relative to the parent:\n" +
+    "  0 tabs = direct child of id\n" +
+    "  1 tab  = grandchild, etc.\n\n" +
+    "Examples:\n" +
+    "  append_memory(id='L0003', content='New finding\\n\\tSub-detail') " +
+      "→ adds L2 node + L3 child\n" +
+    "  append_memory(id='L0003.2', content='Extra note') " +
+      "→ adds L3 node under the L2 node L0003.2",
+  {
+    id: z.string().describe(
+      "Root entry ID or parent node ID to append children to, e.g. 'L0003' or 'L0003.2'"
+    ),
+    content: z.string().min(1).describe(
+      "Tab-indented content to append. 0 tabs = direct child of id.\n" +
+      "Example: 'New point\\n\\tSub-detail'"
+    ),
+    store: z.enum(["personal", "company"]).default("personal").describe(
+      "Target store: 'personal' (your own memory) or 'company' (shared FIRMENWISSEN, AL+ only)"
+    ),
+  },
+  async ({ id, content, store: storeName }) => {
+    const templateName = AGENT_ID.replace(/_\d+$/, "");
+    const agentRole = (ROLE || "worker") as AgentRole;
+
+    if (storeName === "company") {
+      const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
+      if ((ROLE_LEVEL[agentRole] || 0) < 1) {
+        return {
+          content: [{ type: "text" as const, text: "ERROR: Only AL, PL, and CEO roles can write to company memory (FIRMENWISSEN)." }],
+          isError: true,
+        };
+      }
+    }
+
+    try {
+      const hmemStore = storeName === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+      try {
+        if (hmemStore.corrupted) {
+          return {
+            content: [{ type: "text" as const, text: "WARNING: Memory database is corrupted! Aborting append to prevent further data loss." }],
+            isError: true,
+          };
+        }
+
+        const result = hmemStore.appendChildren(id, content);
+        const storeLabel = storeName === "company" ? "FIRMENWISSEN" : (templateName || "memory");
+        log(`append_memory [${storeLabel}]: ${id} + ${result.count} nodes → [${result.ids.join(", ")}]`);
+
+        if (result.count === 0) {
+          return {
+            content: [{ type: "text" as const, text: "No nodes appended — content was empty or contained no valid lines." }],
+          };
+        }
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Appended ${result.count} node${result.count === 1 ? "" : "s"} to ${id}.\n` +
+              `New top-level children: ${result.ids.join(", ")}`,
+          }],
+        };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return {
+        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
   "read_memory",
   "Read from your hierarchical long-term memory (.hmem). " +
     "At startup, you received all Level 1 entries (rough summaries). " +
