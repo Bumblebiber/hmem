@@ -8,7 +8,7 @@
  *
  * Two store types:
  *   - Personal: per-agent memory (Agents/THOR/THOR.hmem)
- *   - Company:  shared knowledge base (FIRMENWISSEN.hmem) with role-based access
+ *   - Company:  shared knowledge base (company.hmem) with role-based access
  *
  * ID format:
  *   Root entries: PREFIX + zero-padded sequence (e.g., P0001, L0023, T0042)
@@ -1046,9 +1046,9 @@ export function openAgentMemory(projectDir: string, templateName: string, config
 }
 
 /**
- * Open (or create) the shared company knowledge store (FIRMENWISSEN.hmem).
+ * Open (or create) the shared company knowledge store (company.hmem).
  */
 export function openCompanyMemory(projectDir: string, config?: HmemConfig): HmemStore {
-  const hmemPath = path.join(projectDir, "FIRMENWISSEN.hmem");
+  const hmemPath = path.join(projectDir, "company.hmem");
   return new HmemStore(hmemPath, config);
 }

@@ -150,7 +150,7 @@ server.tool(
     `Use prefix to categorize: ${prefixList}.\n\n` +
     "Store types:\n" +
     "  personal (default): Your private memory\n" +
-    "  company: Shared knowledge base (FIRMENWISSEN) — requires AL+ role to write",
+    "  company: Shared knowledge base ( company store) — requires AL+ role to write",
   {
     prefix: z.string().toUpperCase().describe(
       `Memory category: ${prefixList}`
@@ -170,7 +170,7 @@ server.tool(
       "Use for reference info you need to see every session, regardless of category."
     ),
     store: z.enum(["personal", "company"]).default("personal").describe(
-      "Target store: 'personal' (your own memory) or 'company' (shared FIRMENWISSEN, AL+ only)"
+      "Target store: 'personal' (your own memory) or 'company' (shared company store, AL+ only)"
     ),
     min_role: z.enum(["worker", "al", "pl", "ceo"]).default("worker").describe(
       "Minimum role to see this entry (company store only). 'worker' = everyone, 'al' = AL+PL+CEO, etc."
@@ -186,7 +186,7 @@ server.tool(
       const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
       if ((ROLE_LEVEL[agentRole] || 0) < 1) {
         return {
-          content: [{ type: "text" as const, text: "ERROR: Only AL, PL, and CEO roles can write to company memory (FIRMENWISSEN)." }],
+          content: [{ type: "text" as const, text: "ERROR: Only AL, PL, and CEO roles can write to company memory." }],
           isError: true,
         };
       }
@@ -211,7 +211,7 @@ server.tool(
 
         const effectiveMinRole = storeName === "company" ? (minRole as AgentRole) : ("worker" as AgentRole);
         const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite);
-        const storeLabel = storeName === "company" ? "FIRMENWISSEN" : (templateName || "memory");
+        const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
         log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix}, min_role=${effectiveMinRole})`);
 
         const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
@@ -268,7 +268,7 @@ server.tool(
       "Favorites are always shown with L2 detail in bulk reads."
     ),
     store: z.enum(["personal", "company"]).default("personal").describe(
-      "Target store: 'personal' (your own memory) or 'company' (shared FIRMENWISSEN, AL+ only)"
+      "Target store: 'personal' (your own memory) or 'company' (shared company store, AL+ only)"
     ),
   },
   async ({ id, content, links, obsolete, favorite, store: storeName }) => {
@@ -279,7 +279,7 @@ server.tool(
       const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
       if ((ROLE_LEVEL[agentRole] || 0) < 1) {
         return {
-          content: [{ type: "text" as const, text: "ERROR: Only AL, PL, and CEO roles can write to company memory (FIRMENWISSEN)." }],
+          content: [{ type: "text" as const, text: "ERROR: Only AL, PL, and CEO roles can write to company memory." }],
           isError: true,
         };
       }
@@ -298,7 +298,7 @@ server.tool(
         }
 
         const ok = hmemStore.updateNode(id, content, links, obsolete, favorite);
-        const storeLabel = storeName === "company" ? "FIRMENWISSEN" : (templateName || "memory");
+        const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
         log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}`);
 
         if (!ok) {
@@ -348,7 +348,7 @@ server.tool(
       "Example: 'New point\\n\\tSub-detail'"
     ),
     store: z.enum(["personal", "company"]).default("personal").describe(
-      "Target store: 'personal' (your own memory) or 'company' (shared FIRMENWISSEN, AL+ only)"
+      "Target store: 'personal' (your own memory) or 'company' (shared company store, AL+ only)"
     ),
   },
   async ({ id, content, store: storeName }) => {
@@ -359,7 +359,7 @@ server.tool(
       const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
       if ((ROLE_LEVEL[agentRole] || 0) < 1) {
         return {
-          content: [{ type: "text" as const, text: "ERROR: Only AL, PL, and CEO roles can write to company memory (FIRMENWISSEN)." }],
+          content: [{ type: "text" as const, text: "ERROR: Only AL, PL, and CEO roles can write to company memory." }],
           isError: true,
         };
       }
@@ -378,7 +378,7 @@ server.tool(
         }
 
         const result = hmemStore.appendChildren(id, content);
-        const storeLabel = storeName === "company" ? "FIRMENWISSEN" : (templateName || "memory");
+        const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
         log(`append_memory [${storeLabel}]: ${id} + ${result.count} nodes → [${result.ids.join(", ")}]`);
 
         if (result.count === 0) {
@@ -421,7 +421,7 @@ server.tool(
     "To go deeper, call read_memory(id=child_id). depth parameter is ignored for ID queries.\n\n" +
     "Store types:\n" +
     "  personal (default): Your private memory\n" +
-    "  company: Shared knowledge base (FIRMENWISSEN) — filtered by your role clearance",
+    "  company: Shared knowledge base ( company store) — filtered by your role clearance",
   {
     id: z.string().optional().describe("Specific memory ID, e.g. 'P0001' or 'L0023'"),
     depth: z.number().min(1).max(3).optional().describe("How deep to read (1-3). Default: 2 when reading by ID, 1 for listings. L4/L5 accessible via direct node ID only."),
@@ -431,7 +431,7 @@ server.tool(
     search: z.string().optional().describe("Full-text search across all memory levels"),
     limit: z.number().optional().describe("Max results (default: unlimited — all L1 entries are returned)"),
     store: z.enum(["personal", "company"]).default("personal").describe(
-      "Source store: 'personal' (your own memory) or 'company' (shared FIRMENWISSEN)"
+      "Source store: 'personal' (your own memory) or 'company' (shared company store)"
     ),
     curator: z.boolean().optional().describe(
       "Set true to show full metadata (access counts, roles, dates). For curators only."
@@ -572,7 +572,7 @@ server.tool(
         }
 
         const stats = hmemStore.stats();
-        const storeLabel = storeName === "company" ? "FIRMENWISSEN" : templateName;
+        const storeLabel = storeName === "company" ? "company" : templateName;
         const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
           `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleEntries.length}${hiddenObsolete.length > 0 ? ` (+${hiddenObsolete.length} hidden)` : ""}\n`;
 
