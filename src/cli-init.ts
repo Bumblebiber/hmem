@@ -269,7 +269,7 @@ export async function runInit(): Promise<void> {
 
     // Step 5: Agent ID (optional)
     const agentId = await ask(
-      `\nAgent name (optional — gives this AI instance its own memory file,\n  e.g. "DEVELOPER", "WRITER". Press Enter to use the shared default): `
+      `\nPersonal label (optional):\n  If you use multiple AI tools or switch between roles (e.g. work vs. personal),\n  give each a unique label — they will get separate memory files.\n  Example: "work", "assistant", "dev"\n  Press Enter to skip (all tools share one memory file): `
     );
 
     // Step 6: Write configs
