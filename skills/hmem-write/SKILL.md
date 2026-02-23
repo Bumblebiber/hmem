@@ -24,6 +24,7 @@ write_memory(
 ```
 
 **Indentation:** 1 tab = 1 level. Alternatively: 2 or 4 spaces per level (auto-detected).
+**Warning:** A tab at the start of any line always means "go one level deeper" — it is structural, not content. If you need to store code or text that contains leading tabs, use spaces instead.
 **IDs and timestamps** are assigned automatically — never write them yourself.
 
 ---
@@ -188,7 +189,8 @@ Use when: you have new context to add without replacing what's there.
 | Wrong | Right |
 |-------|-------|
 | L1 too short: "Fixed bug" | Full sentence with root cause |
-| Mixed spaces and tabs | Stay consistent — either tabs or spaces |
+| Tabs inside content text (e.g. code snippets) | Use spaces for indentation within content — tabs at line start always mean "go deeper in the hierarchy" |
+| Mixed spaces and tabs for hierarchy | Stay consistent — either tabs or spaces as your depth marker |
 | Everything flat, no indentation | Use hierarchy — L2/L3 for details |
 | Save trivial things | Quality over quantity |
 | Forget to write_memory | Always call BEFORE setting Status: Completed |

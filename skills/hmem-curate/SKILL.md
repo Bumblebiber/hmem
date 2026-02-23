@@ -70,6 +70,20 @@ They can be deleted if they have zero learning value left. If they contain a use
 
 *Note: only carry over content with lasting value. Low-value session notes can be dropped.*
 
+### Links — cross-references
+
+When two entries have a clear causal or contextual relationship (e.g. a P entry and the L/E entries that resulted from it, or an E entry and the D entry that documents the fix decision), add links at **both** entries so they resolve each other on drill-down:
+
+```
+fix_agent_memory(agent_name, "P0001", links=["L0023", "E0009"])
+fix_agent_memory(agent_name, "L0023", links=["P0001"])
+fix_agent_memory(agent_name, "E0009", links=["P0001"])
+```
+
+`read_memory(id=X)` auto-resolves linked entries — the agent sees both sides when drilling into either one.
+
+Don't over-link: only add links where the connection adds real navigational value, not just topical similarity.
+
 ### N entries — flag stale code pointers
 Navigator entries go stale when code moves. Check: does the file/line referenced still exist?
 If stale and the agent hasn't updated it: mark obsolete via `fix_agent_memory(agent_name, id, obsolete=true)`.
