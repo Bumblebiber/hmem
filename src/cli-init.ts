@@ -267,12 +267,7 @@ export async function runInit(): Promise<void> {
       console.log(`  Created: ${absMemDir}`);
     }
 
-    // Step 5: Agent ID (optional)
-    const agentId = await ask(
-      `\nPersonal label (optional):\n  If you use multiple AI tools or switch between roles (e.g. work vs. personal),\n  give each a unique label — they will get separate memory files.\n  Example: "work", "assistant", "dev"\n  Press Enter to skip (all tools share one memory file): `
-    );
-
-    // Step 6: Write configs
+    // Step 5: Write configs
     console.log("\n  Writing configuration...\n");
 
     for (const toolId of selectedTools) {
@@ -294,17 +289,6 @@ export async function runInit(): Promise<void> {
       const entry = tool.format === "opencode"
         ? opencodeMcpEntry(envProjectDir)
         : standardMcpEntry(envProjectDir);
-
-      // Add agent ID if provided
-      if (agentId) {
-        if (tool.format === "opencode") {
-          const mcp = entry.mcp as Record<string, any>;
-          mcp.hmem.environment.HMEM_AGENT_ID = agentId;
-        } else {
-          const servers = entry.mcpServers as Record<string, any>;
-          servers.hmem.env.HMEM_AGENT_ID = agentId;
-        }
-      }
 
       // Read existing config (if any) and merge
       let existing: Record<string, unknown> = {};
@@ -340,7 +324,6 @@ export async function runInit(): Promise<void> {
 
     console.log(`\n  Done! Restart your AI tool(s) to activate hmem.\n`);
     console.log(`  Memory directory: ${absMemDir}`);
-    if (agentId) console.log(`  Agent ID: ${agentId}`);
     console.log(`\n  Test: Open your AI tool and call read_memory() — it should respond.\n`);
 
   } finally {
