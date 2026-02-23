@@ -335,6 +335,23 @@ Custom prefixes are **merged** with the defaults — you don't need to repeat th
 
 **Note:** Favorites (F) are special — they are always loaded with L2 detail, regardless of recency position.
 
+### Access-count auto-promotion (`accessCountTopN`)
+
+The top-N most-accessed entries are automatically treated like Favorites (L2 inlined in bulk reads), regardless of recency.
+
+```json
+{ "accessCountTopN": 5 }
+```
+
+This creates "organic favorites" — entries that proved important in practice rise to the surface automatically.
+
+| Mechanism | When useful |
+|---|---|
+| **F prefix** | Entries you know are important from day 1 (reference data, cheatsheets) — even with zero access history |
+| **accessCountTopN** | Entries that proved important over time — emerges from actual usage |
+
+Set `accessCountTopN: 0` to disable. Default: 5.
+
 ### Character limits
 
 Two ways to set per-level character limits:

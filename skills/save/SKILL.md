@@ -62,20 +62,43 @@ Only write what is **new since the last `/save` or session start**:
 
 | Prefix | When to use |
 |--------|-------------|
-| `P` | What was worked on this session — decisions made, outcome |
+| `P` | Project progress — work done this session |
 | `L` | Lessons learned applicable beyond this session |
 | `E` | Error patterns — root cause + fix |
 | `D` | Architectural or design decisions |
 
 Quality over quantity. Skip trivial things and anything already captured.
 
-**Example calls:**
+### P entries: append to existing, don't duplicate
+
+Before creating a new P entry, check if an existing P entry covers the **same project or topic**.
+
+- Scan your L1 summaries (already in context) for a matching P entry.
+- If one exists: use `append_memory` to add this session as a new L2 node.
+  - Keep the new L2 text concise (what was done this session, ~15–20 tokens).
+  - Add L3 nodes for details.
+- If none exists: use `write_memory` to create a new P entry.
+
+**Goal: one P entry per project, growing over time — not one P entry per session.**
 
 ```
-write_memory(prefix="P", content="Implemented auth flow with JWT
-	Chose short-lived access tokens + refresh token rotation
-	Decision: store refresh tokens in httpOnly cookie, not localStorage")
+# Existing entry found → append this session
+append_memory(id="P0038", content="Session 02-24: update_memory + append_memory tools (v1.5.0)
+	update_memory: update text of single node without touching children
+	append_memory: add child nodes to existing entry, relative indentation
+	access_count auto-promotion: top-5 most accessed entries get L2 in bulk reads")
 
+# No existing entry → create new
+write_memory(prefix="P", content="New project: authentication service
+	Implemented JWT flow with refresh token rotation
+	Session 02-24: initial setup + basic login endpoint")
+```
+
+### L / E / D entries: always create new
+
+For lessons, errors, and decisions — always create a new entry. These are indexed insights, not project logs.
+
+```
 write_memory(prefix="L", content="Always restart MCP server after recompiling TypeScript
 	Running process holds the old dist — tool calls return stale results otherwise")
 

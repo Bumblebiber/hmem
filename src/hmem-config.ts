@@ -68,6 +68,12 @@ export interface HmemConfig {
    * Users can add custom prefixes (e.g. "R": "Research") in hmem.config.json.
    */
   prefixes: Record<string, string>;
+  /**
+   * Number of top-accessed entries that are automatically promoted to L2 depth in bulk reads.
+   * These are entries with the highest access_count (excluding zero) — "organic favorites".
+   * Set to 0 to disable. Default: 5.
+   */
+  accessCountTopN: number;
 }
 
 export const DEFAULT_PREFIXES: Record<string, string> = {
@@ -91,6 +97,7 @@ export const DEFAULT_CONFIG: HmemConfig = {
   ],
   defaultReadLimit: 100,
   prefixes: { ...DEFAULT_PREFIXES },
+  accessCountTopN: 5,
 };
 
 /**
@@ -144,6 +151,7 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
 
     if (typeof raw.maxDepth === "number" && raw.maxDepth >= 1 && raw.maxDepth <= 10) cfg.maxDepth = raw.maxDepth;
     if (typeof raw.defaultReadLimit === "number" && raw.defaultReadLimit > 0) cfg.defaultReadLimit = raw.defaultReadLimit;
+    if (typeof raw.accessCountTopN === "number" && raw.accessCountTopN >= 0) cfg.accessCountTopN = raw.accessCountTopN;
 
     // Recency tiers: explicit array > legacy recentChildrenCount > default
     if (Array.isArray(raw.recentDepthTiers)) {

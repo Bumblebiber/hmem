@@ -373,11 +373,25 @@ export class HmemStore {
     }
 
     // Recency gradient: inline children up to the tier-resolved depth for recent entries
-    // Favorites (F) are always pinned at depth 2 minimum, regardless of recency position
+    // Favorites (F) and top-accessed entries are always pinned at depth 2 minimum
     const tiers: DepthTier[] = opts.recentDepthTiers ?? this.cfg.recentDepthTiers;
+
+    // Identify top-N entries by access_count ("organic favorites")
+    const topN = this.cfg.accessCountTopN ?? 5;
+    const topAccessIds = topN > 0
+      ? new Set(
+          [...rows]
+            .filter(r => r.access_count > 0)
+            .sort((a, b) => b.access_count - a.access_count)
+            .slice(0, topN)
+            .map(r => r.id)
+        )
+      : new Set<string>();
+
     return rows.map((r, i) => {
       let depth = resolveDepthForPosition(i, tiers);
       if (r.prefix === "F" && depth < 2) depth = 2;
+      if (topAccessIds.has(r.id) && depth < 2) depth = 2;
       const children = depth >= 2 ? this.fetchChildrenDeep(r.id, 2, depth) : undefined;
       return this.rowToEntry(r, children);
     });

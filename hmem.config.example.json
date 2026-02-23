@@ -9,5 +9,8 @@
 
   "maxDepth": 5,
   "recentChildrenCount": 10,
-  "defaultReadLimit": 100
+  "defaultReadLimit": 100,
+
+  "_comment_access": "Top-N most-accessed entries always show L2 in bulk reads (organic favorites). Set to 0 to disable.",
+  "accessCountTopN": 5
 }
