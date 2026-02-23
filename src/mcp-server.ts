@@ -476,9 +476,14 @@ server.tool(
           };
         }
 
+        // In listing mode (no specific ID), filter out obsolete entries
+        const isBulkListing = !id;
+        const visibleEntries = isBulkListing ? entries.filter(e => !e.obsolete) : entries;
+        const hiddenObsolete = isBulkListing ? entries.filter(e => e.obsolete) : [];
+
         // Format output — tree-aware
         const lines: string[] = [];
-        for (const e of entries) {
+        for (const e of visibleEntries) {
           const isNode = e.id.includes(".");
 
           if (isNode) {
@@ -560,12 +565,18 @@ server.tool(
           lines.push("");
         }
 
+        if (hiddenObsolete.length > 0) {
+          const hiddenIds = hiddenObsolete.map(e => e.id).join(", ");
+          lines.push(`--- ${hiddenObsolete.length} obsolete entr${hiddenObsolete.length === 1 ? "y" : "ies"} hidden (${hiddenIds}) — use read_memory(id=X) to view ---`);
+          lines.push("");
+        }
+
         const stats = hmemStore.stats();
         const storeLabel = storeName === "company" ? "FIRMENWISSEN" : templateName;
         const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
-          `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""} | Depth: ${effectiveDepth} | Results: ${entries.length}\n`;
+          `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleEntries.length}${hiddenObsolete.length > 0 ? ` (+${hiddenObsolete.length} hidden)` : ""}\n`;
 
-        log(`read_memory [${storeLabel}]: ${entries.length} results (depth=${effectiveDepth}, role=${agentRole})`);
+        log(`read_memory [${storeLabel}]: ${visibleEntries.length} results (depth=${effectiveDepth}, role=${agentRole})`);
 
         return {
           content: [{

@@ -19,6 +19,26 @@ If the tool `read_memory` is not available, tell the user:
 
 ---
 
+## After loading — flag obviously outdated entries
+
+Scan the L1 summaries for entries that are clearly no longer valid today:
+
+- Decisions describing something as "planned" or "not yet implemented" that has since been done
+- Error patterns for bugs that are fully resolved and superseded by a better approach
+- Project notes describing a state that no longer exists
+
+Mark them immediately — do not wait for curation:
+
+```
+update_memory(id="D0001", content="...", obsolete=true)
+```
+
+Obsolete entries are hidden from bulk reads and replaced by a summary line at the bottom. They remain searchable and accessible via `read_memory(id=X)`.
+
+**Rule:** Only mark entries where the L1 clearly states something false or irrelevant today. When in doubt, leave it for curation.
+
+---
+
 ## Lazy Loading Protocol (for subsequent reads)
 
 After the initial `read_memory()`, use these patterns to drill deeper:
