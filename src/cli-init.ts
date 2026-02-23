@@ -22,7 +22,10 @@ interface ToolConfig {
   detect: () => boolean;
 }
 
-const HOME = os.homedir();
+// In WSL, os.homedir() may return the Windows path — prefer the Linux home directory
+const HOME = (process.env.WSL_DISTRO_NAME || process.env.WSLENV)
+  ? (process.env.HOME ?? os.homedir())
+  : os.homedir();
 
 const TOOLS: Record<string, ToolConfig> = {
   "claude-code": {
@@ -253,7 +256,7 @@ export async function runInit(): Promise<void> {
     // Step 4: Memory directory
     const defaultDir = isGlobal ? path.join(HOME, ".hmem") : process.cwd();
     const memDirAnswer = await ask(
-      `\nMemory directory [${defaultDir}]: `
+      `\nMemory directory (press Enter to use default):\n  [${defaultDir}]: `
     );
     const memDir = memDirAnswer || defaultDir;
     const absMemDir = path.resolve(memDir);
