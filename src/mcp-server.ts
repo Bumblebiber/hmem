@@ -335,6 +335,32 @@ server.tool(
           }
 
           if (e.links && e.links.length > 0) lines.push(`  Links: ${e.links.join(", ")}`);
+
+          // Auto-resolved linked entries
+          if (e.linkedEntries && e.linkedEntries.length > 0) {
+            lines.push(`  --- Linked entries ---`);
+            for (const linked of e.linkedEntries) {
+              const isLinkedNode = linked.id.includes(".");
+              if (isLinkedNode) {
+                const d = (linked.id.match(/\./g) || []).length + 1;
+                lines.push(`  [${linked.id}] L${d}: ${linked.level_1}`);
+              } else {
+                const ldate = linked.created_at.substring(0, 10);
+                lines.push(`  [${linked.id}] ${ldate}`);
+                lines.push(`    L1: ${linked.level_1}`);
+              }
+              if (linked.children && linked.children.length > 0) {
+                for (const lchild of linked.children as MemoryNode[]) {
+                  const cd = (lchild.id.match(/\./g) || []).length + 1;
+                  const hint = (lchild.child_count ?? 0) > 0
+                    ? ` (${lchild.child_count} ${lchild.child_count === 1 ? "child" : "children"} — use id="${lchild.id}" to expand)`
+                    : "";
+                  lines.push(`    [${lchild.id}] L${cd}: ${lchild.content}${hint}`);
+                }
+              }
+            }
+          }
+
           lines.push("");
         }
 

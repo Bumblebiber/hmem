@@ -49,7 +49,8 @@ export interface MemoryEntry {
   last_accessed: string | null;
   links: string[] | null;
   min_role: AgentRole;
-  children?: MemoryNode[];  // populated for ID-based reads
+  children?: MemoryNode[];       // populated for ID-based reads
+  linkedEntries?: MemoryEntry[]; // auto-resolved linked entries (ID-based reads only)
 }
 
 export interface MemoryNode {
@@ -76,6 +77,8 @@ export interface ReadOptions {
   limit?: number;             // max results, default from config
   agentRole?: AgentRole;      // filter by role clearance (company store)
   recentDepthTiers?: import("./hmem-config.js").DepthTier[]; // override recency tiers
+  /** Internal: skip link resolution to prevent circular references. Default: true for ID queries. */
+  resolveLinks?: boolean;
 }
 
 export interface WriteResult {
@@ -285,7 +288,21 @@ export class HmemStore {
         this.bumpAccess(opts.id);
 
         const children = this.fetchChildren(opts.id);
-        return [this.rowToEntry(row, children)];
+        const entry = this.rowToEntry(row, children);
+
+        // Auto-resolve links (unless suppressed to prevent circular references)
+        const shouldResolveLinks = opts.resolveLinks !== false;
+        if (shouldResolveLinks && entry.links && entry.links.length > 0) {
+          entry.linkedEntries = entry.links.flatMap(linkId => {
+            try {
+              return this.read({ id: linkId, agentRole: opts.agentRole, resolveLinks: false });
+            } catch {
+              return [];
+            }
+          });
+        }
+
+        return [entry];
       }
     }
 
