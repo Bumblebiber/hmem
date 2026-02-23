@@ -269,7 +269,7 @@ export async function runInit(): Promise<void> {
 
     // Step 5: Agent ID (optional)
     const agentId = await ask(
-      `Agent ID (optional, press Enter to skip): `
+      `\nAgent name (optional — gives this AI instance its own memory file,\n  e.g. "DEVELOPER", "WRITER". Press Enter to use the shared default): `
     );
 
     // Step 6: Write configs
