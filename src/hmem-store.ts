@@ -356,7 +356,7 @@ export class HmemStore {
             } catch {
               return [];
             }
-          });
+          }).filter(e => !e.obsolete);
         }
 
         return [entry];
@@ -623,7 +623,7 @@ export class HmemStore {
             try {
               return this.read({ id: linkId, resolveLinks: false, linkDepth: 0 });
             } catch { return []; }
-          });
+          }).filter(e => !e.obsolete);
         }
       } else {
         // Non-expanded: latest child + hidden count (hybrid)

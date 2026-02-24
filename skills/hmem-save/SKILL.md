@@ -109,6 +109,8 @@ write_memory(prefix="E", content="write_memory returned HMEM_PROJECT_DIR not set
 
 ## Step 2 — Commit & Push
 
+**IMPORTANT:** Step 1 (write_memory) MUST complete before this step. The `.hmem` file is modified by write_memory — if you push before writing, the memory changes won't be included in the commit.
+
 If in a git repository:
 
 ```bash
