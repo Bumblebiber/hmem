@@ -96,6 +96,10 @@ export interface ReadOptions {
   recentDepthTiers?: import("./hmem-config.js").DepthTier[]; // override recency tiers
   /** Internal: skip link resolution to prevent circular references. Default: true for ID queries. */
   resolveLinks?: boolean;
+  /** How many levels of link resolution (default 1). 0 = none. Linked entries decrement this. */
+  linkDepth?: number;
+  /** Internal: visited entry IDs for cycle detection during link resolution. */
+  _visitedLinks?: Set<string>;
 }
 
 export interface WriteResult {
@@ -211,6 +215,13 @@ export class HmemStore {
     this.migrateToTree();
   }
 
+  /** Throw if the database is corrupted — prevents silent data loss on write operations. */
+  private guardCorrupted(): void {
+    if (this.corrupted) {
+      throw new Error("[hmem] Database is corrupted — write operations disabled. See .corrupt backup.");
+    }
+  }
+
   /**
    * Write a new memory entry.
    * Content uses tab indentation to define the tree:
@@ -220,6 +231,7 @@ export class HmemStore {
    * Multiple lines at the same indent depth → siblings (new capability)
    */
   write(prefix: string, content: string, links?: string[], minRole: AgentRole = "worker", favorite?: boolean): WriteResult {
+    this.guardCorrupted();
     prefix = prefix.toUpperCase();
     if (!this.cfg.prefixes[prefix]) {
       const valid = Object.entries(this.cfg.prefixes).map(([k, v]) => `${k}=${v}`).join(", ");
@@ -312,12 +324,20 @@ export class HmemStore {
         const children = this.fetchChildren(opts.id);
         const entry = this.rowToEntry(row, children);
 
-        // Auto-resolve links (unless suppressed to prevent circular references)
-        const shouldResolveLinks = opts.resolveLinks !== false;
-        if (shouldResolveLinks && entry.links && entry.links.length > 0) {
+        // Auto-resolve links with depth control and cycle detection
+        const linkDepth = opts.resolveLinks === false ? 0 : (opts.linkDepth ?? 1);
+        if (linkDepth > 0 && entry.links && entry.links.length > 0) {
+          const visited = opts._visitedLinks ?? new Set<string>();
+          visited.add(opts.id!);
           entry.linkedEntries = entry.links.flatMap(linkId => {
+            if (visited.has(linkId)) return []; // cycle detected — skip
             try {
-              return this.read({ id: linkId, agentRole: opts.agentRole, resolveLinks: false });
+              return this.read({
+                id: linkId,
+                agentRole: opts.agentRole,
+                linkDepth: linkDepth - 1,
+                _visitedLinks: visited,
+              });
             } catch {
               return [];
             }
@@ -483,6 +503,17 @@ export class HmemStore {
 
     if (rows.length === 0) return "# Memory Export\n\n(empty)\n";
 
+    // Fetch ALL nodes in a single query, group by root_id (avoids N+1)
+    const allNodes = this.db.prepare(
+      "SELECT * FROM memory_nodes ORDER BY root_id, depth, seq"
+    ).all() as any[];
+    const nodesByRoot = new Map<string, any[]>();
+    for (const n of allNodes) {
+      const arr = nodesByRoot.get(n.root_id);
+      if (arr) arr.push(n);
+      else nodesByRoot.set(n.root_id, [n]);
+    }
+
     let md = "# Memory Export\n\n";
     md += `> Auto-generated from .hmem — ${new Date().toISOString()}\n`;
     md += `> ${rows.length} entries\n\n`;
@@ -501,10 +532,8 @@ export class HmemStore {
       md += `### [${row.id}] ${date}${role}${accessed}\n`;
       md += `${row.level_1}\n`;
 
-      // Include tree nodes
-      const nodes = this.db.prepare(
-        "SELECT * FROM memory_nodes WHERE root_id = ? ORDER BY depth, seq"
-      ).all(row.id) as any[];
+      // Include tree nodes (pre-fetched)
+      const nodes = nodesByRoot.get(row.id) ?? [];
       for (const n of nodes) {
         const indent = "  ".repeat(n.depth - 1);
         md += `${indent}→ [${n.id}] ${n.content}\n`;
@@ -538,6 +567,7 @@ export class HmemStore {
    * Update specific fields of an existing root entry (curator use only).
    */
   update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite">>): boolean {
+    this.guardCorrupted();
     const sets: string[] = [];
     const params: any[] = [];
 
@@ -565,6 +595,7 @@ export class HmemStore {
    * Also deletes all associated memory_nodes.
    */
   delete(id: string): boolean {
+    this.guardCorrupted();
     // Delete nodes first (no CASCADE in older SQLite)
     this.db.prepare("DELETE FROM memory_nodes WHERE root_id = ?").run(id);
     const result = this.db.prepare("DELETE FROM memories WHERE id = ?").run(id);
@@ -578,6 +609,7 @@ export class HmemStore {
    * Does NOT modify children — use appendChildren to extend the tree.
    */
   updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean): boolean {
+    this.guardCorrupted();
     const trimmed = newContent.trim();
     if (id.includes(".")) {
       // Sub-node in memory_nodes — check char limit for its depth
@@ -624,6 +656,7 @@ export class HmemStore {
    * Returns the IDs of newly created top-level children.
    */
   appendChildren(parentId: string, content: string): { count: number; ids: string[] } {
+    this.guardCorrupted();
     const parentIsRoot = !parentId.includes(".");
 
     // Verify parent exists
