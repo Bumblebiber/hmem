@@ -545,48 +545,45 @@ export class HmemStore {
   private readBulkV2(rows: any[], opts: ReadOptions): MemoryEntry[] {
     const v2 = this.cfg.bulkReadV2;
 
-    // Step 1: Group by prefix
+    // Step 1: Separate obsolete from non-obsolete FIRST
+    const obsoleteRows = rows.filter(r => r.obsolete === 1);
+    const nonObsoleteRows = rows.filter(r => r.obsolete !== 1);
+
+    // Step 2: Group NON-OBSOLETE by prefix (obsolete must not steal expansion slots)
     const byPrefix = new Map<string, any[]>();
-    for (const r of rows) {
+    for (const r of nonObsoleteRows) {
       const arr = byPrefix.get(r.prefix);
       if (arr) arr.push(r);
       else byPrefix.set(r.prefix, [r]);
     }
 
-    // Step 2: Build expansion set
+    // Step 3: Build expansion set from non-obsolete rows
     const expandedIds = new Set<string>();
 
-    // Per prefix: youngest entry + most-accessed entry
+    // Per prefix: top N newest + top M most-accessed
     for (const [, prefixRows] of byPrefix) {
-      if (prefixRows.length > 0) {
-        expandedIds.add(prefixRows[0].id); // youngest (already sorted by effective_date DESC)
-        const mostAccessed = [...prefixRows]
-          .filter(r => r.access_count > 0)
-          .sort((a, b) => b.access_count - a.access_count)[0];
-        if (mostAccessed) expandedIds.add(mostAccessed.id);
+      // Newest (already sorted by effective_date DESC)
+      for (const r of prefixRows.slice(0, v2.topNewestCount)) {
+        expandedIds.add(r.id);
       }
+      // Most-accessed
+      const mostAccessed = [...prefixRows]
+        .filter(r => r.access_count > 0)
+        .sort((a, b) => b.access_count - a.access_count)
+        .slice(0, v2.topAccessCount);
+      for (const r of mostAccessed) expandedIds.add(r.id);
     }
 
-    // Global: all favorites
-    for (const r of rows) {
+    // Global: all favorites (from non-obsolete)
+    for (const r of nonObsoleteRows) {
       if (r.favorite === 1) expandedIds.add(r.id);
     }
 
-    // Global: top N by access_count
-    const topAccess = [...rows]
+    // topAccess reference for promoted marker
+    const topAccess = [...nonObsoleteRows]
       .filter(r => r.access_count > 0)
       .sort((a, b) => b.access_count - a.access_count)
       .slice(0, v2.topAccessCount);
-    for (const r of topAccess) expandedIds.add(r.id);
-
-    // Global: top N newest
-    for (const r of rows.slice(0, v2.topNewestCount)) {
-      expandedIds.add(r.id);
-    }
-
-    // Step 3: Obsolete filter
-    const obsoleteRows = rows.filter(r => r.obsolete === 1);
-    const nonObsoleteRows = rows.filter(r => r.obsolete !== 1);
 
     let visibleObsolete: any[];
     if (opts.showObsolete) {
