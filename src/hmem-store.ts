@@ -816,6 +816,19 @@ export class HmemStore {
         // Add bidirectional links
         this.addLink(id, correctionId);
         this.addLink(correctionId, id);
+
+        // Transfer access_count: obsolete entry → correction entry, then reset obsolete to 0
+        const oldEntry = this.db.prepare("SELECT access_count FROM memories WHERE id = ?").get(id) as { access_count: number } | undefined;
+        if (oldEntry && oldEntry.access_count > 0) {
+          const now = new Date().toISOString();
+          if (existsInMemories) {
+            this.db.prepare("UPDATE memories SET access_count = access_count + ?, last_accessed = ? WHERE id = ?")
+              .run(oldEntry.access_count, now, correctionId);
+          } else {
+            this.db.prepare("UPDATE memory_nodes SET access_count = access_count + ?, last_accessed = ? WHERE id = ?")
+              .run(oldEntry.access_count, now, correctionId);
+          }
+        }
       }
 
       const sets: string[] = ["level_1 = ?"];
@@ -827,6 +840,9 @@ export class HmemStore {
       if (obsolete !== undefined) {
         sets.push("obsolete = ?");
         params.push(obsolete ? 1 : 0);
+        if (obsolete) {
+          sets.push("access_count = 0");
+        }
       }
       if (favorite !== undefined) {
         sets.push("favorite = ?");
