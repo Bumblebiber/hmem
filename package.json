@@ -1,6 +1,6 @@
 {
   "name": "hmem-mcp",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "Humanlike memory for AI agents — MCP server with 5-level lazy-loaded SQLite memory",
   "author": "Bumblebiber",
   "license": "MIT",
@@ -16,6 +16,7 @@
     "type": "ko-fi",
     "url": "https://ko-fi.com/bumblebiber"
   },
+  "mcpName": "io.github.bumblebiber/hmem-mcp",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -30,6 +31,7 @@
   "files": [
     "dist",
     "skills",
+    "server.json",
     "README.md",
     "LICENSE",
     "hmem.config.example.json"

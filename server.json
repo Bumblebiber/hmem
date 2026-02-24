@@ -1,0 +1,33 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.bumblebiber/hmem-mcp",
+  "title": "hmem — Humanlike Memory for AI Agents",
+  "description": "Persistent hierarchical memory with 5-level lazy-loaded SQLite storage via MCP.",
+  "version": "1.6.5",
+  "websiteUrl": "https://github.com/Bumblebiber/hmem#readme",
+  "repository": {
+    "url": "https://github.com/Bumblebiber/hmem",
+    "source": "github",
+    "id": "1161506670"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "hmem-mcp",
+      "version": "1.6.5",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "HMEM_STORAGE_DIR",
+          "description": "Directory where .hmem SQLite databases are stored. Defaults to ~/.hmem/",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
