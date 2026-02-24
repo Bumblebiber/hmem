@@ -35,7 +35,7 @@ Read the file and show the user a clear table of current values vs. defaults:
 | `defaultReadLimit` | … | 100 | Max entries returned by a single `read_memory()` call. |
 | `recentDepthTiers` | … | [{count:10,depth:2},{count:3,depth:3}] | How much detail is auto-inlined for the most recent entries (V1 algorithm). See explanation below. |
 | `accessCountTopN` | … | 5 | Top-N most-accessed entries always get L2 inlined in bulk reads ("organic favorites"). These are shown with a [★] marker. Set to 0 to disable. |
-| `prefixes` | … | P,L,T,E,D,M,S,N | Category labels for memory entries. Custom prefixes are merged with defaults. |
+| `prefixes` | … | P,L,T,E,D,M,S,N,H,R | (P)roject, (L)esson, (T)ask, (E)rror, (D)ecision, (M)ilestone, (S)kill, (N)avigator, (H)uman. Custom prefixes merged with defaults. |
 | `prefixDescriptions` | … | (see below) | Human-readable descriptions for each prefix category, used as group headers in bulk reads. |
 | `bulkReadV2.topAccessCount` | … | 3 | Number of top-accessed entries to expand in V2 bulk reads. |
 | `bulkReadV2.topNewestCount` | … | 5 | Number of newest entries to expand in V2 bulk reads. |
@@ -81,14 +81,16 @@ Default descriptions used as group headers in bulk reads:
 ```json
 {
   "prefixDescriptions": {
-    "P": "Project experiences and summaries",
-    "L": "Lessons learned and best practices",
-    "T": "Tasks and work items",
-    "E": "Errors encountered and their fixes",
-    "D": "Key decisions and their rationale",
-    "M": "Milestones and achievements",
-    "S": "Skills and technical knowledge",
-    "N": "Navigation and context notes"
+    "P": "(P)roject experiences and summaries",
+    "L": "(L)essons learned and best practices",
+    "T": "(T)asks and work items",
+    "E": "(E)rrors encountered and their fixes",
+    "D": "(D)ecisions and their rationale",
+    "M": "(M)ilestones and achievements",
+    "S": "(S)kills and technical knowledge",
+    "N": "(N)avigation and context notes",
+    "H": "(H)uman — knowledge about the user",
+    "R": "(R)ules — user-defined rules and constraints"
   }
 }
 ```

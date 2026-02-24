@@ -1,5 +1,5 @@
 ---
-name: hmem-save
+name: save
 description: >
   End-of-session save routine. Use when the user types /hmem-save or /save or asks to
   "save", "save session", or "save progress".
@@ -46,7 +46,7 @@ Go through these parameters one by one:
 | `maxL1Chars` | 120 | "How long should memory summaries be? (60–200 characters — shorter loads faster at startup)" |
 | `maxDepth` | 5 | "How many detail levels do you want? (2–5 — 5 gives the most flexibility)" |
 | `recentDepthTiers` | [{count:10,depth:2},{count:3,depth:3}] | "Auto-expand recent entries? This shows extra detail for your newest memories without extra tool calls. Recommended: yes" |
-| `prefixes` | default | "Do you want custom memory categories beyond the defaults (P/L/E/D/M/S/T/N)? If yes, name them (e.g. R=Research, B=Bookmark). Otherwise press Enter." |
+| `prefixes` | default | "Do you want custom memory categories beyond the defaults (P/L/E/D/M/S/T/N/H/R)? If yes, name them (e.g. R=Research, B=Bookmark). Otherwise press Enter." |
 
 Write the resulting `hmem.config.json` to the chosen directory.
 Tell the user: "Config saved to `<path>/hmem.config.json`. You can adjust settings anytime with `/hmem-config`."
@@ -62,10 +62,10 @@ Only write what is **new since the last `/save` or session start**:
 
 | Prefix | When to use |
 |--------|-------------|
-| `P` | Project progress — work done this session |
-| `L` | Lessons learned applicable beyond this session |
-| `E` | Error patterns — root cause + fix |
-| `D` | Architectural or design decisions |
+| `P` | (P)roject progress — work done this session |
+| `L` | (L)essons learned applicable beyond this session |
+| `E` | (E)rror patterns — root cause + fix |
+| `D` | (D)ecisions — architectural or design decisions |
 
 Quality over quantity. Skip trivial things and anything already captured.
 

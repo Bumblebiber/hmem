@@ -103,6 +103,8 @@ export const DEFAULT_PREFIXES: Record<string, string> = {
   M: "Milestone",
   S: "Skill",
   N: "Navigator",
+  H: "Human",
+  R: "Rule",
 };
 
 /**
@@ -111,14 +113,16 @@ export const DEFAULT_PREFIXES: Record<string, string> = {
  * entries by category in bulk reads.
  */
 export const DEFAULT_PREFIX_DESCRIPTIONS: Record<string, string> = {
-  P: "Project experiences and summaries",
-  L: "Lessons learned and best practices",
-  T: "Tasks and work items",
-  E: "Errors encountered and their fixes",
-  D: "Key decisions and their rationale",
-  M: "Milestones and achievements",
-  S: "Skills and technical knowledge",
-  N: "Navigation and context notes",
+  P: "(P)roject experiences and summaries",
+  L: "(L)essons learned and best practices",
+  T: "(T)asks and work items",
+  E: "(E)rrors encountered and their fixes",
+  D: "(D)ecisions and their rationale",
+  M: "(M)ilestones and achievements",
+  S: "(S)kills and technical knowledge",
+  N: "(N)avigation and context notes",
+  H: "(H)uman — knowledge about the user",
+  R: "(R)ules — user-defined rules and constraints",
 };
 
 export const DEFAULT_CONFIG: HmemConfig = {

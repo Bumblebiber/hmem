@@ -33,14 +33,16 @@ write_memory(
 
 | Prefix | Category | When to use |
 |--------|----------|-------------|
-| **P** | Project | Project experiences, summaries |
-| **L** | Lesson | Lessons learned, best practices |
-| **E** | Error | Bugs, errors + their fix |
-| **D** | Decision | Architecture decisions with reasoning |
-| **T** | Task | Task notes, work progress |
-| **M** | Milestone | Key milestones, releases |
-| **S** | Skill | Skills, processes, how-to guides |
-| **N** | Navigator | Code pointers — where something lives in the codebase |
+| **P** | (P)roject | Project experiences, summaries |
+| **L** | (L)esson | Lessons learned, best practices |
+| **E** | (E)rror | Bugs, errors + their fix |
+| **D** | (D)ecision | Architecture decisions with reasoning |
+| **T** | (T)ask | Task notes, work progress |
+| **M** | (M)ilestone | Key milestones, releases |
+| **S** | (S)kill | Skills, processes, how-to guides |
+| **N** | (N)avigator | Code pointers — where something lives in the codebase |
+| **H** | (H)uman | Knowledge about the user — preferences, context, working style |
+| **R** | (R)ule | User-defined rules and constraints — "always do X", "never do Y" |
 
 **Custom prefixes:** If none of the above fit, you can use any single uppercase letter. To register it officially (so the system validates it), add it to `hmem.config.json` under `"prefixes"`:
 ```json
