@@ -462,10 +462,6 @@ export async function runInit(): Promise<void> {
         maxLnChars: 50000,
         maxDepth: 5,
         defaultReadLimit: 100,
-        recentDepthTiers: [
-          { count: 10, depth: 2 },
-          { count: 3, depth: 3 },
-        ],
       };
       writeConfigFile(hmemConfigPath, defaultConfig);
       console.log(`\n  [ok] Config: ${hmemConfigPath}`);

@@ -28,8 +28,8 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
-import type { HmemConfig, DepthTier } from "./hmem-config.js";
-import { DEFAULT_CONFIG, DEFAULT_PREFIX_DESCRIPTIONS, resolveDepthForPosition } from "./hmem-config.js";
+import type { HmemConfig } from "./hmem-config.js";
+import { DEFAULT_CONFIG, DEFAULT_PREFIX_DESCRIPTIONS } from "./hmem-config.js";
 
 // ---- Types ----
 
@@ -97,7 +97,6 @@ export interface ReadOptions {
   search?: string;            // full-text search across all levels
   limit?: number;             // max results, default from config
   agentRole?: AgentRole;      // filter by role clearance (company store)
-  recentDepthTiers?: import("./hmem-config.js").DepthTier[]; // override recency tiers
   /** Internal: skip link resolution to prevent circular references. Default: true for ID queries. */
   resolveLinks?: boolean;
   /** How many levels of link resolution (default 1). 0 = none. Linked entries decrement this. */
@@ -481,61 +480,7 @@ export class HmemStore {
       for (const row of rows) this.bumpAccess(row.id);
     }
 
-    // Dispatch: V1 (legacy) or V2 (new default)
-    if (opts.recentDepthTiers) {
-      return this.readBulkV1(rows, opts);
-    }
     return this.readBulkV2(rows, opts);
-  }
-
-  /**
-   * V1 bulk-read algorithm (legacy): recency gradient with depth tiers.
-   * Kept for backward compatibility when recentDepthTiers is explicitly passed.
-   */
-  private readBulkV1(rows: any[], opts: ReadOptions): MemoryEntry[] {
-    const tiers: DepthTier[] = opts.recentDepthTiers ?? this.cfg.recentDepthTiers;
-
-    // Identify top-N entries by access_count ("organic favorites")
-    const topN = this.cfg.accessCountTopN ?? 5;
-    const topAccessIds = topN > 0
-      ? new Set(
-          [...rows]
-            .filter(r => r.access_count > 0)
-            .sort((a, b) => b.access_count - a.access_count)
-            .slice(0, topN)
-            .map(r => r.id)
-        )
-      : new Set<string>();
-
-    return rows.map((r, i) => {
-      let depth = resolveDepthForPosition(i, tiers);
-      let promoted: "access" | "favorite" | undefined;
-      if (r.favorite === 1) {
-        promoted = "favorite";
-        if (depth < 2) depth = 2;
-      } else if (topAccessIds.has(r.id)) {
-        promoted = "access";
-        if (depth < 2) depth = 2;
-      }
-
-      let children: MemoryNode[] | undefined;
-      let hiddenChildrenCount: number | undefined;
-
-      if (depth >= 2) {
-        const latest = this.fetchLatestChild(r.id, depth);
-        if (latest) {
-          children = [latest.node];
-          hiddenChildrenCount = latest.totalSiblings - 1;
-        } else {
-          hiddenChildrenCount = 0;
-        }
-      }
-
-      const entry = this.rowToEntry(r, children);
-      entry.promoted = promoted;
-      entry.hiddenChildrenCount = hiddenChildrenCount;
-      return entry;
-    });
   }
 
   /**

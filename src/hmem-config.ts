@@ -22,29 +22,7 @@ import path from "node:path";
  *
  * Option A and B can be combined; explicit array takes precedence.
  *
- * ## Recency gradient (recentDepthTiers)
- *
- * Controls how many child levels are inlined for the N most recent entries
- * in a default read() call. Each tier adds depth for the freshest entries:
- *
- * {
- *   "recentDepthTiers": [
- *     { "count": 3,  "depth": 3 },   // last 3 entries  → L1 + L2 + L3
- *     { "count": 10, "depth": 2 }    // last 10 entries → L1 + L2
- *   ]
- * }
- *
- * Tiers are evaluated per-entry: the highest applicable depth wins.
- * Backward compat: legacy "recentChildrenCount": N is treated as
- * [{ "count": N, "depth": 2 }].
  */
-
-export interface DepthTier {
-  /** How many of the most recent entries this tier applies to */
-  count: number;
-  /** Max depth to inline (2 = L2, 3 = L2+L3, etc.) */
-  depth: number;
-}
 
 export interface HmemConfig {
   /**
@@ -54,12 +32,6 @@ export interface HmemConfig {
   maxCharsPerLevel: number[];
   /** Max tree depth (1 = L1 only, 5 = full depth). Default: 5 */
   maxDepth: number;
-  /**
-   * Recency gradient: each tier defines how deep to inline children for the N most recent entries.
-   * Tiers are cumulative — the highest applicable depth wins for each entry position.
-   * Default: last 10 entries show L2, last 3 entries also show L3.
-   */
-  recentDepthTiers: DepthTier[];
   /** Max entries returned by a default bulk read(). Default: 100 */
   defaultReadLimit: number;
   /**
@@ -128,10 +100,6 @@ export const DEFAULT_PREFIX_DESCRIPTIONS: Record<string, string> = {
 export const DEFAULT_CONFIG: HmemConfig = {
   maxCharsPerLevel: [120, 2_500, 10_000, 25_000, 50_000],
   maxDepth: 5,
-  recentDepthTiers: [
-    { count: 10, depth: 2 },
-    { count: 3,  depth: 3 },
-  ],
   defaultReadLimit: 100,
   prefixes: { ...DEFAULT_PREFIXES },
   accessCountTopN: 5,
@@ -162,34 +130,19 @@ export function linearLimits(l1: number, ln: number, depth: number): number[] {
 }
 
 /**
- * Resolve the inline depth for the entry at position `i` (0 = most recent)
- * given the configured tiers. Returns 1 if no tier applies (L1 only).
- */
-export function resolveDepthForPosition(i: number, tiers: DepthTier[]): number {
-  let maxDepth = 1;
-  for (const tier of tiers) {
-    if (i < tier.count && tier.depth > maxDepth) {
-      maxDepth = tier.depth;
-    }
-  }
-  return maxDepth;
-}
-
-/**
  * Load hmem.config.json from projectDir.
  * Unknown keys are ignored. Missing keys fall back to defaults.
  */
 export function loadHmemConfig(projectDir: string): HmemConfig {
   const configPath = path.join(projectDir, "hmem.config.json");
   if (!fs.existsSync(configPath)) {
-    return { ...DEFAULT_CONFIG, recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers], prefixes: { ...DEFAULT_PREFIXES }, prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS }, bulkReadV2: { ...DEFAULT_CONFIG.bulkReadV2 } };
+    return { ...DEFAULT_CONFIG, prefixes: { ...DEFAULT_PREFIXES }, prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS }, bulkReadV2: { ...DEFAULT_CONFIG.bulkReadV2 } };
   }
 
   try {
     const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     const cfg: HmemConfig = {
       ...DEFAULT_CONFIG,
-      recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers],
       prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
       bulkReadV2: { ...DEFAULT_CONFIG.bulkReadV2 },
     };
@@ -197,23 +150,6 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     if (typeof raw.maxDepth === "number" && raw.maxDepth >= 1 && raw.maxDepth <= 10) cfg.maxDepth = raw.maxDepth;
     if (typeof raw.defaultReadLimit === "number" && raw.defaultReadLimit > 0) cfg.defaultReadLimit = raw.defaultReadLimit;
     if (typeof raw.accessCountTopN === "number" && raw.accessCountTopN >= 0) cfg.accessCountTopN = raw.accessCountTopN;
-
-    // Recency tiers: explicit array > legacy recentChildrenCount > default
-    if (Array.isArray(raw.recentDepthTiers)) {
-      const tiers = (raw.recentDepthTiers as unknown[]).filter(
-        (t): t is DepthTier =>
-          typeof (t as DepthTier).count === "number" &&
-          typeof (t as DepthTier).depth === "number" &&
-          (t as DepthTier).count > 0 &&
-          (t as DepthTier).depth >= 1
-      );
-      if (tiers.length > 0) cfg.recentDepthTiers = tiers;
-    } else if (typeof raw.recentChildrenCount === "number" && raw.recentChildrenCount >= 0) {
-      // Backward compat: treat as single tier with depth 2
-      cfg.recentDepthTiers = raw.recentChildrenCount > 0
-        ? [{ count: raw.recentChildrenCount, depth: 2 }]
-        : [];
-    }
 
     // Prefixes: merge user-defined with defaults (user can override or add)
     if (raw.prefixes && typeof raw.prefixes === "object" && !Array.isArray(raw.prefixes)) {
@@ -272,6 +208,6 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     return cfg;
   } catch (e) {
     console.error(`[hmem] Failed to parse hmem.config.json: ${e}. Using defaults.`);
-    return { ...DEFAULT_CONFIG, recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers], prefixes: { ...DEFAULT_PREFIXES }, prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS }, bulkReadV2: { ...DEFAULT_CONFIG.bulkReadV2 } };
+    return { ...DEFAULT_CONFIG, prefixes: { ...DEFAULT_PREFIXES }, prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS }, bulkReadV2: { ...DEFAULT_CONFIG.bulkReadV2 } };
   }
 }

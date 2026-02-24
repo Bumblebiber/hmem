@@ -138,10 +138,11 @@ Place `hmem.config.json` in your `HMEM_PROJECT_DIR` to customize behavior. All k
   "maxLnChars": 50000,
   "maxDepth": 5,
   "defaultReadLimit": 100,
-  "recentDepthTiers": [
-    { "count": 10, "depth": 2 },
-    { "count": 3,  "depth": 3 }
-  ]
+  "bulkReadV2": {
+    "topAccessCount": 3,
+    "topNewestCount": 5,
+    "topObsoleteCount": 3
+  }
 }
 ```
 
@@ -149,18 +150,7 @@ Place `hmem.config.json` in your `HMEM_PROJECT_DIR` to customize behavior. All k
 - `"maxL1Chars"` + `"maxLnChars"`: set endpoints only, intermediate levels interpolated linearly
 - `"maxCharsPerLevel"`: explicit array `[L1, L2, L3, L4, L5]`
 
-**Recency gradient** (`recentDepthTiers`): controls how deeply children are inlined for recent entries in a default `read_memory()` call.
-
-Each tier is `{ "count": N, "depth": D }` — the N most recent entries get children inlined up to depth D. The highest applicable depth wins.
-
-Default behavior:
-| Entry position | What you see |
-|---|---|
-| 0–2 (most recent) | L1 + L2 + L3 |
-| 3–9 | L1 + L2 |
-| 10+ | L1 only |
-
-Set to `[]` to disable (L1-only for all entries).
+**Bulk-read tuning** (`bulkReadV2`): controls which entries get expanded (all L2 children shown) in a default `read_memory()` call. Per prefix category: top N newest + top M most-accessed are expanded. Favorites are always expanded.
 
 ---
 

@@ -33,7 +33,6 @@ Read the file and show the user a clear table of current values vs. defaults:
 | `maxLnChars` | … | 50000 | Max characters for deeper levels (L2–L5). Controls how much detail you can store per node. |
 | `maxDepth` | … | 5 | How many nesting levels are available (1–5). 5 is the maximum. |
 | `defaultReadLimit` | … | 100 | Max entries returned by a single `read_memory()` call. |
-| `recentDepthTiers` | … | [{count:10,depth:2},{count:3,depth:3}] | How much detail is auto-inlined for the most recent entries (V1 algorithm). See explanation below. |
 | `accessCountTopN` | … | 5 | Top-N most-accessed entries always get L2 inlined in bulk reads ("organic favorites"). These are shown with a [★] marker. Set to 0 to disable. |
 | `prefixes` | … | P,L,T,E,D,M,S,N,H,R | (P)roject, (L)esson, (T)ask, (E)rror, (D)ecision, (M)ilestone, (S)kill, (N)avigator, (H)uman. Custom prefixes merged with defaults. |
 | `prefixDescriptions` | … | (see below) | Human-readable descriptions for each prefix category, used as group headers in bulk reads. |
@@ -41,25 +40,13 @@ Read the file and show the user a clear table of current values vs. defaults:
 | `bulkReadV2.topNewestCount` | … | 5 | Number of newest entries to expand in V2 bulk reads. |
 | `bulkReadV2.topObsoleteCount` | … | 3 | Number of obsolete entries to keep visible ("biggest mistakes"). |
 
-### recentDepthTiers explained (V1 algorithm)
+### Bulk-Read Algorithm
 
-This controls how much detail is automatically shown for recent entries when using the V1 bulk-read algorithm (triggered by explicitly passing `recentDepthTiers` to read options).
-
-Example: `[{count: 10, depth: 2}, {count: 3, depth: 3}]`
-- The **3 most recent** entries: shown with L1 + L2 + L3 detail
-- The **next 7** (positions 3–9): shown with L1 + L2 detail
-- Everything older: L1 summary only
-
-Think of it like human memory — yesterday in full detail, last week in outline, older in headlines.
-
-Set to `[]` to disable (L1 only for everything).
-
-### V2 Bulk-Read Algorithm (default)
-
-The V2 algorithm (used by default in `read_memory()`) groups entries by prefix category and uses smart expansion:
+The bulk-read algorithm groups entries by prefix category and uses smart expansion:
 
 - **Expanded entries**: newest (top N), most-accessed (top N), and all favorites → show ALL L2 children + links
-- **Non-expanded entries**: show latest child + `[+N more → ID]` hint
+- **[♥] Favorites**: always expanded, marked with [♥]
+- **[★] Top-accessed**: most-accessed entries per prefix, marked with [★]
 - **Obsolete entries**: top N by access count shown with `[!]`, rest hidden
 - **Per-prefix guarantee**: each category's youngest + most-accessed entry is always expanded
 
