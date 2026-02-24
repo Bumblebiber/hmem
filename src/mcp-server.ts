@@ -972,6 +972,9 @@ function formatGroupedOutput(
   const headerMap = new Map<string, MemoryEntry>();
   for (const h of headers) headerMap.set(h.prefix, h);
 
+  // Get total counts per prefix from DB (includes hidden entries)
+  const stats = store.stats();
+
   const nonObsolete = entries.filter(e => !e.obsolete);
   const obsolete = entries.filter(e => e.obsolete);
 
@@ -982,16 +985,11 @@ function formatGroupedOutput(
     else byPrefix.set(e.prefix, [e]);
   }
 
-  const countByPrefix = new Map<string, number>();
-  for (const e of entries) {
-    countByPrefix.set(e.prefix, (countByPrefix.get(e.prefix) ?? 0) + 1);
-  }
-
   for (const [prefix, prefixEntries] of byPrefix) {
     const header = headerMap.get(prefix);
     const description = header?.level_1 ?? config.prefixDescriptions[prefix] ?? config.prefixes[prefix] ?? prefix;
-    const count = countByPrefix.get(prefix) ?? prefixEntries.length;
-    lines.push(`## ${description} (${count} entries)\n`);
+    const totalCount = stats.byPrefix[prefix] ?? prefixEntries.length;
+    lines.push(`## ${description} (${prefixEntries.length}/${totalCount} shown)\n`);
 
     for (const e of prefixEntries) {
       renderEntryFormatted(lines, e, curator);

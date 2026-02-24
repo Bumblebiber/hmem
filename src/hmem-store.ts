@@ -228,6 +228,7 @@ export class HmemStore {
     this.migrate();
     this.migrateToTree();
     this.migrateHeaders();
+    this.migrateObsoleteAccessCount();
   }
 
   /** Throw if the database is corrupted — prevents silent data loss on write operations. */
@@ -597,10 +598,12 @@ export class HmemStore {
         .slice(0, v2.topObsoleteCount);
     }
 
-    const visibleRows = [...nonObsoleteRows, ...visibleObsolete];
     const hiddenObsoleteCount = obsoleteRows.length - visibleObsolete.length;
 
-    // Step 4: Build entries
+    // Step 4: Only show expanded entries + visible obsolete (non-expanded are hidden from bulk output)
+    const expandedNonObsolete = nonObsoleteRows.filter(r => expandedIds.has(r.id));
+    const visibleRows = [...expandedNonObsolete, ...visibleObsolete];
+
     return visibleRows.map(r => {
       const isExpanded = expandedIds.has(r.id);
       let promoted: "access" | "favorite" | undefined;
@@ -608,13 +611,11 @@ export class HmemStore {
       else if (topAccess.some(t => t.id === r.id)) promoted = "access";
 
       let children: MemoryNode[] | undefined;
-      let hiddenChildrenCount: number | undefined;
       let linkedEntries: MemoryEntry[] | undefined;
 
       if (isExpanded) {
         // Expanded: ALL direct L2 children + resolve links
         children = this.fetchChildren(r.id);
-        hiddenChildrenCount = 0;
 
         // Resolve links (depth 1, no family)
         const links: string[] = r.links ? JSON.parse(r.links) : [];
@@ -625,20 +626,10 @@ export class HmemStore {
             } catch { return []; }
           }).filter(e => !e.obsolete);
         }
-      } else {
-        // Non-expanded: latest child + hidden count (hybrid)
-        const latest = this.fetchLatestChild(r.id, 2);
-        if (latest) {
-          children = [latest.node];
-          hiddenChildrenCount = latest.totalSiblings - 1;
-        } else {
-          hiddenChildrenCount = 0;
-        }
       }
 
       const entry = this.rowToEntry(r, children);
       entry.promoted = promoted;
-      entry.hiddenChildrenCount = isExpanded ? undefined : hiddenChildrenCount;
       entry.expanded = isExpanded;
       if (linkedEntries && linkedEntries.length > 0) entry.linkedEntries = linkedEntries;
 
@@ -1064,6 +1055,29 @@ export class HmemStore {
 
       this.db.prepare(
         "INSERT INTO schema_version (key, value) VALUES ('headers_v1', 'done')"
+      ).run();
+    })();
+  }
+
+  /**
+   * One-time migration: reset access_count to 0 for all obsolete entries.
+   * Entries marked obsolete before the access_count transfer feature was deployed
+   * may still have stale access counts. This ensures obsolete entries don't
+   * artificially surface in "top most-accessed" rankings.
+   */
+  private migrateObsoleteAccessCount(): void {
+    const done = this.db.prepare(
+      "SELECT value FROM schema_version WHERE key = 'obsolete_access_reset_v1'"
+    ).get();
+    if (done) return;
+
+    this.db.transaction(() => {
+      this.db.prepare(
+        "UPDATE memories SET access_count = 0 WHERE obsolete = 1 AND access_count > 0"
+      ).run();
+      // memory_nodes has no obsolete column — only root entries can be obsolete
+      this.db.prepare(
+        "INSERT INTO schema_version (key, value) VALUES ('obsolete_access_reset_v1', 'done')"
       ).run();
     })();
   }
