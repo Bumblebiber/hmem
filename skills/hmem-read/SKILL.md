@@ -95,17 +95,6 @@ read_memory(time_around="P0001", period="+2h")  # only after P0001
 
 ---
 
-## Bumping Access Count
-
-Signal that an entry is important by bumping its access count. Frequently-accessed entries get expanded treatment in bulk reads.
-
-```
-bump_memory(id="L0045")         # +1 access
-bump_memory(id="L0045", increment=3)  # +3 access
-```
-
----
-
 ## Search
 
 ```

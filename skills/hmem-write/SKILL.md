@@ -194,16 +194,9 @@ Use when: you have new context to add without replacing what's there.
 
 ---
 
-## Bumping Access Count
+## Access Count (Automatic)
 
-Signal that an entry is important without modifying its content. Frequently-accessed entries get expanded treatment (all L2 children shown) in bulk reads.
-
-```
-bump_memory(id="L0045")              # +1 access
-bump_memory(id="L0045", increment=3) # +3 access
-```
-
-**Automatic bubble-up:** When you `append_memory` to add children, the parent entry's access count is bumped automatically. No need to bump manually after appending.
+Access counts are managed automatically — every `read_memory` and `append_memory` call bumps the accessed entries. Entries with high access counts get [★] markers and expanded treatment in bulk reads. To explicitly mark an entry as important, use `favorite: true` on `write_memory` or `update_memory`.
 
 ---
 

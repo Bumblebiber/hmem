@@ -431,7 +431,7 @@ server.tool(
     search: z.string().optional().describe("Full-text search across all memory levels"),
     limit: z.number().optional().describe("Max results (default: unlimited — all L1 entries are returned)"),
     time: z.string().optional().describe("Time filter 'HH:MM' — filter entries by time of day"),
-    period: z.string().optional().describe("Time window: '+2h', '-1h', 'both' — direction around time/date"),
+    period: z.string().optional().describe("Time window: '+4h' (after), '-2h' (before), '4h' (±4h symmetric), 'both' (±2h default)"),
     time_around: z.string().optional().describe("Reference entry ID — find entries created around the same time"),
     show_obsolete: z.boolean().optional().describe("Include all obsolete entries (default: only top 3 most-accessed)"),
     store: z.enum(["personal", "company"]).default("personal").describe(
@@ -511,59 +511,7 @@ server.tool(
   }
 );
 
-// ---- Tool: bump_memory ----
-server.tool(
-  "bump_memory",
-  "Bump the access_count of a memory entry or node. " +
-    "Use this to signal that an entry is important or frequently referenced, " +
-    "which influences its visibility in bulk reads.",
-  {
-    id: z.string().describe("Memory ID to bump, e.g. 'E0042' or 'P0001.3'"),
-    increment: z.number().int().min(1).max(10).optional().describe("How much to increment (default: 1)"),
-    store: z.enum(["personal", "company"]).default("personal").describe(
-      "Target store: 'personal' or 'company'"
-    ),
-  },
-  async ({ id, increment, store: storeName }) => {
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
-
-    try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
-      try {
-        if (hmemStore.corrupted) {
-          return {
-            content: [{ type: "text" as const, text: "WARNING: Memory database is corrupted! Aborting." }],
-            isError: true,
-          };
-        }
-        const inc = increment ?? 1;
-        const ok = hmemStore.bump(id, inc);
-        const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
-        log(`bump_memory [${storeLabel}]: ${id} (+${inc})`);
-
-        if (!ok) {
-          return {
-            content: [{ type: "text" as const, text: `ERROR: Entry "${id}" not found.` }],
-            isError: true,
-          };
-        }
-
-        return {
-          content: [{ type: "text" as const, text: `Bumped: ${id} (+${inc} access_count)` }],
-        };
-      } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return {
-        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
-        isError: true,
-      };
-    }
-  }
-);
+// bump_memory removed — access_count is auto-incremented on reads, favorites cover explicit importance
 
 // ---- Curator Tools (ceo role only) ----
 
@@ -1034,9 +982,11 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
       lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${obsoleteTag}${accessed}`);
       lines.push(`  L1: ${e.level_1}`);
     } else {
+      // Non-curator: [♥] favorites, [★] promoted, [!] obsolete
+      const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
       const obsoleteTag = e.obsolete ? " [!]" : "";
       const mmdd = e.created_at.substring(5, 10);
-      lines.push(`${e.id} ${mmdd}${obsoleteTag}  ${e.level_1}`);
+      lines.push(`${e.id} ${mmdd}${promotedTag}${obsoleteTag}  ${e.level_1}`);
     }
   }
 

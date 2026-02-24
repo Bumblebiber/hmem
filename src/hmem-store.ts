@@ -1106,7 +1106,7 @@ export class HmemStore {
 
   /**
    * Parse a time window around a reference date.
-   * period: "+2h" (future), "-1h" (past), "both" (symmetric ±2h)
+   * period: "+4h" (4h future), "-2h" (2h past), "4h" (±4h symmetric), "both" (±2h default)
    */
   private parseTimeWindow(refDate: Date, period: string): { start: Date; end: Date } {
     const match = period.match(/^([+-]?)(\d+)h$/);
@@ -1117,14 +1117,20 @@ export class HmemStore {
         end: new Date(refDate.getTime() + windowMs),
       };
     }
-    const direction = match[1] || "+";
+    const direction = match[1]; // "+", "-", or "" (symmetric)
     const hours = parseInt(match[2], 10);
     const windowMs = hours * 60 * 60 * 1000;
 
     if (direction === "-") {
       return { start: new Date(refDate.getTime() - windowMs), end: refDate };
-    } else {
+    } else if (direction === "+") {
       return { start: refDate, end: new Date(refDate.getTime() + windowMs) };
+    } else {
+      // No sign = symmetric ±Nh
+      return {
+        start: new Date(refDate.getTime() - windowMs),
+        end: new Date(refDate.getTime() + windowMs),
+      };
     }
   }
 
