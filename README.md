@@ -3,7 +3,7 @@
 > AI agents forget everything when a session ends. hmem changes that.
 
 > **Beta:** hmem is functional and actively used in production, but APIs and file formats
-> may still change. Feedback and bug reports welcome.
+> may still change. Feedback and bug reports welcome. Also the parameters I chose need to be tested and tweaked.
 
 **hmem** is a Model Context Protocol (MCP) server that gives AI agents persistent, humanlike memory — modeled after how human memory actually works.
 
