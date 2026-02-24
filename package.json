@@ -1,6 +1,6 @@
 {
   "name": "hmem-mcp",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "description": "Humanlike memory for AI agents — MCP server with 5-level lazy-loaded SQLite memory",
   "author": "Bumblebiber",
   "license": "MIT",
@@ -11,6 +11,10 @@
   "homepage": "https://github.com/Bumblebiber/hmem#readme",
   "bugs": {
     "url": "https://github.com/Bumblebiber/hmem/issues"
+  },
+  "funding": {
+    "type": "ko-fi",
+    "url": "https://ko-fi.com/bumblebiber"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
