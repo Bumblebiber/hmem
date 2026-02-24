@@ -22,8 +22,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { searchMemory } from "./memory-search.js";
 import { openAgentMemory, openCompanyMemory, resolveHmemPath, HmemStore } from "./hmem-store.js";
-import type { AgentRole, MemoryNode } from "./hmem-store.js";
+import type { AgentRole, MemoryEntry, MemoryNode } from "./hmem-store.js";
 import { loadHmemConfig, formatPrefixList } from "./hmem-config.js";
+import type { HmemConfig } from "./hmem-config.js";
 
 // ---- Environment ----
 // HMEM_* vars are the canonical names; COUNCIL_* kept for backwards compatibility
@@ -246,10 +247,10 @@ server.tool(
     "Use cases:\n" +
     "- Correct outdated wording: update_memory(id='L0003', content='corrected summary')\n" +
     "- Fix a sub-node: update_memory(id='L0003.2', content='corrected detail')\n" +
-    "- Mark as no longer valid: update_memory(id='E0042', content='...', obsolete=true)\n\n" +
-    "Obsolete entries remain visible in reads with a [⚠ OBSOLETE] marker — " +
-    "they are not deleted, as past errors still carry learning value. " +
-    "The curator may eventually prune them.\n\n" +
+    "- Mark as obsolete: FIRST write the correction, THEN update with [✓ID] reference:\n" +
+    "  1. write_memory(prefix='E', content='Correct fix is...') → E0076\n" +
+    "  2. update_memory(id='E0042', content='Wrong — see [✓E0076]', obsolete=true)\n" +
+    "- Mark as favorite: update_memory(id='D0010', content='...', favorite=true)\n\n" +
     "To add new child nodes, use append_memory. " +
     "To replace the entire tree, use delete_agent_memory + write_memory (curator only).",
   {
@@ -260,7 +261,7 @@ server.tool(
     ),
     obsolete: z.boolean().optional().describe(
       "Mark this root entry as no longer valid (root entries only). " +
-      "Shown with [⚠ OBSOLETE] in reads. Does not delete the entry."
+      "Requires [✓ID] correction reference in content (e.g. 'Wrong — see [✓E0076]')."
     ),
     favorite: z.boolean().optional().describe(
       "Set or clear the [♥] favorite flag on this root entry (root entries only). " +
@@ -309,7 +310,7 @@ server.tool(
 
         const parts: string[] = [`Updated: ${id}`];
         if (links !== undefined) parts.push("links updated");
-        if (obsolete === true) parts.push("marked as [⚠ OBSOLETE]");
+        if (obsolete === true) parts.push("marked as [!] obsolete");
         if (favorite === true) parts.push("marked as [♥] favorite");
         if (favorite === false) parts.push("favorite flag cleared");
         return { content: [{ type: "text" as const, text: parts.join(" | ") }] };
@@ -415,7 +416,8 @@ server.tool(
     "- By node ID: read_memory({ id: 'P0001.2' }) → that node's content + its direct children\n" +
     "- By prefix: read_memory({ prefix: 'L' }) → All Lessons Learned (Level 1)\n" +
     "- By time: read_memory({ after: '2026-02-15', before: '2026-02-17' })\n" +
-    "- Search: read_memory({ search: 'SSE' }) → Full-text search across all levels\n\n" +
+    "- Search: read_memory({ search: 'SSE' }) → Full-text search across all levels\n" +
+    "- Time-around: read_memory({ time_around: 'P0001' }) → entries near P0001's timestamp\n\n" +
     "Lazy loading: ID queries always return the node + its DIRECT children only.\n" +
     "To go deeper, call read_memory(id=child_id). depth parameter is ignored for ID queries.\n\n" +
     "Store types:\n" +
@@ -428,6 +430,10 @@ server.tool(
     before: z.string().optional().describe("Only entries before this date (ISO format)"),
     search: z.string().optional().describe("Full-text search across all memory levels"),
     limit: z.number().optional().describe("Max results (default: unlimited — all L1 entries are returned)"),
+    time: z.string().optional().describe("Time filter 'HH:MM' — filter entries by time of day"),
+    period: z.string().optional().describe("Time window: '+2h', '-1h', 'both' — direction around time/date"),
+    time_around: z.string().optional().describe("Reference entry ID — find entries created around the same time"),
+    show_obsolete: z.boolean().optional().describe("Include all obsolete entries (default: only top 3 most-accessed)"),
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Source store: 'personal' or 'company'"
     ),
@@ -435,7 +441,7 @@ server.tool(
       "Set true to show full metadata (access counts, roles, dates). For curators only."
     ),
   },
-  async ({ id, depth, prefix, after, before, search, limit: maxResults, store: storeName }) => {
+  async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, store: storeName, curator }) => {
     if (AGENT_ID === "UNKNOWN") {
       return {
         content: [{ type: "text" as const, text: "ERROR: Agent-ID unknown. read_memory is only available for spawned agents." }],
@@ -451,136 +457,101 @@ server.tool(
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
         : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
       try {
-        // Warn if database is corrupted (but still allow reads)
         const corruptionWarning = hmemStore.corrupted
           ? "⚠ WARNING: Memory database is corrupted! Reads may be incomplete. A backup (.corrupt) was saved.\n\n"
           : "";
 
-        // Default depth: 2 for single-ID lookup, 1 for listings
         const effectiveDepth = depth || (id ? 2 : 1);
 
         const entries = hmemStore.read({
           id, depth: effectiveDepth, prefix, after, before, search,
           limit: maxResults,
           agentRole: storeName === "company" ? agentRole : undefined,
+          time, period, timeAround: time_around,
+          showObsolete: show_obsolete,
         });
 
         if (entries.length === 0) {
           const hint = id ? `No memory with ID "${id}".` :
             search ? `No memories matching "${search}".` :
+              time_around ? `No entries found around "${time_around}".` :
               "No memories found for this query.";
-          return {
-            content: [{ type: "text" as const, text: hint }],
-          };
+          return { content: [{ type: "text" as const, text: hint }] };
         }
 
-        // In listing mode (no specific ID), filter out obsolete entries
-        const isBulkListing = !id;
-        const visibleEntries = isBulkListing ? entries.filter(e => !e.obsolete) : entries;
-        const hiddenObsolete = isBulkListing ? entries.filter(e => e.obsolete) : [];
-
-        // Format output — tree-aware
-        const lines: string[] = [];
-        for (const e of visibleEntries) {
-          const isNode = e.id.includes(".");
-
-          if (isNode) {
-            const depth = (e.id.match(/\./g) || []).length + 1;
-            lines.push(`[${e.id}] L${depth}: ${e.level_1}`);
-          } else {
-            const date = e.created_at.substring(0, 10);
-            const roleTag = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
-            const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
-            const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
-            lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${obsoleteTag}`);
-            lines.push(`  L1: ${e.level_1}`);
-          }
-
-          // Children
-          if (e.children && e.children.length > 0) {
-            const isBulkRead = e.hiddenChildrenCount !== undefined;
-
-            if (isBulkRead) {
-              // Bulk read: show only the latest child with its date
-              const child = e.children[0] as MemoryNode;
-              const childDate = child.created_at.substring(0, 10);
-              const childDepth = (child.id.match(/\./g) || []).length + 1;
-              const childHint = (child.child_count ?? 0) > 0
-                ? ` (+${child.child_count} deeper — id="${child.id}")`
-                : "";
-              lines.push(`  [${child.id}] ${childDate} L${childDepth}: ${child.content}${childHint}`);
-              // Render grandchildren if present
-              if (child.children && child.children.length > 0) {
-                for (const gc of child.children as MemoryNode[]) {
-                  const gcDepth = (gc.id.match(/\./g) || []).length + 1;
-                  const gcHint = (gc.child_count ?? 0) > 0 ? ` (id="${gc.id}")` : "";
-                  lines.push(`    [${gc.id}] L${gcDepth}: ${gc.content}${gcHint}`);
-                }
-              }
-              if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
-                lines.push(`  (+${e.hiddenChildrenCount} more — id="${e.id}" to see all)`);
-              }
-            } else {
-              // ID-based read: show all direct children
-              lines.push(`  ${e.children.length} ${e.children.length === 1 ? "child" : "children"}:`);
-              for (const child of e.children as MemoryNode[]) {
-                const childDepth = (child.id.match(/\./g) || []).length + 1;
-                const hint = (child.child_count ?? 0) > 0
-                  ? `  (${child.child_count} ${child.child_count === 1 ? "child" : "children"} — use id="${child.id}" to expand)`
-                  : "";
-                lines.push(`  [${child.id}] L${childDepth}: ${child.content}${hint}`);
-              }
-            }
-          }
-
-          if (e.links && e.links.length > 0) lines.push(`  Links: ${e.links.join(", ")}`);
-
-          // Auto-resolved linked entries
-          if (e.linkedEntries && e.linkedEntries.length > 0) {
-            lines.push(`  --- Linked entries ---`);
-            for (const linked of e.linkedEntries) {
-              const isLinkedNode = linked.id.includes(".");
-              if (isLinkedNode) {
-                const d = (linked.id.match(/\./g) || []).length + 1;
-                lines.push(`  [${linked.id}] L${d}: ${linked.level_1}`);
-              } else {
-                const ldate = linked.created_at.substring(0, 10);
-                lines.push(`  [${linked.id}] ${ldate}`);
-                lines.push(`    L1: ${linked.level_1}`);
-              }
-              if (linked.children && linked.children.length > 0) {
-                for (const lchild of linked.children as MemoryNode[]) {
-                  const cd = (lchild.id.match(/\./g) || []).length + 1;
-                  const hint = (lchild.child_count ?? 0) > 0
-                    ? ` (${lchild.child_count} ${lchild.child_count === 1 ? "child" : "children"} — use id="${lchild.id}" to expand)`
-                    : "";
-                  lines.push(`    [${lchild.id}] L${cd}: ${lchild.content}${hint}`);
-                }
-              }
-            }
-          }
-
-          lines.push("");
-        }
-
-        if (hiddenObsolete.length > 0) {
-          const hiddenIds = hiddenObsolete.map(e => e.id).join(", ");
-          lines.push(`--- ${hiddenObsolete.length} obsolete entr${hiddenObsolete.length === 1 ? "y" : "ies"} hidden (${hiddenIds}) — use read_memory(id=X) to view ---`);
-          lines.push("");
-        }
+        // Format output
+        const isBulkListing = !id && !search && !time_around;
+        const output = isBulkListing
+          ? formatGroupedOutput(hmemStore, entries, curator ?? false, hmemConfig)
+          : formatFlatOutput(entries, curator ?? false);
 
         const stats = hmemStore.stats();
         const storeLabel = storeName === "company" ? "company" : templateName;
+        const visibleCount = entries.length;
         const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
-          `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleEntries.length}${hiddenObsolete.length > 0 ? ` (+${hiddenObsolete.length} hidden)` : ""}\n`;
+          `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}\n`;
 
-        log(`read_memory [${storeLabel}]: ${visibleEntries.length} results (depth=${effectiveDepth}, role=${agentRole})`);
+        log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole})`);
 
         return {
           content: [{
             type: "text" as const,
-            text: corruptionWarning + header + "\n" + lines.join("\n"),
+            text: corruptionWarning + header + "\n" + output,
           }],
+        };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return {
+        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ---- Tool: bump_memory ----
+server.tool(
+  "bump_memory",
+  "Bump the access_count of a memory entry or node. " +
+    "Use this to signal that an entry is important or frequently referenced, " +
+    "which influences its visibility in bulk reads.",
+  {
+    id: z.string().describe("Memory ID to bump, e.g. 'E0042' or 'P0001.3'"),
+    increment: z.number().int().min(1).max(10).optional().describe("How much to increment (default: 1)"),
+    store: z.enum(["personal", "company"]).default("personal").describe(
+      "Target store: 'personal' or 'company'"
+    ),
+  },
+  async ({ id, increment, store: storeName }) => {
+    const templateName = AGENT_ID.replace(/_\d+$/, "");
+
+    try {
+      const hmemStore = storeName === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+      try {
+        if (hmemStore.corrupted) {
+          return {
+            content: [{ type: "text" as const, text: "WARNING: Memory database is corrupted! Aborting." }],
+            isError: true,
+          };
+        }
+        const inc = increment ?? 1;
+        const ok = hmemStore.bump(id, inc);
+        const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
+        log(`bump_memory [${storeLabel}]: ${id} (+${inc})`);
+
+        if (!ok) {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: Entry "${id}" not found.` }],
+            isError: true,
+          };
+        }
+
+        return {
+          content: [{ type: "text" as const, text: `Bumped: ${id} (+${inc} access_count)` }],
         };
       } finally {
         hmemStore.close();
@@ -818,7 +789,7 @@ server.tool(
           };
         }
         if (content) {
-          ok = store.updateNode(entry_id, content, undefined, obsolete, favorite);
+          ok = store.updateNode(entry_id, content, undefined, obsolete, favorite, true /* curatorBypass */);
           changed.push("L1");
           if (obsolete !== undefined) changed.push("obsolete");
           if (favorite !== undefined) changed.push("favorite");
@@ -982,6 +953,176 @@ server.tool(
     };
   }
 );
+
+// ---- Output Formatting ----
+
+/**
+ * Format bulk-read output grouped by prefix with header entries.
+ * Non-curator: strips [♥], [★] markers, shortens [OBSOLETE] to [!].
+ */
+function formatGroupedOutput(
+  store: HmemStore,
+  entries: MemoryEntry[],
+  curator: boolean,
+  config: HmemConfig,
+): string {
+  const lines: string[] = [];
+
+  const headers = store.getHeaders();
+  const headerMap = new Map<string, MemoryEntry>();
+  for (const h of headers) headerMap.set(h.prefix, h);
+
+  const nonObsolete = entries.filter(e => !e.obsolete);
+  const obsolete = entries.filter(e => e.obsolete);
+
+  const byPrefix = new Map<string, MemoryEntry[]>();
+  for (const e of nonObsolete) {
+    const arr = byPrefix.get(e.prefix);
+    if (arr) arr.push(e);
+    else byPrefix.set(e.prefix, [e]);
+  }
+
+  const countByPrefix = new Map<string, number>();
+  for (const e of entries) {
+    countByPrefix.set(e.prefix, (countByPrefix.get(e.prefix) ?? 0) + 1);
+  }
+
+  for (const [prefix, prefixEntries] of byPrefix) {
+    const header = headerMap.get(prefix);
+    const description = header?.level_1 ?? config.prefixDescriptions[prefix] ?? config.prefixes[prefix] ?? prefix;
+    const count = countByPrefix.get(prefix) ?? prefixEntries.length;
+    lines.push(`## ${description} (${count} entries)\n`);
+
+    for (const e of prefixEntries) {
+      renderEntryFormatted(lines, e, curator);
+    }
+  }
+
+  if (obsolete.length > 0) {
+    lines.push("");
+    for (const e of obsolete) {
+      renderEntryFormatted(lines, e, curator);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function formatFlatOutput(entries: MemoryEntry[], curator: boolean): string {
+  const lines: string[] = [];
+  for (const e of entries) {
+    renderEntryFormatted(lines, e, curator);
+  }
+  return lines.join("\n");
+}
+
+function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean): void {
+  const isNode = e.id.includes(".");
+
+  if (isNode) {
+    if (curator) {
+      const nodeDepth = (e.id.match(/\./g) || []).length + 1;
+      lines.push(`[${e.id}] L${nodeDepth}: ${e.level_1}`);
+    } else {
+      lines.push(`${e.id}  ${e.level_1}`);
+    }
+  } else {
+    if (curator) {
+      const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
+      const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
+      const date = e.created_at.substring(0, 10);
+      const accessed = e.access_count > 0 ? ` (${e.access_count}x accessed)` : "";
+      const roleTag = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
+      lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${obsoleteTag}${accessed}`);
+      lines.push(`  L1: ${e.level_1}`);
+    } else {
+      const obsoleteTag = e.obsolete ? " [!]" : "";
+      const mmdd = e.created_at.substring(5, 10);
+      lines.push(`${e.id} ${mmdd}${obsoleteTag}  ${e.level_1}`);
+    }
+  }
+
+  if (e.children && e.children.length > 0) {
+    if (e.expanded) {
+      if (curator) {
+        lines.push(`  ${e.children.length} ${e.children.length === 1 ? "child" : "children"}:`);
+      }
+      renderChildrenFormatted(lines, e.children, curator);
+    } else if (e.hiddenChildrenCount !== undefined) {
+      const child = e.children[0] as MemoryNode;
+      if (curator) {
+        const hint = (child.child_count ?? 0) > 0
+          ? `  (${child.child_count} — use id="${child.id}" to expand)`
+          : "";
+        lines.push(`  [${child.id}] L${child.depth}: ${child.content}${hint}`);
+      } else {
+        const hint = (child.child_count ?? 0) > 0
+          ? `  [+${child.child_count} → ${child.id}]`
+          : "";
+        lines.push(`  ${child.depth}.${child.seq}  ${child.content}${hint}`);
+      }
+      if (child.children && child.children.length > 0) {
+        renderChildrenFormatted(lines, child.children, curator);
+      }
+      if (e.hiddenChildrenCount > 0) {
+        lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
+      }
+    } else {
+      if (curator) {
+        lines.push(`  ${e.children.length} ${e.children.length === 1 ? "child" : "children"}:`);
+      }
+      renderChildrenFormatted(lines, e.children, curator);
+    }
+  }
+
+  if (e.links && e.links.length > 0) lines.push(`  Links: ${e.links.join(", ")}`);
+
+  if (e.linkedEntries && e.linkedEntries.length > 0) {
+    lines.push(`  --- Linked entries ---`);
+    for (const linked of e.linkedEntries) {
+      const isLinkedNode = linked.id.includes(".");
+      if (isLinkedNode) {
+        const d = (linked.id.match(/\./g) || []).length + 1;
+        lines.push(`  [${linked.id}] L${d}: ${linked.level_1}`);
+      } else {
+        const ldate = linked.created_at.substring(0, 10);
+        lines.push(`  [${linked.id}] ${ldate}`);
+        lines.push(`    L1: ${linked.level_1}`);
+      }
+      if (linked.children && linked.children.length > 0) {
+        for (const lchild of linked.children as MemoryNode[]) {
+          const cd = (lchild.id.match(/\./g) || []).length + 1;
+          const hint = (lchild.child_count ?? 0) > 0
+            ? ` (${lchild.child_count} ${lchild.child_count === 1 ? "child" : "children"} — use id="${lchild.id}" to expand)`
+            : "";
+          lines.push(`    [${lchild.id}] L${cd}: ${lchild.content}${hint}`);
+        }
+      }
+    }
+  }
+
+  lines.push("");
+}
+
+function renderChildrenFormatted(lines: string[], children: MemoryNode[], curator: boolean): void {
+  for (const child of children) {
+    const indent = "  ".repeat(child.depth - 1);
+    if (curator) {
+      const hint = (child.child_count ?? 0) > 0
+        ? `  (${child.child_count} — use id="${child.id}" to expand)`
+        : "";
+      lines.push(`${indent}[${child.id}] L${child.depth}: ${child.content}${hint}`);
+    } else {
+      const hint = (child.child_count ?? 0) > 0
+        ? `  [+${child.child_count} → ${child.id}]`
+        : "";
+      lines.push(`${indent}${child.depth}.${child.seq}  ${child.content}${hint}`);
+    }
+    if (child.children && child.children.length > 0) {
+      renderChildrenFormatted(lines, child.children, curator);
+    }
+  }
+}
 
 // ---- Start ----
 async function main() {

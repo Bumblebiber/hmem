@@ -65,13 +65,21 @@ Use sparingly: if everything is a favorite, nothing is. Prefer high-value refere
 
 ### Marking entries as obsolete
 
-When you notice that an entry is outdated — superseded by a newer approach, a fixed bug, or changed architecture — do **not** delete it. Mark it as obsolete:
+When you notice that an entry is outdated — superseded by a newer approach, a fixed bug, or changed architecture — do **not** delete it. Mark it as obsolete with a correction reference:
 
 ```
-update_memory(id="E0023", content="[original or corrected L1]", obsolete=true)
+# Step 1: Write the correction FIRST
+write_memory(prefix="E", content="Correct approach is XYZ\n\tDetails...")  # → E0076
+
+# Step 2: Mark old entry obsolete — MUST include [✓ID] tag
+update_memory(id="E0023", content="Wrong approach — see [✓E0076]", obsolete=true)
 ```
 
-The entry stays in memory with a `[⚠ OBSOLETE]` marker. Past errors still carry learning value ("we tried this and it failed because..."). The curator may eventually prune it, but that's their decision, not yours.
+**The `[✓ID]` tag is enforced.** The system will reject `obsolete=true` without a correction reference. This ensures every obsolete entry points to its replacement. The system also creates **bidirectional links** automatically (E0023↔E0076).
+
+The entry stays in memory with a `[!]` marker. Past errors still carry learning value ("we tried this and it failed because..."). The curator may eventually prune it, but that's their decision, not yours.
+
+**Shortcut for stale entries:** If no correction exists (entry is just old/irrelevant, not wrong), only the curator can mark it obsolete without `[✓ID]`.
 
 ---
 
@@ -184,6 +192,19 @@ Use when: you have new context to add without replacing what's there.
 
 ---
 
+## Bumping Access Count
+
+Signal that an entry is important without modifying its content. Frequently-accessed entries get expanded treatment (all L2 children shown) in bulk reads.
+
+```
+bump_memory(id="L0045")              # +1 access
+bump_memory(id="L0045", increment=3) # +3 access
+```
+
+**Automatic bubble-up:** When you `append_memory` to add children, the parent entry's access count is bumped automatically. No need to bump manually after appending.
+
+---
+
 ## Anti-Patterns
 
 | Wrong | Right |
@@ -196,3 +217,4 @@ Use when: you have new context to add without replacing what's there.
 | Forget to write_memory | Always call BEFORE setting Status: Completed |
 | Write to .hmem via sqlite3/SQL | ONLY use `write_memory` MCP tool — never raw SQL |
 | MCP unavailable → skip saving | Reconnect MCP first (`/mcp` or restart tool) |
+| `update_memory(id="X", obsolete=true)` without `[✓ID]` | Write correction first, then mark obsolete with `[✓E0076]` tag |

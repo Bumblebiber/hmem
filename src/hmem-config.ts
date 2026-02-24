@@ -74,6 +74,24 @@ export interface HmemConfig {
    * Set to 0 to disable. Default: 5.
    */
   accessCountTopN: number;
+  /**
+   * Descriptions for prefix category headers (X0000 entries).
+   * Used as L1 text for abstract header entries in grouped bulk reads.
+   * Users can override or add descriptions in hmem.config.json.
+   */
+  prefixDescriptions: Record<string, string>;
+  /**
+   * V2 bulk-read algorithm tuning parameters.
+   * Controls how many entries receive expanded treatment in default reads.
+   */
+  bulkReadV2: {
+    /** Number of top-accessed entries to expand (default: 3) */
+    topAccessCount: number;
+    /** Number of newest entries to expand (default: 5) */
+    topNewestCount: number;
+    /** Number of obsolete entries to keep visible (default: 3) */
+    topObsoleteCount: number;
+  };
 }
 
 export const DEFAULT_PREFIXES: Record<string, string> = {
@@ -87,6 +105,22 @@ export const DEFAULT_PREFIXES: Record<string, string> = {
   N: "Navigator",
 };
 
+/**
+ * Default descriptions for prefix category headers (X0000 entries).
+ * These are used as L1 text for abstract header entries that group
+ * entries by category in bulk reads.
+ */
+export const DEFAULT_PREFIX_DESCRIPTIONS: Record<string, string> = {
+  P: "Project experiences and summaries",
+  L: "Lessons learned and best practices",
+  T: "Tasks and work items",
+  E: "Errors encountered and their fixes",
+  D: "Key decisions and their rationale",
+  M: "Milestones and achievements",
+  S: "Skills and technical knowledge",
+  N: "Navigation and context notes",
+};
+
 export const DEFAULT_CONFIG: HmemConfig = {
   maxCharsPerLevel: [120, 2_500, 10_000, 25_000, 50_000],
   maxDepth: 5,
@@ -97,6 +131,12 @@ export const DEFAULT_CONFIG: HmemConfig = {
   defaultReadLimit: 100,
   prefixes: { ...DEFAULT_PREFIXES },
   accessCountTopN: 5,
+  prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
+  bulkReadV2: {
+    topAccessCount: 3,
+    topNewestCount: 5,
+    topObsoleteCount: 3,
+  },
 };
 
 /**
@@ -138,7 +178,7 @@ export function resolveDepthForPosition(i: number, tiers: DepthTier[]): number {
 export function loadHmemConfig(projectDir: string): HmemConfig {
   const configPath = path.join(projectDir, "hmem.config.json");
   if (!fs.existsSync(configPath)) {
-    return { ...DEFAULT_CONFIG, recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers], prefixes: { ...DEFAULT_PREFIXES } };
+    return { ...DEFAULT_CONFIG, recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers], prefixes: { ...DEFAULT_PREFIXES }, prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS }, bulkReadV2: { ...DEFAULT_CONFIG.bulkReadV2 } };
   }
 
   try {
@@ -146,6 +186,8 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     const cfg: HmemConfig = {
       ...DEFAULT_CONFIG,
       recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers],
+      prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
+      bulkReadV2: { ...DEFAULT_CONFIG.bulkReadV2 },
     };
 
     if (typeof raw.maxDepth === "number" && raw.maxDepth >= 1 && raw.maxDepth <= 10) cfg.maxDepth = raw.maxDepth;
@@ -180,6 +222,29 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
       cfg.prefixes = merged;
     }
 
+    // Prefix descriptions: merge user-defined with defaults
+    if (raw.prefixDescriptions && typeof raw.prefixDescriptions === "object" && !Array.isArray(raw.prefixDescriptions)) {
+      for (const [key, val] of Object.entries(raw.prefixDescriptions)) {
+        if (typeof key === "string" && /^[A-Z]$/.test(key) && typeof val === "string" && val.length > 0) {
+          cfg.prefixDescriptions[key] = val;
+        }
+      }
+    }
+    // Also generate descriptions for any new user prefixes that lack descriptions
+    for (const key of Object.keys(cfg.prefixes)) {
+      if (!cfg.prefixDescriptions[key]) {
+        cfg.prefixDescriptions[key] = cfg.prefixes[key];
+      }
+    }
+
+    // V2 bulk-read tuning
+    if (raw.bulkReadV2 && typeof raw.bulkReadV2 === "object") {
+      const v2 = raw.bulkReadV2;
+      if (typeof v2.topAccessCount === "number" && v2.topAccessCount >= 0) cfg.bulkReadV2.topAccessCount = v2.topAccessCount;
+      if (typeof v2.topNewestCount === "number" && v2.topNewestCount >= 0) cfg.bulkReadV2.topNewestCount = v2.topNewestCount;
+      if (typeof v2.topObsoleteCount === "number" && v2.topObsoleteCount >= 0) cfg.bulkReadV2.topObsoleteCount = v2.topObsoleteCount;
+    }
+
     // Resolve char limits: explicit array > linear endpoints > default
     if (Array.isArray(raw.maxCharsPerLevel) && raw.maxCharsPerLevel.length >= 1) {
       const levels = raw.maxCharsPerLevel as number[];
@@ -203,6 +268,6 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     return cfg;
   } catch (e) {
     console.error(`[hmem] Failed to parse hmem.config.json: ${e}. Using defaults.`);
-    return { ...DEFAULT_CONFIG, recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers], prefixes: { ...DEFAULT_PREFIXES } };
+    return { ...DEFAULT_CONFIG, recentDepthTiers: [...DEFAULT_CONFIG.recentDepthTiers], prefixes: { ...DEFAULT_PREFIXES }, prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS }, bulkReadV2: { ...DEFAULT_CONFIG.bulkReadV2 } };
   }
 }

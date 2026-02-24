@@ -29,7 +29,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import type { HmemConfig, DepthTier } from "./hmem-config.js";
-import { DEFAULT_CONFIG, resolveDepthForPosition } from "./hmem-config.js";
+import { DEFAULT_CONFIG, DEFAULT_PREFIX_DESCRIPTIONS, resolveDepthForPosition } from "./hmem-config.js";
 
 // ---- Types ----
 
@@ -66,6 +66,10 @@ export interface MemoryEntry {
    * N>0 = bulk read, N additional children exist beyond the one shown.
    */
   hiddenChildrenCount?: number;
+  /** True if all L2 children are shown + links resolved (V2 expanded entry). */
+  expanded?: boolean;
+  /** True if this entry is a category header (seq===0, e.g. P0000). */
+  isHeader?: boolean;
   children?: MemoryNode[];       // populated for ID-based reads and bulk reads (latest child)
   linkedEntries?: MemoryEntry[]; // auto-resolved linked entries (ID-based reads only)
 }
@@ -100,6 +104,16 @@ export interface ReadOptions {
   linkDepth?: number;
   /** Internal: visited entry IDs for cycle detection during link resolution. */
   _visitedLinks?: Set<string>;
+  /** Include all obsolete entries in bulk reads (default: only top N most-accessed). */
+  showObsolete?: boolean;
+  /** Time filter: "HH:MM" — filter entries by time of day. */
+  time?: string;
+  /** Time window: "+2h", "-1h", "both" — direction and size around the time/date. */
+  period?: string;
+  /** Reference entry ID — find entries created around the same time as this entry. */
+  timeAround?: string;
+  /** Internal: bypass obsolete enforcement for curator tools. */
+  _curatorBypass?: boolean;
 }
 
 export interface WriteResult {
@@ -213,6 +227,7 @@ export class HmemStore {
     this.db.exec(SCHEMA);
     this.migrate();
     this.migrateToTree();
+    this.migrateHeaders();
   }
 
   /** Throw if the database is corrupted — prevents silent data loss on write operations. */
@@ -316,8 +331,8 @@ export class HmemStore {
         return [this.nodeToEntry(this.rowToNode(row), children)];
       } else {
         // Root ID — fetch from memories
-        const sql = `SELECT * FROM memories WHERE id = ?${roleFilter ? ` AND ${roleFilter}` : ""}`;
-        const row = this.db.prepare(sql).get(opts.id) as any;
+        const sql = `SELECT * FROM memories WHERE id = ?${roleFilter.sql ? ` AND ${roleFilter.sql}` : ""}`;
+        const row = this.db.prepare(sql).get(opts.id, ...roleFilter.params) as any;
         if (!row) return [];
         this.bumpAccess(opts.id);
 
@@ -348,12 +363,40 @@ export class HmemStore {
       }
     }
 
+    // Time-around: find entries created around the same time as a reference entry
+    if (opts.timeAround) {
+      const refId = opts.timeAround;
+      const isRefNode = refId.includes(".");
+      let refTime: string | null = null;
+      if (isRefNode) {
+        const refRow = this.db.prepare("SELECT created_at FROM memory_nodes WHERE id = ?").get(refId) as any;
+        refTime = refRow?.created_at ?? null;
+      } else {
+        const refRow = this.db.prepare("SELECT created_at FROM memories WHERE id = ?").get(refId) as any;
+        refTime = refRow?.created_at ?? null;
+      }
+      if (!refTime) return [];
+
+      const refDate = new Date(refTime);
+      const { start, end } = this.parseTimeWindow(refDate, opts.period ?? "both");
+
+      const conditions: string[] = ["seq > 0", "created_at >= ?", "created_at <= ?"];
+      const params: any[] = [start.toISOString(), end.toISOString()];
+      if (roleFilter.sql) { conditions.push(roleFilter.sql); params.push(...roleFilter.params); }
+
+      const where = `WHERE ${conditions.join(" AND ")}`;
+      const rows = this.db.prepare(
+        `SELECT * FROM memories ${where} ORDER BY created_at DESC`
+      ).all(...params) as any[];
+      return rows.map(r => this.rowToEntry(r));
+    }
+
     // Full-text search across memories + memory_nodes
     if (opts.search) {
       const pattern = `%${opts.search}%`;
-      // Search in memories level_1
-      const searchCondition = "(level_1 LIKE ?)";
-      const where = roleFilter ? `WHERE ${searchCondition} AND ${roleFilter}` : `WHERE ${searchCondition}`;
+      // Search in memories level_1 (exclude headers: seq > 0)
+      const searchCondition = "(level_1 LIKE ? AND seq > 0)";
+      const where = roleFilter.sql ? `WHERE ${searchCondition} AND ${roleFilter.sql}` : `WHERE ${searchCondition}`;
 
       // Also search memory_nodes content
       const nodeLimitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
@@ -365,7 +408,7 @@ export class HmemStore {
       const memLimitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
       const memRows = this.db.prepare(
         `SELECT * FROM memories ${where} ORDER BY created_at DESC${memLimitClause}`
-      ).all(pattern) as any[];
+      ).all(pattern, ...roleFilter.params) as any[];
 
       // Merge: include any roots found in node search too
       const allIds = new Set(memRows.map((r: any) => r.id));
@@ -374,12 +417,12 @@ export class HmemStore {
       let extraRows: any[] = [];
       if (extraIds.length > 0) {
         const placeholders = extraIds.map(() => "?").join(", ");
-        const extraWhere = roleFilter
-          ? `WHERE id IN (${placeholders}) AND ${roleFilter}`
-          : `WHERE id IN (${placeholders})`;
+        const extraWhere = roleFilter.sql
+          ? `WHERE id IN (${placeholders}) AND seq > 0 AND ${roleFilter.sql}`
+          : `WHERE id IN (${placeholders}) AND seq > 0`;
         extraRows = this.db.prepare(
           `SELECT * FROM memories ${extraWhere} ORDER BY created_at DESC`
-        ).all(...extraIds) as any[];
+        ).all(...extraIds, ...roleFilter.params) as any[];
       }
 
       const allRows = [...memRows, ...extraRows];
@@ -387,12 +430,13 @@ export class HmemStore {
       return allRows.map(r => this.rowToEntry(r));
     }
 
-    // Build filtered bulk query (L1 only)
-    const conditions: string[] = [];
+    // Build filtered bulk query (exclude headers: seq > 0)
+    const conditions: string[] = ["seq > 0"];
     const params: any[] = [];
 
-    if (roleFilter) {
-      conditions.push(roleFilter);
+    if (roleFilter.sql) {
+      conditions.push(roleFilter.sql);
+      params.push(...roleFilter.params);
     }
     if (opts.prefix) {
       conditions.push("prefix = ?");
@@ -405,6 +449,15 @@ export class HmemStore {
     if (opts.before) {
       conditions.push("created_at <= ?");
       params.push(opts.before);
+    }
+
+    // Time-based filtering
+    if (opts.time) {
+      const { start, end } = this.parseTimeFilter(opts.time, opts.after ?? new Date().toISOString().substring(0, 10), opts.period);
+      conditions.push("created_at >= ?");
+      params.push(start.toISOString());
+      conditions.push("created_at <= ?");
+      params.push(end.toISOString());
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -427,8 +480,18 @@ export class HmemStore {
       for (const row of rows) this.bumpAccess(row.id);
     }
 
-    // Recency gradient: inline children up to the tier-resolved depth for recent entries
-    // Favorites (F) and top-accessed entries are always pinned at depth 2 minimum
+    // Dispatch: V1 (legacy) or V2 (new default)
+    if (opts.recentDepthTiers) {
+      return this.readBulkV1(rows, opts);
+    }
+    return this.readBulkV2(rows, opts);
+  }
+
+  /**
+   * V1 bulk-read algorithm (legacy): recency gradient with depth tiers.
+   * Kept for backward compatibility when recentDepthTiers is explicitly passed.
+   */
+  private readBulkV1(rows: any[], opts: ReadOptions): MemoryEntry[] {
     const tiers: DepthTier[] = opts.recentDepthTiers ?? this.cfg.recentDepthTiers;
 
     // Identify top-N entries by access_count ("organic favorites")
@@ -475,15 +538,124 @@ export class HmemStore {
   }
 
   /**
+   * V2 bulk-read algorithm: per-prefix expansion, smart obsolete filtering,
+   * expanded entries with all L2 children + links.
+   */
+  private readBulkV2(rows: any[], opts: ReadOptions): MemoryEntry[] {
+    const v2 = this.cfg.bulkReadV2;
+
+    // Step 1: Group by prefix
+    const byPrefix = new Map<string, any[]>();
+    for (const r of rows) {
+      const arr = byPrefix.get(r.prefix);
+      if (arr) arr.push(r);
+      else byPrefix.set(r.prefix, [r]);
+    }
+
+    // Step 2: Build expansion set
+    const expandedIds = new Set<string>();
+
+    // Per prefix: youngest entry + most-accessed entry
+    for (const [, prefixRows] of byPrefix) {
+      if (prefixRows.length > 0) {
+        expandedIds.add(prefixRows[0].id); // youngest (already sorted by effective_date DESC)
+        const mostAccessed = [...prefixRows]
+          .filter(r => r.access_count > 0)
+          .sort((a, b) => b.access_count - a.access_count)[0];
+        if (mostAccessed) expandedIds.add(mostAccessed.id);
+      }
+    }
+
+    // Global: all favorites
+    for (const r of rows) {
+      if (r.favorite === 1) expandedIds.add(r.id);
+    }
+
+    // Global: top N by access_count
+    const topAccess = [...rows]
+      .filter(r => r.access_count > 0)
+      .sort((a, b) => b.access_count - a.access_count)
+      .slice(0, v2.topAccessCount);
+    for (const r of topAccess) expandedIds.add(r.id);
+
+    // Global: top N newest
+    for (const r of rows.slice(0, v2.topNewestCount)) {
+      expandedIds.add(r.id);
+    }
+
+    // Step 3: Obsolete filter
+    const obsoleteRows = rows.filter(r => r.obsolete === 1);
+    const nonObsoleteRows = rows.filter(r => r.obsolete !== 1);
+
+    let visibleObsolete: any[];
+    if (opts.showObsolete) {
+      visibleObsolete = obsoleteRows;
+    } else {
+      // Keep only top N most-accessed obsolete entries ("biggest mistakes")
+      visibleObsolete = [...obsoleteRows]
+        .sort((a, b) => b.access_count - a.access_count)
+        .slice(0, v2.topObsoleteCount);
+    }
+
+    const visibleRows = [...nonObsoleteRows, ...visibleObsolete];
+    const hiddenObsoleteCount = obsoleteRows.length - visibleObsolete.length;
+
+    // Step 4: Build entries
+    return visibleRows.map(r => {
+      const isExpanded = expandedIds.has(r.id);
+      let promoted: "access" | "favorite" | undefined;
+      if (r.favorite === 1) promoted = "favorite";
+      else if (topAccess.some(t => t.id === r.id)) promoted = "access";
+
+      let children: MemoryNode[] | undefined;
+      let hiddenChildrenCount: number | undefined;
+      let linkedEntries: MemoryEntry[] | undefined;
+
+      if (isExpanded) {
+        // Expanded: ALL direct L2 children + resolve links
+        children = this.fetchChildren(r.id);
+        hiddenChildrenCount = 0;
+
+        // Resolve links (depth 1, no family)
+        const links: string[] = r.links ? JSON.parse(r.links) : [];
+        if (links.length > 0) {
+          linkedEntries = links.flatMap(linkId => {
+            try {
+              return this.read({ id: linkId, resolveLinks: false, linkDepth: 0 });
+            } catch { return []; }
+          });
+        }
+      } else {
+        // Non-expanded: latest child + hidden count (hybrid)
+        const latest = this.fetchLatestChild(r.id, 2);
+        if (latest) {
+          children = [latest.node];
+          hiddenChildrenCount = latest.totalSiblings - 1;
+        } else {
+          hiddenChildrenCount = 0;
+        }
+      }
+
+      const entry = this.rowToEntry(r, children);
+      entry.promoted = promoted;
+      entry.hiddenChildrenCount = isExpanded ? undefined : hiddenChildrenCount;
+      entry.expanded = isExpanded;
+      if (linkedEntries && linkedEntries.length > 0) entry.linkedEntries = linkedEntries;
+
+      return entry;
+    });
+  }
+
+  /**
    * Get all Level 1 entries for injection at agent startup.
    * Does NOT bump access_count (routine injection).
    */
   getLevel1All(agentRole?: AgentRole): string {
     const roleFilter = this.buildRoleFilter(agentRole);
-    const where = roleFilter ? `WHERE ${roleFilter}` : "";
+    const where = roleFilter.sql ? `WHERE seq > 0 AND ${roleFilter.sql}` : "WHERE seq > 0";
     const rows = this.db.prepare(
       `SELECT id, created_at, level_1 FROM memories ${where} ORDER BY created_at DESC`
-    ).all() as any[];
+    ).all(...roleFilter.params) as any[];
 
     if (rows.length === 0) return "";
 
@@ -498,7 +670,7 @@ export class HmemStore {
    */
   exportMarkdown(): string {
     const rows = this.db.prepare(
-      "SELECT * FROM memories ORDER BY prefix, seq"
+      "SELECT * FROM memories WHERE seq > 0 ORDER BY prefix, seq"
     ).all() as any[];
 
     if (rows.length === 0) return "# Memory Export\n\n(empty)\n";
@@ -553,9 +725,9 @@ export class HmemStore {
    * Get statistics about the memory store.
    */
   stats(): { total: number; byPrefix: Record<string, number> } {
-    const total = (this.db.prepare("SELECT COUNT(*) as c FROM memories").get() as any).c;
+    const total = (this.db.prepare("SELECT COUNT(*) as c FROM memories WHERE seq > 0").get() as any).c;
     const rows = this.db.prepare(
-      "SELECT prefix, COUNT(*) as c FROM memories GROUP BY prefix"
+      "SELECT prefix, COUNT(*) as c FROM memories WHERE seq > 0 GROUP BY prefix"
     ).all() as any[];
 
     const byPrefix: Record<string, number> = {};
@@ -608,7 +780,7 @@ export class HmemStore {
    * For sub-nodes: updates node content only.
    * Does NOT modify children — use appendChildren to extend the tree.
    */
-  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean): boolean {
+  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean): boolean {
     this.guardCorrupted();
     const trimmed = newContent.trim();
     if (id.includes(".")) {
@@ -627,6 +799,25 @@ export class HmemStore {
       if (trimmed.length > l1Limit) {
         throw new Error(`Level 1 exceeds ${l1Limit} character limit (${trimmed.length} chars). Keep L1 compact.`);
       }
+
+      // Obsolete enforcement: require [✓ID] correction reference
+      if (obsolete === true && !curatorBypass) {
+        const correctionMatch = trimmed.match(/\[✓([A-Z]\d{4}(?:\.\d+)*)\]/);
+        if (!correctionMatch) {
+          throw new Error("Cannot mark as obsolete without [✓ID] correction reference — write the correction first.");
+        }
+        const correctionId = correctionMatch[1];
+        // Validate correction target exists
+        const existsInMemories = this.db.prepare("SELECT 1 FROM memories WHERE id = ?").get(correctionId);
+        const existsInNodes = this.db.prepare("SELECT 1 FROM memory_nodes WHERE id = ?").get(correctionId);
+        if (!existsInMemories && !existsInNodes) {
+          throw new Error(`Correction target "${correctionId}" not found.`);
+        }
+        // Add bidirectional links
+        this.addLink(id, correctionId);
+        this.addLink(correctionId, id);
+      }
+
       const sets: string[] = ["level_1 = ?"];
       const params: any[] = [trimmed];
       if (links !== undefined) {
@@ -708,10 +899,61 @@ export class HmemStore {
       }
     })();
 
+    // Bubble-up: bump access on the direct parent and root entry
+    if (parentId.includes(".")) {
+      // Parent is a node → bump the node + bump the root
+      this.bumpNodeAccess(parentId);
+      this.bumpAccess(rootId);
+    } else {
+      // Parent is root → bump the root
+      this.bumpAccess(parentId);
+    }
+
     return { count: nodes.length, ids: topLevelIds };
   }
 
+  /**
+   * Bump access_count on a root entry or node.
+   * Returns true if the entry was found and bumped.
+   */
+  bump(id: string, increment: number = 1): boolean {
+    this.guardCorrupted();
+    const now = new Date().toISOString();
+    if (id.includes(".")) {
+      const r = this.db.prepare(
+        "UPDATE memory_nodes SET access_count = access_count + ?, last_accessed = ? WHERE id = ?"
+      ).run(increment, now, id);
+      return r.changes > 0;
+    } else {
+      const r = this.db.prepare(
+        "UPDATE memories SET access_count = access_count + ?, last_accessed = ? WHERE id = ?"
+      ).run(increment, now, id);
+      return r.changes > 0;
+    }
+  }
+
+  /**
+   * Get all header entries (seq=0) for grouped output formatting.
+   */
+  getHeaders(): MemoryEntry[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM memories WHERE seq = 0 ORDER BY prefix"
+    ).all() as any[];
+    return rows.map(r => {
+      const entry = this.rowToEntry(r);
+      entry.isHeader = true;
+      return entry;
+    });
+  }
+
   close(): void {
+    // Flush WAL to main database file before closing — prevents WAL bloat
+    // that can lead to corruption on unclean shutdown
+    try {
+      this.db.pragma("wal_checkpoint(PASSIVE)");
+    } catch {
+      // Best-effort — don't fail close() if checkpoint fails
+    }
     this.db.close();
   }
 
@@ -778,11 +1020,92 @@ export class HmemStore {
     })();
   }
 
-  private buildRoleFilter(agentRole?: AgentRole): string {
-    if (!agentRole) return "";
+  /**
+   * One-time migration: create abstract header entries (X0000) for each prefix.
+   * Headers have seq=0 and serve as group separators in bulk reads.
+   * Idempotent — tracked via schema_version table.
+   */
+  private migrateHeaders(): void {
+    const done = this.db.prepare(
+      "SELECT value FROM schema_version WHERE key = 'headers_v1'"
+    ).get();
+    if (done) return;
+
+    const timestamp = new Date().toISOString();
+    const descriptions = this.cfg.prefixDescriptions ?? DEFAULT_PREFIX_DESCRIPTIONS;
+
+    this.db.transaction(() => {
+      const insertHeader = this.db.prepare(`
+        INSERT OR IGNORE INTO memories (id, prefix, seq, created_at, level_1, min_role)
+        VALUES (?, ?, 0, ?, ?, 'worker')
+      `);
+
+      for (const prefix of Object.keys(this.cfg.prefixes)) {
+        const headerId = `${prefix}0000`;
+        const description = descriptions[prefix] || this.cfg.prefixes[prefix];
+        insertHeader.run(headerId, prefix, timestamp, description);
+      }
+
+      this.db.prepare(
+        "INSERT INTO schema_version (key, value) VALUES ('headers_v1', 'done')"
+      ).run();
+    })();
+  }
+
+  /**
+   * Add a link from sourceId to targetId (idempotent).
+   * Only works for root entries (not nodes).
+   */
+  private addLink(sourceId: string, targetId: string): void {
+    if (sourceId.includes(".") || targetId.includes(".")) return; // nodes don't have links
+    const row = this.db.prepare("SELECT links FROM memories WHERE id = ?").get(sourceId) as any;
+    if (!row) return;
+    const links: string[] = row.links ? JSON.parse(row.links) : [];
+    if (!links.includes(targetId)) {
+      links.push(targetId);
+      this.db.prepare("UPDATE memories SET links = ? WHERE id = ?").run(JSON.stringify(links), sourceId);
+    }
+  }
+
+  /**
+   * Parse time filter "HH:MM" + date + period into start/end window.
+   */
+  private parseTimeFilter(time: string, date: string, period?: string): { start: Date; end: Date } {
+    const [hours, minutes] = time.split(":").map(Number);
+    const baseDate = new Date(date);
+    baseDate.setHours(hours, minutes, 0, 0);
+    return this.parseTimeWindow(baseDate, period ?? "+2h");
+  }
+
+  /**
+   * Parse a time window around a reference date.
+   * period: "+2h" (future), "-1h" (past), "both" (symmetric ±2h)
+   */
+  private parseTimeWindow(refDate: Date, period: string): { start: Date; end: Date } {
+    const match = period.match(/^([+-]?)(\d+)h$/);
+    if (period === "both" || !match) {
+      const windowMs = 2 * 60 * 60 * 1000; // default ±2h
+      return {
+        start: new Date(refDate.getTime() - windowMs),
+        end: new Date(refDate.getTime() + windowMs),
+      };
+    }
+    const direction = match[1] || "+";
+    const hours = parseInt(match[2], 10);
+    const windowMs = hours * 60 * 60 * 1000;
+
+    if (direction === "-") {
+      return { start: new Date(refDate.getTime() - windowMs), end: refDate };
+    } else {
+      return { start: refDate, end: new Date(refDate.getTime() + windowMs) };
+    }
+  }
+
+  private buildRoleFilter(agentRole?: AgentRole): { sql: string; params: string[] } {
+    if (!agentRole) return { sql: "", params: [] };
     const roles = allowedRoles(agentRole);
-    const placeholders = roles.map(r => `'${r}'`).join(", ");
-    return `min_role IN (${placeholders})`;
+    const placeholders = roles.map(() => "?").join(", ");
+    return { sql: `min_role IN (${placeholders})`, params: roles };
   }
 
   private nextSeq(prefix: string): number {

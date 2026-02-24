@@ -50,8 +50,18 @@ To fix an L2 or deeper node, use the compound ID: `fix_agent_memory(agent_name, 
 To navigate the tree: `read_memory` shows node IDs like `L0003.2`, `L0003.2.1` — use those directly.
 
 ### Obsolete entries
-Entries marked `[⚠ OBSOLETE]` are already hidden from bulk reads — they do not need to be deleted.
+Entries marked `[!]` (or `[OBSOLETE]` in curator view) are already hidden from bulk reads — they do not need to be deleted.
 Leave them in place. The curator's job is to *mark* entries obsolete, not remove them.
+
+**Curator bypass:** As curator, you can mark entries obsolete **without** the `[✓ID]` correction reference that agents are required to include. Use this for stale entries where no correction exists (e.g., entries about deleted features, abandoned approaches).
+
+```
+# Curator can bypass [✓ID] enforcement:
+fix_agent_memory(agent_name, id, obsolete=true)
+
+# But prefer including a correction reference when one exists:
+fix_agent_memory(agent_name, id, content="Outdated — see [✓E0076]", obsolete=true)
+```
 
 ### Merging entries (duplicates and fragmented P entries)
 
@@ -98,6 +108,32 @@ Exception: unique lessons or error patterns with no equivalent elsewhere — kee
 Navigator entries go stale when code moves. Check: does the file/line referenced still exist?
 If stale and the agent hasn't updated it: mark obsolete via `fix_agent_memory(agent_name, id, obsolete=true)`.
 Do NOT fix stale N entries yourself — the agent who wrote them must verify and update.
+
+---
+
+## V2 Bulk-Read Output
+
+The default `read_memory()` now returns **grouped output** by prefix category:
+
+```
+## Project experiences and summaries (5 entries)
+
+P0001 02-14  Das Althing — Node.js/TS Multi-Agent-Orchestrator
+  2.1  Architecture: Node.js polling daemon with file-based IPC
+  2.2  Key decisions: SQLite for hmem, MCP for tool protocol
+  [+7 more → P0001]
+  Links: L0045, D0003
+
+## Lessons learned and best practices (78 entries)
+...
+
+--- 5 obsolete entries hidden (E0023, D0007, ...) — top 3 shown above ---
+```
+
+**Expanded entries** (newest, most-accessed, favorites) show all L2 children + links.
+**Non-expanded entries** show latest child + `[+N more → ID]` hint.
+
+Use `read_memory(show_obsolete=true)` to see all obsolete entries.
 
 ---
 

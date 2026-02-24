@@ -33,13 +33,17 @@ Read the file and show the user a clear table of current values vs. defaults:
 | `maxLnChars` | … | 50000 | Max characters for deeper levels (L2–L5). Controls how much detail you can store per node. |
 | `maxDepth` | … | 5 | How many nesting levels are available (1–5). 5 is the maximum. |
 | `defaultReadLimit` | … | 100 | Max entries returned by a single `read_memory()` call. |
-| `recentDepthTiers` | … | [{count:10,depth:2},{count:3,depth:3}] | How much detail is auto-inlined for the most recent entries. See explanation below. |
+| `recentDepthTiers` | … | [{count:10,depth:2},{count:3,depth:3}] | How much detail is auto-inlined for the most recent entries (V1 algorithm). See explanation below. |
 | `accessCountTopN` | … | 5 | Top-N most-accessed entries always get L2 inlined in bulk reads ("organic favorites"). These are shown with a [★] marker. Set to 0 to disable. |
-| `prefixes` | … | P,L,T,E,D,M,S,F | Category labels for memory entries. Custom prefixes are merged with defaults. |
+| `prefixes` | … | P,L,T,E,D,M,S,N | Category labels for memory entries. Custom prefixes are merged with defaults. |
+| `prefixDescriptions` | … | (see below) | Human-readable descriptions for each prefix category, used as group headers in bulk reads. |
+| `bulkReadV2.topAccessCount` | … | 3 | Number of top-accessed entries to expand in V2 bulk reads. |
+| `bulkReadV2.topNewestCount` | … | 5 | Number of newest entries to expand in V2 bulk reads. |
+| `bulkReadV2.topObsoleteCount` | … | 3 | Number of obsolete entries to keep visible ("biggest mistakes"). |
 
-### recentDepthTiers explained
+### recentDepthTiers explained (V1 algorithm)
 
-This controls how much detail is automatically shown for recent entries in a default `read_memory()` call — without you having to drill in manually.
+This controls how much detail is automatically shown for recent entries when using the V1 bulk-read algorithm (triggered by explicitly passing `recentDepthTiers` to read options).
 
 Example: `[{count: 10, depth: 2}, {count: 3, depth: 3}]`
 - The **3 most recent** entries: shown with L1 + L2 + L3 detail
@@ -49,6 +53,47 @@ Example: `[{count: 10, depth: 2}, {count: 3, depth: 3}]`
 Think of it like human memory — yesterday in full detail, last week in outline, older in headlines.
 
 Set to `[]` to disable (L1 only for everything).
+
+### V2 Bulk-Read Algorithm (default)
+
+The V2 algorithm (used by default in `read_memory()`) groups entries by prefix category and uses smart expansion:
+
+- **Expanded entries**: newest (top N), most-accessed (top N), and all favorites → show ALL L2 children + links
+- **Non-expanded entries**: show latest child + `[+N more → ID]` hint
+- **Obsolete entries**: top N by access count shown with `[!]`, rest hidden
+- **Per-prefix guarantee**: each category's youngest + most-accessed entry is always expanded
+
+Tune via `bulkReadV2`:
+```json
+{
+  "bulkReadV2": {
+    "topAccessCount": 3,
+    "topNewestCount": 5,
+    "topObsoleteCount": 3
+  }
+}
+```
+
+### prefixDescriptions
+
+Default descriptions used as group headers in bulk reads:
+
+```json
+{
+  "prefixDescriptions": {
+    "P": "Project experiences and summaries",
+    "L": "Lessons learned and best practices",
+    "T": "Tasks and work items",
+    "E": "Errors encountered and their fixes",
+    "D": "Key decisions and their rationale",
+    "M": "Milestones and achievements",
+    "S": "Skills and technical knowledge",
+    "N": "Navigation and context notes"
+  }
+}
+```
+
+Custom prefixes automatically get their name as the description. Override with explicit descriptions in config.
 
 ## Step 3 — Ask the user what to change
 
@@ -68,6 +113,9 @@ Ask the user which parameter(s) they want to adjust. For each one:
 | `maxDepth` | 2 | 5 | 3 is enough for most users. 5 for complex multi-agent setups. |
 | `defaultReadLimit` | 20 | 500 | Lower if startup feels slow. Higher if you have many entries. |
 | `accessCountTopN` | 0 | 20 | 0 = disabled. 5 is a good default. Raise if you have many frequently-accessed entries you want always visible. |
+| `bulkReadV2.topAccessCount` | 0 | 20 | How many most-accessed entries get full expansion. |
+| `bulkReadV2.topNewestCount` | 0 | 20 | How many newest entries get full expansion. |
+| `bulkReadV2.topObsoleteCount` | 0 | 20 | How many obsolete entries stay visible in bulk reads. |
 
 **For custom prefixes:** Ask for a single letter + label (e.g. `R = Research`). Remind the user that custom prefixes are added on top of the defaults — they don't replace them.
 

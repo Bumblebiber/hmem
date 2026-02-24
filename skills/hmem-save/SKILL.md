@@ -46,7 +46,7 @@ Go through these parameters one by one:
 | `maxL1Chars` | 120 | "How long should memory summaries be? (60–200 characters — shorter loads faster at startup)" |
 | `maxDepth` | 5 | "How many detail levels do you want? (2–5 — 5 gives the most flexibility)" |
 | `recentDepthTiers` | [{count:10,depth:2},{count:3,depth:3}] | "Auto-expand recent entries? This shows extra detail for your newest memories without extra tool calls. Recommended: yes" |
-| `prefixes` | default | "Do you want custom memory categories beyond the defaults (P/L/E/D/M/S/F/T)? If yes, name them (e.g. R=Research, B=Bookmark). Otherwise press Enter." |
+| `prefixes` | default | "Do you want custom memory categories beyond the defaults (P/L/E/D/M/S/T/N)? If yes, name them (e.g. R=Research, B=Bookmark). Otherwise press Enter." |
 
 Write the resulting `hmem.config.json` to the chosen directory.
 Tell the user: "Config saved to `<path>/hmem.config.json`. You can adjust settings anytime with `/hmem-config`."
