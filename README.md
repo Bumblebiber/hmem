@@ -130,6 +130,10 @@ That's it. The interactive installer will:
 
 After the installer finishes, restart your AI tool and call `read_memory()` to verify.
 
+> **Don't forget the skill files!** The MCP server provides the tools (read_memory, write_memory, etc.), but the slash commands (`/hmem-save`, `/hmem-read`) require skill files to be copied to your tool's skills directory. See the [Skill Files](#skill-files) section below — it's a one-time copy-paste.
+>
+> **Coming from the MCP Registry?** Run `npx hmem-mcp init` first — it configures your tools and creates the memory directory. Then copy the skill files as described below.
+
 ### Option B: Install from source
 
 ```bash
