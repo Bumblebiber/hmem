@@ -1413,13 +1413,16 @@ export class HmemStore {
 
   /**
    * Auto-extract a short title from text.
-   * Uses text before " — " if present and short enough, otherwise truncates.
+   * Priority: text before " — " > word-boundary truncation > hard truncation.
    */
   private autoExtractTitle(text: string): string {
     const maxLen = this.cfg.maxTitleChars;
     const dashIdx = text.indexOf(" — ");
     if (dashIdx > 0 && dashIdx <= maxLen) return text.substring(0, dashIdx);
     if (text.length <= maxLen) return text;
+    // Truncate at last word boundary before maxLen
+    const lastSpace = text.lastIndexOf(" ", maxLen);
+    if (lastSpace > maxLen * 0.4) return text.substring(0, lastSpace);
     return text.substring(0, maxLen);
   }
 

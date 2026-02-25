@@ -128,8 +128,8 @@ def count_entries(db_path: Path) -> int:
         return 0
 
 
-def auto_extract_title(text: str, max_len: int = 30) -> str:
-    """Extract a short title from text (first 30 chars or text before ' — ')."""
+def auto_extract_title(text: str, max_len: int = 50) -> str:
+    """Extract a short title: text before ' — ' > word-boundary truncation > hard cut."""
     if not text:
         return ""
     dash_idx = text.find(" — ")
@@ -137,6 +137,10 @@ def auto_extract_title(text: str, max_len: int = 30) -> str:
         return text[:dash_idx]
     if len(text) <= max_len:
         return text
+    # Truncate at last word boundary before max_len
+    last_space = text.rfind(" ", 0, max_len)
+    if last_space > max_len * 0.4:
+        return text[:last_space]
     return text[:max_len]
 
 

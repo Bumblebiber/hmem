@@ -954,9 +954,9 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig): string {
         // Expanded entry (favorite/top-accessed): show with L2 children
         lines.push(`${e.id} ${mmdd}${fav}${obs}  ${e.title}`);
         for (const child of e.children as MemoryNode[]) {
-          const short = child.content.length > CHILD_TITLE_LEN
+          const short = child.title || (child.content.length > CHILD_TITLE_LEN
             ? child.content.substring(0, CHILD_TITLE_LEN)
-            : child.content;
+            : child.content);
           const grandchildren = (child.child_count ?? 0) > 0 ? ` (${child.child_count})` : "";
           lines.push(`  ${child.id}  ${short}${grandchildren}`);
         }
