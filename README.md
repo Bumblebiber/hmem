@@ -41,6 +41,9 @@ A freshly spawned agent receives only Level 1 — the broadest strokes. When it 
 
 ## How It Works
 
+<img width="693" height="715" alt="image" src="https://github.com/user-attachments/assets/9dcb382a-6567-4040-99d2-61916a6d7531" />
+
+
 ### Saving Memory
 
 After completing a task, an agent calls `write_memory` with tab-indented content. The indentation depth maps to memory levels — multiple entries at the same depth become siblings.
