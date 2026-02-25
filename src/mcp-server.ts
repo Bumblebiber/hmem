@@ -434,6 +434,9 @@ server.tool(
     period: z.string().optional().describe("Time window: '+4h' (after), '-2h' (before), '4h' (±4h symmetric), 'both' (±2h default)"),
     time_around: z.string().optional().describe("Reference entry ID — find entries created around the same time"),
     show_obsolete: z.boolean().optional().describe("Include all obsolete entries (default: only top 3 most-accessed)"),
+    show_obsolete_path: z.boolean().optional().describe(
+      "When reading an obsolete entry by ID, show the full correction chain instead of just the final valid entry."
+    ),
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Source store: 'personal' or 'company'"
     ),
@@ -441,7 +444,7 @@ server.tool(
       "Set true to show full metadata (access counts, roles, dates). For curators only."
     ),
   },
-  async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, store: storeName, curator }) => {
+  async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, store: storeName, curator }) => {
     if (AGENT_ID === "UNKNOWN") {
       return {
         content: [{ type: "text" as const, text: "ERROR: Agent-ID unknown. read_memory is only available for spawned agents." }],
@@ -469,6 +472,7 @@ server.tool(
           agentRole: storeName === "company" ? agentRole : undefined,
           time, period, timeAround: time_around,
           showObsolete: show_obsolete,
+          showObsoletePath: show_obsolete_path,
         });
 
         if (entries.length === 0) {
@@ -648,12 +652,20 @@ server.tool(
         const date = e.created_at.substring(0, 10);
         const role = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
         const access = e.access_count > 0 ? ` (${e.access_count}x)` : "";
-        lines.push(`[${e.id}] ${date}${role}${access}`);
-        lines.push(`  L1: ${e.level_1}`);
-        if (e.level_2) lines.push(`  L2: ${e.level_2}`);
-        if (e.level_3) lines.push(`  L3: ${e.level_3}`);
-        if (e.level_4) lines.push(`  L4: ${e.level_4}`);
-        if (e.level_5) lines.push(`  L5: ${e.level_5}`);
+        const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
+        const favTag = e.favorite ? " [♥]" : "";
+        lines.push(`[${e.id}] ${date}${role}${favTag}${obsoleteTag}${access}`);
+        lines.push(`  ${e.title}`);
+        if (e.level_1 !== e.title) lines.push(`  ${e.level_1}`);
+        if (e.children && e.children.length > 0) {
+          for (const child of e.children as MemoryNode[]) {
+            const indent = "  ".repeat(child.depth - 1);
+            const hint = (child.child_count ?? 0) > 0
+              ? `  (${child.child_count} — use id="${child.id}" to expand)`
+              : "";
+            lines.push(`${indent}[${child.id}] ${child.title}${hint}`);
+          }
+        }
         if (e.links?.length) lines.push(`  Links: ${e.links.join(", ")}`);
         lines.push("");
       }
@@ -956,6 +968,18 @@ function formatGroupedOutput(
 
 function formatFlatOutput(entries: MemoryEntry[], curator: boolean): string {
   const lines: string[] = [];
+
+  // Obsolete chain resolution note
+  if (entries.length > 0 && entries[0].obsoleteChain && entries[0].obsoleteChain.length > 1) {
+    const chain = entries[0].obsoleteChain;
+    if (entries.length === 1) {
+      const chainStr = chain.slice(0, -1).map(id => `${id} [!]`).join(" → ") + ` → ${chain[chain.length - 1]} ✓`;
+      lines.push(`[Resolved: ${chainStr}]\n`);
+    } else {
+      lines.push(`[Chain: ${chain.join(" → ")}]\n`);
+    }
+  }
+
   for (const e of entries) {
     renderEntryFormatted(lines, e, curator);
   }
@@ -964,12 +988,18 @@ function formatFlatOutput(entries: MemoryEntry[], curator: boolean): string {
 
 function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean): void {
   const isNode = e.id.includes(".");
+  const hasDetail = !!(e.children?.length || e.linkedEntries?.length);
 
+  // Headline: use title for navigation, show full content below when drilling in
   if (isNode) {
     if (curator) {
-      lines.push(`[${e.id}] ${e.level_1}`);
+      lines.push(`[${e.id}] ${e.title}`);
     } else {
-      lines.push(`${e.id}  ${e.level_1}`);
+      lines.push(`${e.id}  ${e.title}`);
+    }
+    // Node drilldown: show full content below title
+    if (hasDetail && e.level_1 !== e.title) {
+      lines.push(`  ${e.level_1}`);
     }
   } else {
     if (curator) {
@@ -979,71 +1009,68 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
       const accessed = e.access_count > 0 ? ` (${e.access_count}x accessed)` : "";
       const roleTag = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
       lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${obsoleteTag}${accessed}`);
-      lines.push(`  ${e.level_1}`);
+      lines.push(`  ${e.title}`);
     } else {
-      // Non-curator: [♥] favorites, [★] promoted, [!] obsolete
       const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
       const obsoleteTag = e.obsolete ? " [!]" : "";
       const mmdd = e.created_at.substring(5, 10);
-      lines.push(`${e.id} ${mmdd}${promotedTag}${obsoleteTag}  ${e.level_1}`);
+      lines.push(`${e.id} ${mmdd}${promotedTag}${obsoleteTag}  ${e.title}`);
+    }
+    // Show full level_1 content below title when entry is expanded/drilled
+    if (hasDetail && e.level_1 !== e.title) {
+      lines.push(`  ${e.level_1}`);
     }
   }
 
+  // Children — show titles only (drill into child.id for full content)
   if (e.children && e.children.length > 0) {
     if (e.expanded) {
-      if (curator) {
-        lines.push(`  ${e.children.length} ${e.children.length === 1 ? "child" : "children"}:`);
-      }
       renderChildrenFormatted(lines, e.children, curator);
       if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
         lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
       }
     } else if (e.hiddenChildrenCount !== undefined) {
+      // Non-expanded bulk read: show only the latest child title
       const child = e.children[0] as MemoryNode;
+      const hint = (child.child_count ?? 0) > 0
+        ? `  [+${child.child_count} → ${child.id}]`
+        : "";
       if (curator) {
-        const hint = (child.child_count ?? 0) > 0
-          ? `  (${child.child_count} — use id="${child.id}" to expand)`
-          : "";
-        lines.push(`  [${child.id}] ${child.content}${hint}`);
+        lines.push(`  [${child.id}] ${child.title}${hint}`);
       } else {
-        const hint = (child.child_count ?? 0) > 0
-          ? `  [+${child.child_count} → ${child.id}]`
-          : "";
-        lines.push(`  ${child.depth}.${child.seq}  ${child.content}${hint}`);
-      }
-      if (child.children && child.children.length > 0) {
-        renderChildrenFormatted(lines, child.children, curator);
+        lines.push(`  ${child.id}  ${child.title}${hint}`);
       }
       if (e.hiddenChildrenCount > 0) {
         lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
       }
     } else {
-      if (curator) {
-        lines.push(`  ${e.children.length} ${e.children.length === 1 ? "child" : "children"}:`);
-      }
+      // ID-based read: show all direct children as titles
       renderChildrenFormatted(lines, e.children, curator);
     }
   }
 
+  // Links
   if (e.links && e.links.length > 0) lines.push(`  Links: ${e.links.join(", ")}`);
 
+  // Auto-resolved linked entries
   if (e.linkedEntries && e.linkedEntries.length > 0) {
     lines.push(`  --- Linked entries ---`);
     for (const linked of e.linkedEntries) {
       const isLinkedNode = linked.id.includes(".");
       if (isLinkedNode) {
-        lines.push(`  [${linked.id}] ${linked.level_1}`);
+        lines.push(`  [${linked.id}] ${linked.title}`);
       } else {
         const ldate = linked.created_at.substring(0, 10);
         lines.push(`  [${linked.id}] ${ldate}`);
-        lines.push(`    ${linked.level_1}`);
+        lines.push(`    ${linked.title}`);
       }
+      // Linked children as titles
       if (linked.children && linked.children.length > 0) {
         for (const lchild of linked.children as MemoryNode[]) {
           const hint = (lchild.child_count ?? 0) > 0
             ? ` (${lchild.child_count} ${lchild.child_count === 1 ? "child" : "children"} — use id="${lchild.id}" to expand)`
             : "";
-          lines.push(`    [${lchild.id}] ${lchild.content}${hint}`);
+          lines.push(`    [${lchild.id}] ${lchild.title}${hint}`);
         }
       }
     }
@@ -1055,20 +1082,15 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
 function renderChildrenFormatted(lines: string[], children: MemoryNode[], curator: boolean): void {
   for (const child of children) {
     const indent = "  ".repeat(child.depth - 1);
+    const hint = (child.child_count ?? 0) > 0
+      ? `  [+${child.child_count} → ${child.id}]`
+      : "";
     if (curator) {
-      const hint = (child.child_count ?? 0) > 0
-        ? `  (${child.child_count} — use id="${child.id}" to expand)`
-        : "";
-      lines.push(`${indent}[${child.id}] ${child.content}${hint}`);
+      lines.push(`${indent}[${child.id}] ${child.title}${hint}`);
     } else {
-      const hint = (child.child_count ?? 0) > 0
-        ? `  [+${child.child_count} → ${child.id}]`
-        : "";
-      lines.push(`${indent}${child.depth}.${child.seq}  ${child.content}${hint}`);
+      lines.push(`${indent}${child.id}  ${child.title}${hint}`);
     }
-    if (child.children && child.children.length > 0) {
-      renderChildrenFormatted(lines, child.children, curator);
-    }
+    // Don't recurse into grandchildren — titles only, drill for content
   }
 }
 

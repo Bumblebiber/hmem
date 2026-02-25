@@ -40,6 +40,8 @@ export interface MemoryEntry {
   prefix: string;
   seq: number;
   created_at: string;
+  /** Short label for navigation (~30 chars). Auto-extracted if not explicit. */
+  title: string;
   level_1: string;
   level_2: string | null;
   level_3: string | null;
@@ -72,6 +74,8 @@ export interface MemoryEntry {
   isHeader?: boolean;
   children?: MemoryNode[];       // populated for ID-based reads and bulk reads (latest child)
   linkedEntries?: MemoryEntry[]; // auto-resolved linked entries (ID-based reads only)
+  /** If this entry was reached via obsolete chain resolution, the chain of IDs traversed. */
+  obsoleteChain?: string[];
 }
 
 export interface MemoryNode {
@@ -80,6 +84,8 @@ export interface MemoryNode {
   root_id: string;      // always the root memories.id
   depth: number;        // 2-5
   seq: number;          // sibling order (1-based)
+  /** Short label for navigation (~30 chars). Auto-extracted from content. */
+  title: string;
   content: string;
   created_at: string;
   access_count: number;
@@ -113,6 +119,10 @@ export interface ReadOptions {
   timeAround?: string;
   /** Internal: bypass obsolete enforcement for curator tools. */
   _curatorBypass?: boolean;
+  /** Follow obsolete chains to their correction. Default: true for ID queries. */
+  followObsolete?: boolean;
+  /** Show the full obsolete chain path (all intermediate entries). Default: false. */
+  showObsoletePath?: boolean;
 }
 
 export interface WriteResult {
@@ -182,6 +192,8 @@ const MIGRATIONS = [
   "ALTER TABLE memories ADD COLUMN min_role TEXT DEFAULT 'worker'",
   "ALTER TABLE memories ADD COLUMN obsolete INTEGER DEFAULT 0",
   "ALTER TABLE memories ADD COLUMN favorite INTEGER DEFAULT 0",
+  "ALTER TABLE memories ADD COLUMN title TEXT",
+  "ALTER TABLE memory_nodes ADD COLUMN title TEXT",
 ];
 
 // ---- HmemStore class ----
@@ -258,7 +270,7 @@ export class HmemStore {
     const rootId = `${prefix}${String(seq).padStart(4, "0")}`;
     const timestamp = new Date().toISOString();
 
-    const { level1, nodes } = this.parseTree(content, rootId);
+    const { title, level1, nodes } = this.parseTree(content, rootId);
 
     if (!level1) {
       throw new Error("Content must have at least one line (Level 1).");
@@ -279,26 +291,26 @@ export class HmemStore {
     }
 
     const insertRoot = this.db.prepare(`
-      INSERT INTO memories (id, prefix, seq, created_at, level_1, level_2, level_3, level_4, level_5, links, min_role, favorite)
-      VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?)
+      INSERT INTO memories (id, prefix, seq, created_at, title, level_1, level_2, level_3, level_4, level_5, links, min_role, favorite)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?)
     `);
 
     const insertNode = this.db.prepare(`
-      INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, content, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     // Run in a transaction
     this.db.transaction(() => {
       insertRoot.run(
         rootId, prefix, seq, timestamp,
-        level1,
+        title, level1,
         links ? JSON.stringify(links) : null,
         minRole,
         favorite ? 1 : 0
       );
       for (const node of nodes) {
-        insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.content, timestamp);
+        insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.title, node.content, timestamp);
       }
     })();
 
@@ -334,30 +346,51 @@ export class HmemStore {
         const sql = `SELECT * FROM memories WHERE id = ?${roleFilter.sql ? ` AND ${roleFilter.sql}` : ""}`;
         const row = this.db.prepare(sql).get(opts.id, ...roleFilter.params) as any;
         if (!row) return [];
+
+        // ── Obsolete chain resolution ──
+        const shouldFollow = opts.followObsolete !== false; // default: true
+        if (shouldFollow && row.obsolete === 1) {
+          const { finalId, chain } = this.resolveObsoleteChain(opts.id);
+
+          if (chain.length > 1) {
+            // Chain resolved — return final entry (or full path)
+            if (opts.showObsoletePath) {
+              // Return ALL entries in the chain
+              const entries: MemoryEntry[] = [];
+              for (const chainId of chain) {
+                const chainRow = this.db.prepare(sql).get(chainId, ...roleFilter.params) as any;
+                if (!chainRow) continue;
+                const children = this.fetchChildren(chainId);
+                const entry = this.rowToEntry(chainRow, children);
+                entry.obsoleteChain = chain;
+                entries.push(entry);
+              }
+              // Bump access on the final (valid) entry only
+              this.bumpAccess(finalId);
+              return entries;
+            } else {
+              // Return ONLY the final valid entry
+              this.bumpAccess(finalId);
+              const finalRow = this.db.prepare(sql).get(finalId, ...roleFilter.params) as any;
+              if (!finalRow) return []; // correction target inaccessible
+              const children = this.fetchChildren(finalId);
+              const entry = this.rowToEntry(finalRow, children);
+              entry.obsoleteChain = chain;
+              // Resolve links on the final entry
+              this.resolveEntryLinks(entry, opts);
+              return [entry];
+            }
+          }
+          // chain.length <= 1: no correction found, fall through to normal behavior
+        }
+
         this.bumpAccess(opts.id);
 
         const children = this.fetchChildren(opts.id);
         const entry = this.rowToEntry(row, children);
 
-        // Auto-resolve links with depth control and cycle detection
-        const linkDepth = opts.resolveLinks === false ? 0 : (opts.linkDepth ?? 1);
-        if (linkDepth > 0 && entry.links && entry.links.length > 0) {
-          const visited = opts._visitedLinks ?? new Set<string>();
-          visited.add(opts.id!);
-          entry.linkedEntries = entry.links.flatMap(linkId => {
-            if (visited.has(linkId)) return []; // cycle detected — skip
-            try {
-              return this.read({
-                id: linkId,
-                agentRole: opts.agentRole,
-                linkDepth: linkDepth - 1,
-                _visitedLinks: visited,
-              });
-            } catch {
-              return [];
-            }
-          }).filter(e => !e.obsolete);
-        }
+        // Auto-resolve links
+        this.resolveEntryLinks(entry, opts);
 
         return [entry];
       }
@@ -751,7 +784,7 @@ export class HmemStore {
       if (trimmed.length > nodeLimit) {
         throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
       }
-      const result = this.db.prepare("UPDATE memory_nodes SET content = ? WHERE id = ?").run(trimmed, id);
+      const result = this.db.prepare("UPDATE memory_nodes SET content = ?, title = ? WHERE id = ?").run(trimmed, this.autoExtractTitle(trimmed), id);
       return result.changes > 0;
     } else {
       // Root entry in memories — check L1 char limit
@@ -791,8 +824,8 @@ export class HmemStore {
         }
       }
 
-      const sets: string[] = ["level_1 = ?"];
-      const params: any[] = [trimmed];
+      const sets: string[] = ["level_1 = ?", "title = ?"];
+      const params: any[] = [trimmed, this.autoExtractTitle(trimmed)];
       if (links !== undefined) {
         sets.push("links = ?");
         params.push(links.length > 0 ? JSON.stringify(links) : null);
@@ -862,15 +895,15 @@ export class HmemStore {
 
     const timestamp = new Date().toISOString();
     const insertNode = this.db.prepare(`
-      INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, content, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const topLevelIds: string[] = [];
 
     this.db.transaction(() => {
       for (const node of nodes) {
-        insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.content, timestamp);
+        insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, this.autoExtractTitle(node.content), node.content, timestamp);
         if (node.parent_id === parentId) topLevelIds.push(node.id);
       }
     })();
@@ -1120,6 +1153,29 @@ export class HmemStore {
     return (row?.maxSeq || 0) + 1;
   }
 
+  /** Auto-resolve linked entries on an entry (extracted for reuse in chain resolution). */
+  private resolveEntryLinks(entry: MemoryEntry, opts: ReadOptions): void {
+    const linkDepth = opts.resolveLinks === false ? 0 : (opts.linkDepth ?? 1);
+    if (linkDepth > 0 && entry.links && entry.links.length > 0) {
+      const visited = opts._visitedLinks ?? new Set<string>();
+      visited.add(entry.id);
+      entry.linkedEntries = entry.links.flatMap(linkId => {
+        if (visited.has(linkId)) return []; // cycle detected — skip
+        try {
+          return this.read({
+            id: linkId,
+            agentRole: opts.agentRole,
+            linkDepth: linkDepth - 1,
+            _visitedLinks: visited,
+            followObsolete: false, // don't chain-resolve inside link resolution
+          });
+        } catch {
+          return [];
+        }
+      }).filter(e => !e.obsolete);
+    }
+  }
+
   private bumpAccess(id: string): void {
     this.db.prepare(
       "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?"
@@ -1130,6 +1186,37 @@ export class HmemStore {
     this.db.prepare(
       "UPDATE memory_nodes SET access_count = access_count + 1, last_accessed = ? WHERE id = ?"
     ).run(new Date().toISOString(), id);
+  }
+
+  /**
+   * Follow the obsolete chain from an entry to its final valid correction.
+   * Parses [✓ID] from level_1 of each obsolete entry and follows the chain.
+   * Returns the final (non-obsolete) entry ID and the full chain of IDs traversed.
+   */
+  private resolveObsoleteChain(id: string): { finalId: string; chain: string[] } {
+    const chain: string[] = [id];
+    let currentId = id;
+    const visited = new Set<string>();
+
+    for (let i = 0; i < 10; i++) { // max 10 hops
+      visited.add(currentId);
+      const row = this.db.prepare(
+        "SELECT id, level_1, obsolete FROM memories WHERE id = ?"
+      ).get(currentId) as any;
+      if (!row || !row.obsolete) break; // not obsolete or not found → stop
+
+      // Parse [✓ID] from level_1
+      const match = row.level_1?.match(/\[✓([A-Z]\d{4}(?:\.\d+)*)\]/);
+      if (!match) break; // no correction reference → stop
+
+      const nextId = match[1];
+      if (visited.has(nextId)) break; // cycle detected → stop
+
+      chain.push(nextId);
+      currentId = nextId;
+    }
+
+    return { finalId: currentId, chain };
   }
 
   /** Fetch direct children of a node (root or compound), including their grandchild counts. */
@@ -1194,6 +1281,7 @@ export class HmemStore {
       root_id: row.root_id,
       depth: row.depth,
       seq: row.seq,
+      title: row.title ?? this.autoExtractTitle(row.content),
       content: row.content,
       created_at: row.created_at,
       access_count: row.access_count || 0,
@@ -1208,6 +1296,7 @@ export class HmemStore {
       prefix: row.prefix,
       seq: row.seq,
       created_at: row.created_at,
+      title: row.title ?? this.autoExtractTitle(row.level_1),
       level_1: row.level_1,
       level_2: null,  // always null post-migration
       level_3: null,
@@ -1234,6 +1323,7 @@ export class HmemStore {
       prefix: node.root_id.match(/^([A-Z]+)/)?.[1] ?? "?",
       seq: node.seq,
       created_at: node.created_at,
+      title: node.title,
       level_1: node.content,
       level_2: null,
       level_3: null,
@@ -1248,7 +1338,23 @@ export class HmemStore {
   }
 
   /**
-   * Parse tab-indented content into L1 text + a list of tree nodes.
+   * Auto-extract a short title from text.
+   * Uses text before " — " if present and short enough, otherwise truncates.
+   */
+  private autoExtractTitle(text: string): string {
+    const maxLen = this.cfg.maxTitleChars;
+    const dashIdx = text.indexOf(" — ");
+    if (dashIdx > 0 && dashIdx <= maxLen) return text.substring(0, dashIdx);
+    if (text.length <= maxLen) return text;
+    return text.substring(0, maxLen);
+  }
+
+  /**
+   * Parse tab-indented content into title + L1 text + a list of tree nodes.
+   *
+   * Title extraction:
+   *   - 2+ non-indented lines: first line = explicit title, rest = level_1
+   *   - 1 non-indented line: title = auto-extracted (~30 chars), level_1 = full line
    *
    * Algorithm:
    *   - seqAtParent: Map<parentId, number> — sibling counter per parent
@@ -1263,14 +1369,15 @@ export class HmemStore {
    * @param rootId   The root entry ID (e.g. "E0006") — used to build compound IDs
    */
   private parseTree(content: string, rootId: string): {
+    title: string;
     level1: string;
-    nodes: Array<{ id: string; parent_id: string; depth: number; seq: number; content: string }>;
+    nodes: Array<{ id: string; parent_id: string; depth: number; seq: number; content: string; title: string }>;
   } {
     const seqAtParent = new Map<string, number>();
     const lastIdAtDepth = new Map<number, string>();
-    const nodes: Array<{ id: string; parent_id: string; depth: number; seq: number; content: string }> = [];
+    const nodes: Array<{ id: string; parent_id: string; depth: number; seq: number; content: string; title: string }> = [];
 
-    let level1 = "";
+    const l1Lines: string[] = [];
 
     // Auto-detect space indentation unit: use first indented line (if no tabs present)
     const rawLines = content.split("\n").map(l => l.trimEnd()).filter(Boolean);
@@ -1301,8 +1408,7 @@ export class HmemStore {
       const text = trimmedEnd.trim();
 
       if (depth === 1) {
-        // L1 — multiple L1 lines joined (should be rare)
-        level1 = level1 ? level1 + " | " + text : text;
+        l1Lines.push(text);
         continue;
       }
 
@@ -1313,10 +1419,22 @@ export class HmemStore {
       const nodeId = `${parentId}.${seq}`;
       lastIdAtDepth.set(depth, nodeId);
 
-      nodes.push({ id: nodeId, parent_id: parentId, depth, seq, content: text });
+      nodes.push({ id: nodeId, parent_id: parentId, depth, seq, content: text, title: this.autoExtractTitle(text) });
     }
 
-    return { level1, nodes };
+    // Title: first L1 line (explicit). Content: remaining L1 lines joined.
+    // If only 1 L1 line: title is auto-extracted, level1 = full line.
+    let title: string;
+    let level1: string;
+    if (l1Lines.length >= 2) {
+      title = l1Lines[0];
+      level1 = l1Lines.slice(1).join(" | ");
+    } else {
+      level1 = l1Lines[0] ?? "";
+      title = this.autoExtractTitle(level1);
+    }
+
+    return { title, level1, nodes };
   }
 
   /**

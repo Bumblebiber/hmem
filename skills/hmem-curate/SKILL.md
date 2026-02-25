@@ -94,6 +94,15 @@ fix_agent_memory(agent_name, "E0009", links=["P0001"])
 
 Don't over-link: only add links where the connection adds real navigational value, not just topical similarity.
 
+### Missing or poor titles
+Entries should have a meaningful title (~30 chars) for navigation. If an entry has no explicit title (auto-extracted from first 30 chars), check whether the auto-extracted title is useful. If it's truncated mid-word or vague, write a proper title:
+
+```
+fix_agent_memory(agent_name, id, content="Better Title\nOriginal L1 summary text")
+```
+
+For child nodes, titles are always auto-extracted — no action needed.
+
 ### Stale entries — auto-mark obsolete
 
 Entries older than 1 month with `access_count = 0` (no `(Nx accessed)` suffix in curator read) should be marked obsolete automatically.

@@ -19,9 +19,13 @@ If the tool `write_memory` is not available:
 ```
 write_memory(
   prefix: "E",
-  content: "L1 sentence — concise, understandable without context\n\tL2 detail (1 tab)\n\t\tL3 detail (2 tabs)\n\t\t\tL4 raw data (3 tabs — rarely needed)"
+  content: "Short Title (max 30 chars)\nL1 sentence — concise, understandable without context\n\tL2 detail (1 tab)\n\t\tL3 detail (2 tabs)\n\t\t\tL4 raw data (3 tabs — rarely needed)"
 )
 ```
+
+**Title convention:** The first non-indented line is the **title** (~30 chars max) — a short label for navigation, like a chapter title. The second non-indented line is the L1 summary (full sentence). If only one non-indented line is provided, the title is auto-extracted from the first 30 chars.
+
+**Child node titles** are always auto-extracted from the first 30 characters of their content (or text before ` — ` if shorter). No explicit title needed for children.
 
 **Indentation:** 1 tab = 1 level. Alternatively: 2 or 4 spaces per level (auto-detected).
 **Warning:** A tab at the start of any line always means "go one level deeper" — it is structural, not content. If you need to store code or text that contains leading tabs, use spaces instead.
@@ -109,11 +113,26 @@ write_memory(
 
 ---
 
-## L1 Quality Rule
+## Title + L1 Quality Rules
 
-- **One complete, informative sentence** — ~15–20 tokens
+**Title:** Short navigation label, max 30 chars. Think "chapter title in a book".
+- Good: `"hmem.py Performance"`, `"Ghost Wakeup Bug"`, `"V2 Bulk-Read Algorithm"`
+- Bad: `"Fixed a bug"`, `"Important lesson"` (too vague)
+
+**L1:** One complete, informative sentence — ~15–20 tokens.
 - Must be understandable without any context
 - Not "Fixed a bug" — instead "SQLite connection failed due to wrong path in .mcp.json"
+
+**With explicit title (recommended):**
+```
+write_memory(prefix="L", content="hmem.py Performance\nAlle Nodes in 2 Bulk-Queries laden, nicht pro Entry einzeln\n\tload_nodes() pro Entry = N+1 SQLite-Connections")
+```
+
+**Without explicit title (auto-extracted):**
+```
+write_memory(prefix="E", content="SQLite connection failed due to wrong path in .mcp.json\n\tFix: use absolute path in env var")
+```
+Title auto-extracted: `"SQLite connection failed due t"`
 
 ---
 

@@ -53,6 +53,11 @@ export interface HmemConfig {
    */
   prefixDescriptions: Record<string, string>;
   /**
+   * Max characters for auto-extracted titles. Default: 30.
+   * Titles are short labels for navigation (like chapter titles in a book).
+   */
+  maxTitleChars: number;
+  /**
    * V2 bulk-read algorithm tuning parameters.
    * Controls how many entries receive expanded treatment in default reads.
    */
@@ -102,6 +107,7 @@ export const DEFAULT_CONFIG: HmemConfig = {
   maxDepth: 5,
   defaultReadLimit: 100,
   prefixes: { ...DEFAULT_PREFIXES },
+  maxTitleChars: 30,
   accessCountTopN: 5,
   prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
   bulkReadV2: {
@@ -150,6 +156,7 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     if (typeof raw.maxDepth === "number" && raw.maxDepth >= 1 && raw.maxDepth <= 10) cfg.maxDepth = raw.maxDepth;
     if (typeof raw.defaultReadLimit === "number" && raw.defaultReadLimit > 0) cfg.defaultReadLimit = raw.defaultReadLimit;
     if (typeof raw.accessCountTopN === "number" && raw.accessCountTopN >= 0) cfg.accessCountTopN = raw.accessCountTopN;
+    if (typeof raw.maxTitleChars === "number" && raw.maxTitleChars >= 10 && raw.maxTitleChars <= 120) cfg.maxTitleChars = raw.maxTitleChars;
 
     // Prefixes: merge user-defined with defaults (user can override or add)
     if (raw.prefixes && typeof raw.prefixes === "object" && !Array.isArray(raw.prefixes)) {
