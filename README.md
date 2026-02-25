@@ -389,6 +389,14 @@ The top-N most-accessed entries are automatically promoted to L2 depth in bulk r
 
 Set to `0` to disable. Default: `5`.
 
+**Time-weighted scoring:** Raw access counts would systematically favor older entries (more time to accumulate accesses). hmem uses a logarithmic age decay instead:
+
+```
+score = access_count / log2(age_in_days + 2)
+```
+
+This means a 1-day-old entry with 5 accesses (score 3.16) outranks a 1-year-old entry with 6 accesses (score 0.70) — but a genuinely important old entry with 50 accesses (score 5.87) still stays at the top. The decay is gentle enough that consistently useful entries are never buried.
+
 | Mechanism | When useful |
 |---|---|
 | **favorite flag** | Entries you know are important from day 1 — even with zero access history |
@@ -447,6 +455,29 @@ This mirrors how human memory works: you remember today's events in full detail,
 Set to `[]` to disable recency inlining (L1-only for all entries).
 
 **Backward compat:** The old `"recentChildrenCount": N` key is still accepted and treated as `[{ "count": N, "depth": 2 }]`.
+
+---
+
+## TUI Viewer (hmem.py)
+
+A terminal-based interactive viewer for browsing `.hmem` memory files. Built with [Textual](https://textual.textualize.io/).
+
+```bash
+pip install textual     # one-time dependency
+python3 hmem.py         # agent selection screen (scans Agents/ directory)
+python3 hmem.py THOR    # open a specific agent's memory
+python3 hmem.py ~/path/to/file.hmem  # open any .hmem file directly
+```
+
+**Keys:**
+| Key | Action |
+|-----|--------|
+| `r` | Toggle V2 bulk-read view (what agents see on `read_memory()`) |
+| `e` / `c` | Expand / collapse all nodes |
+| `q` | Quit |
+| `Escape` | Back to agent list |
+
+The V2 view mirrors the MCP server's bulk-read algorithm — including time-weighted access scoring, per-prefix selection, and favorite/promoted markers — so you can see exactly what an agent sees at session start.
 
 ---
 

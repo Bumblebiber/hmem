@@ -550,7 +550,7 @@ export class HmemStore {
       // Most-accessed
       const mostAccessed = [...prefixRows]
         .filter(r => r.access_count > 0)
-        .sort((a, b) => b.access_count - a.access_count)
+        .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
         .slice(0, v2.topAccessCount);
       for (const r of mostAccessed) expandedIds.add(r.id);
     }
@@ -563,7 +563,7 @@ export class HmemStore {
     // topAccess reference for promoted marker
     const topAccess = [...nonObsoleteRows]
       .filter(r => r.access_count > 0)
-      .sort((a, b) => b.access_count - a.access_count)
+      .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
       .slice(0, v2.topAccessCount);
 
     let visibleObsolete: any[];
@@ -572,7 +572,7 @@ export class HmemStore {
     } else {
       // Keep only top N most-accessed obsolete entries ("biggest mistakes")
       visibleObsolete = [...obsoleteRows]
-        .sort((a, b) => b.access_count - a.access_count)
+        .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
         .slice(0, v2.topObsoleteCount);
     }
 
@@ -609,7 +609,7 @@ export class HmemStore {
             const accessSet = new Set(
               [...allChildren]
                 .filter(c => c.access_count > 0)
-                .sort((a, b) => b.access_count - a.access_count)
+                .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
                 .slice(0, v2.topAccessCount)
                 .map(c => c.id)
             );
@@ -655,7 +655,7 @@ export class HmemStore {
           const accessSet = new Set(
             [...allChildren]
               .filter(c => c.access_count > 0)
-              .sort((a, b) => b.access_count - a.access_count)
+              .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
               .slice(0, v2.topAccessCount)
               .map(c => c.id)
           );
@@ -1281,6 +1281,17 @@ export class HmemStore {
     const map = new Map<string, number>();
     for (const r of rows) map.set(r.parent_id, r.cnt);
     return map;
+  }
+
+  /**
+   * Time-weighted access score: newer entries with fewer accesses can outrank
+   * older entries with more accesses. Uses logarithmic age decay:
+   *   score = access_count / log2(age_in_days + 2)
+   */
+  private weightedAccessScore(row: { access_count: number; created_at: string }): number {
+    const ageMs = Date.now() - new Date(row.created_at).getTime();
+    const ageDays = Math.max(ageMs / 86_400_000, 0);
+    return (row.access_count || 0) / Math.log2(ageDays + 2);
   }
 
   private fetchChildren(parentId: string): MemoryNode[] {
