@@ -16,6 +16,7 @@ This returns your memories **grouped by category** with smart expansion:
 - **Expanded entries** (newest, most-accessed, favorites): show all L2 children + links
 - **Non-expanded entries**: show latest child + `[+N more → ID]` hint
 - **Obsolete entries**: top 3 "biggest mistakes" shown with `[!]` marker, rest hidden
+- **"Most-accessed"** uses time-weighted scoring (`access_count / log2(age_in_days + 2)`) — newer entries with fewer accesses can outrank older ones
 
 If the tool `read_memory` is not available, tell the user:
 "read_memory tool not found. Run `hmem init` to configure the MCP server."
@@ -64,6 +65,15 @@ read_memory(id="E0042.2")
 # Expand further (rarely needed)
 read_memory(id="E0042.2.1")
 ```
+
+**Compact table of contents:**
+
+```
+read_memory(titles_only=true)              # all entries as compact ID + date + title listing
+read_memory(titles_only=true, prefix="L")  # only lessons
+```
+
+V2 selection still applies (only newest + most-accessed + favorites shown), but without L2 children or links — just one line per entry with `(N)` child count hints.
 
 **Rule: depth parameter is only useful for listings (max 3), not for ID queries.**
 

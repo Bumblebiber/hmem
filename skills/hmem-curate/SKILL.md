@@ -95,7 +95,7 @@ fix_agent_memory(agent_name, "E0009", links=["P0001"])
 Don't over-link: only add links where the connection adds real navigational value, not just topical similarity.
 
 ### Missing or poor titles
-Entries should have a meaningful title (~30 chars) for navigation. If an entry has no explicit title (auto-extracted from first 30 chars), check whether the auto-extracted title is useful. If it's truncated mid-word or vague, write a proper title:
+Entries should have a meaningful title (~50 chars, configurable via `maxTitleChars`) for navigation. If an entry has no explicit title (auto-extracted from first `maxTitleChars` chars), check whether the auto-extracted title is useful. If it's truncated mid-word or vague, write a proper title:
 
 ```
 fix_agent_memory(agent_name, id, content="Better Title\nOriginal L1 summary text")
@@ -113,10 +113,18 @@ fix_agent_memory(agent_name, id, obsolete=true)
 
 Exception: unique lessons or error patterns with no equivalent elsewhere — keep even if never accessed.
 
+**Note:** The V2 algorithm uses **time-weighted scoring** (`access_count / log2(age_in_days + 2)`) for "most accessed" ranking. This means genuinely stale entries (old + low access) naturally sink — but an old entry that's still frequently accessed stays visible.
+
 ### N entries — flag stale code pointers
 Navigator entries go stale when code moves. Check: does the file/line referenced still exist?
 If stale and the agent hasn't updated it: mark obsolete via `fix_agent_memory(agent_name, id, obsolete=true)`.
 Do NOT fix stale N entries yourself — the agent who wrote them must verify and update.
+
+---
+
+### Quick audit with titles_only
+
+Use `read_memory(titles_only=true)` for a compact overview of an agent's memory before drilling in. Shows V2-selected entries as one line each with `(N)` child counts — useful for spotting duplicates, poor titles, or category imbalances at a glance.
 
 ---
 

@@ -19,13 +19,13 @@ If the tool `write_memory` is not available:
 ```
 write_memory(
   prefix: "E",
-  content: "Short Title (max 30 chars)\nL1 sentence — concise, understandable without context\n\tL2 detail (1 tab)\n\t\tL3 detail (2 tabs)\n\t\t\tL4 raw data (3 tabs — rarely needed)"
+  content: "Short Title (~50 chars)\nL1 sentence — concise, understandable without context\n\tL2 detail (1 tab)\n\t\tL3 detail (2 tabs)\n\t\t\tL4 raw data (3 tabs — rarely needed)"
 )
 ```
 
-**Title convention:** The first non-indented line is the **title** (~30 chars max) — a short label for navigation, like a chapter title. The second non-indented line is the L1 summary (full sentence). If only one non-indented line is provided, the title is auto-extracted from the first 30 chars.
+**Title convention:** The first non-indented line is the **title** (~50 chars, configurable via `maxTitleChars` in `hmem.config.json`) — a short label for navigation, like a chapter title. The second non-indented line is the L1 summary (full sentence). If only one non-indented line is provided, the title is auto-extracted from the first `maxTitleChars` characters.
 
-**Child node titles** are always auto-extracted from the first 30 characters of their content (or text before ` — ` if shorter). No explicit title needed for children.
+**Child node titles** are always auto-extracted from the first `maxTitleChars` characters of their content (or text before ` — ` if shorter). No explicit title needed for children.
 
 **Indentation:** 1 tab = 1 level. Alternatively: 2 or 4 spaces per level (auto-detected).
 **Warning:** A tab at the start of any line always means "go one level deeper" — it is structural, not content. If you need to store code or text that contains leading tabs, use spaces instead.
@@ -115,8 +115,8 @@ write_memory(
 
 ## Title + L1 Quality Rules
 
-**Title:** Short navigation label, max 30 chars. Think "chapter title in a book".
-- Good: `"hmem.py Performance"`, `"Ghost Wakeup Bug"`, `"V2 Bulk-Read Algorithm"`
+**Title:** Short navigation label, ~50 chars (configurable via `maxTitleChars`). Think "chapter title in a book".
+- Good: `"hmem.py Performance: Bulk-Queries statt N+1"`, `"Ghost Wakeup Bug in msg-router.ts"`
 - Bad: `"Fixed a bug"`, `"Important lesson"` (too vague)
 
 **L1:** One complete, informative sentence — ~15–20 tokens.
@@ -132,7 +132,7 @@ write_memory(prefix="L", content="hmem.py Performance\nAlle Nodes in 2 Bulk-Quer
 ```
 write_memory(prefix="E", content="SQLite connection failed due to wrong path in .mcp.json\n\tFix: use absolute path in env var")
 ```
-Title auto-extracted: `"SQLite connection failed due t"`
+Title auto-extracted: `"SQLite connection failed due to wrong path in .mc"`
 
 ---
 
@@ -213,9 +213,9 @@ Use when: you have new context to add without replacing what's there.
 
 ---
 
-## Access Count (Automatic)
+## Access Count (Automatic + Time-Weighted)
 
-Access counts are managed automatically — every `read_memory` and `append_memory` call bumps the accessed entries. Entries with high access counts get [★] markers and expanded treatment in bulk reads. To explicitly mark an entry as important, use `favorite: true` on `write_memory` or `update_memory`.
+Access counts are managed automatically — every `read_memory` and `append_memory` call bumps the accessed entries. The ranking uses **time-weighted scoring** (`access_count / log2(age_in_days + 2)`) so newer entries with fewer accesses can outrank stale old ones. Entries with the highest weighted scores get `[★]` markers and expanded treatment in bulk reads. To explicitly mark an entry as important, use `favorite: true` on `write_memory` or `update_memory`.
 
 ---
 
