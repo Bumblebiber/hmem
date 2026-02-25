@@ -232,6 +232,70 @@ def compute_v2_selection(
     return expanded_ids, promoted_ids, visible_obsolete
 
 
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~4 characters per token (works for English/German mix)."""
+    return len(text) // 4 if text else 0
+
+
+def count_all_tokens(active: list[dict], obsolete: list[dict], children_map: dict[str, list[dict]]) -> int:
+    """Count total tokens across all entries and all nodes recursively."""
+    total = 0
+    for entry in active + obsolete:
+        total += estimate_tokens(entry.get("level_1", ""))
+    for nodes in children_map.values():
+        for node in nodes:
+            total += estimate_tokens(node.get("content", ""))
+    return total
+
+
+def count_shown_tokens(
+    shown_entries: list[dict],
+    children_map: dict[str, list[dict]],
+    v2_config: dict | None = None,
+) -> int:
+    """Count tokens for shown entries + their visible children (respecting V2 caps)."""
+    total = 0
+    for entry in shown_entries:
+        total += estimate_tokens(entry.get("level_1", ""))
+        children = children_map.get(entry["id"], [])
+        if v2_config and children and len(children) > v2_config["topNewestCount"]:
+            # Apply same V2 selection as the tree builder
+            newest = sorted(children, key=lambda c: c.get("created_at") or "", reverse=True)
+            newest_ids = {c["id"] for c in newest[: v2_config["topNewestCount"]]}
+            access_ids = {
+                c["id"]
+                for c in sorted(
+                    [c for c in children if c.get("access_count", 0) > 0],
+                    key=weighted_access_score,
+                    reverse=True,
+                )[: v2_config["topAccessCount"]]
+            }
+            children = [c for c in children if c["id"] in newest_ids | access_ids]
+        total += _count_subtree_tokens(children, children_map)
+    return total
+
+
+def _count_subtree_tokens(nodes: list[dict], children_map: dict[str, list[dict]]) -> int:
+    """Recursively count tokens for a list of nodes and their descendants."""
+    total = 0
+    for node in nodes:
+        total += estimate_tokens(node.get("content", ""))
+        grandchildren = children_map.get(node["id"], [])
+        if grandchildren:
+            total += _count_subtree_tokens(grandchildren, children_map)
+    return total
+
+
+def fmt_tokens(n: int) -> str:
+    """Format token count: 1234 → '1.2k', 56789 → '57k'."""
+    if n < 1000:
+        return str(n)
+    elif n < 10_000:
+        return f"{n / 1000:.1f}k"
+    else:
+        return f"{n // 1000}k"
+
+
 def node_title(node: dict) -> str:
     """Get node title (from DB or auto-extracted from content)."""
     return node.get("title") or auto_extract_title(node.get("content", ""))
@@ -371,8 +435,9 @@ class MemoryScreen(Screen):
         for r in active:
             r["_promoted"] = r["id"] in promoted_ids
 
+        total_tok = count_all_tokens(active, obsolete, children_map)
         hidden_note = f"  +{len(obsolete)} obsolete hidden" if obsolete else ""
-        tree.root.label = f"{self.agent_name}  —  {len(active)} entries{hidden_note}"
+        tree.root.label = f"{self.agent_name}  —  {len(active)} entries{hidden_note}  [{fmt_tokens(total_tok)} tokens total]"
 
         groups: dict[str, list] = defaultdict(list)
         for e in active:
@@ -406,7 +471,9 @@ class MemoryScreen(Screen):
         v2_active = [e for e in active if e["id"] in expanded_ids]
         total = len(active) + len(obsolete)
         shown = len(v2_active) + len(visible_obsolete)
-        tree.root.label = f"{self.agent_name}  —  V2 Read  ({shown}/{total} shown)"
+        total_tok = count_all_tokens(active, obsolete, children_map)
+        shown_tok = count_shown_tokens(v2_active + visible_obsolete, children_map, v2_config)
+        tree.root.label = f"{self.agent_name}  —  V2 Read  ({shown}/{total} shown)  [{fmt_tokens(shown_tok)}/{fmt_tokens(total_tok)} tokens]"
 
         # Count totals per prefix (from all active)
         total_by_prefix: dict[str, int] = defaultdict(int)
