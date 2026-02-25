@@ -967,8 +967,7 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
 
   if (isNode) {
     if (curator) {
-      const nodeDepth = (e.id.match(/\./g) || []).length + 1;
-      lines.push(`[${e.id}] L${nodeDepth}: ${e.level_1}`);
+      lines.push(`[${e.id}] ${e.level_1}`);
     } else {
       lines.push(`${e.id}  ${e.level_1}`);
     }
@@ -980,7 +979,7 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
       const accessed = e.access_count > 0 ? ` (${e.access_count}x accessed)` : "";
       const roleTag = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
       lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${obsoleteTag}${accessed}`);
-      lines.push(`  L1: ${e.level_1}`);
+      lines.push(`  ${e.level_1}`);
     } else {
       // Non-curator: [♥] favorites, [★] promoted, [!] obsolete
       const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
@@ -996,13 +995,16 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
         lines.push(`  ${e.children.length} ${e.children.length === 1 ? "child" : "children"}:`);
       }
       renderChildrenFormatted(lines, e.children, curator);
+      if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
+        lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
+      }
     } else if (e.hiddenChildrenCount !== undefined) {
       const child = e.children[0] as MemoryNode;
       if (curator) {
         const hint = (child.child_count ?? 0) > 0
           ? `  (${child.child_count} — use id="${child.id}" to expand)`
           : "";
-        lines.push(`  [${child.id}] L${child.depth}: ${child.content}${hint}`);
+        lines.push(`  [${child.id}] ${child.content}${hint}`);
       } else {
         const hint = (child.child_count ?? 0) > 0
           ? `  [+${child.child_count} → ${child.id}]`
@@ -1030,20 +1032,18 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
     for (const linked of e.linkedEntries) {
       const isLinkedNode = linked.id.includes(".");
       if (isLinkedNode) {
-        const d = (linked.id.match(/\./g) || []).length + 1;
-        lines.push(`  [${linked.id}] L${d}: ${linked.level_1}`);
+        lines.push(`  [${linked.id}] ${linked.level_1}`);
       } else {
         const ldate = linked.created_at.substring(0, 10);
         lines.push(`  [${linked.id}] ${ldate}`);
-        lines.push(`    L1: ${linked.level_1}`);
+        lines.push(`    ${linked.level_1}`);
       }
       if (linked.children && linked.children.length > 0) {
         for (const lchild of linked.children as MemoryNode[]) {
-          const cd = (lchild.id.match(/\./g) || []).length + 1;
           const hint = (lchild.child_count ?? 0) > 0
             ? ` (${lchild.child_count} ${lchild.child_count === 1 ? "child" : "children"} — use id="${lchild.id}" to expand)`
             : "";
-          lines.push(`    [${lchild.id}] L${cd}: ${lchild.content}${hint}`);
+          lines.push(`    [${lchild.id}] ${lchild.content}${hint}`);
         }
       }
     }
@@ -1059,7 +1059,7 @@ function renderChildrenFormatted(lines: string[], children: MemoryNode[], curato
       const hint = (child.child_count ?? 0) > 0
         ? `  (${child.child_count} — use id="${child.id}" to expand)`
         : "";
-      lines.push(`${indent}[${child.id}] L${child.depth}: ${child.content}${hint}`);
+      lines.push(`${indent}[${child.id}] ${child.content}${hint}`);
     } else {
       const hint = (child.child_count ?? 0) > 0
         ? `  [+${child.child_count} → ${child.id}]`

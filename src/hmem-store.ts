@@ -483,6 +483,7 @@ export class HmemStore {
     return this.readBulkV2(rows, opts);
   }
 
+
   /**
    * V2 bulk-read algorithm: per-prefix expansion, smart obsolete filtering,
    * expanded entries with all L2 children + links.
@@ -545,6 +546,7 @@ export class HmemStore {
     // Step 4: Only show expanded entries + visible obsolete (non-expanded are hidden from bulk output)
     const expandedNonObsolete = nonObsoleteRows.filter(r => expandedIds.has(r.id));
     const visibleRows = [...expandedNonObsolete, ...visibleObsolete];
+    const visibleIds = new Set(visibleRows.map(r => r.id));
 
     return visibleRows.map(r => {
       const isExpanded = expandedIds.has(r.id);
@@ -554,15 +556,39 @@ export class HmemStore {
 
       let children: MemoryNode[] | undefined;
       let linkedEntries: MemoryEntry[] | undefined;
+      let hiddenChildrenCount: number | undefined;
 
       if (isExpanded) {
-        // Expanded: ALL direct L2 children + resolve links
-        children = this.fetchChildren(r.id);
+        // Fetch all L2 children, then apply V2 selection (same params as L1)
+        const allChildren = this.fetchChildren(r.id);
+        if (allChildren.length > v2.topNewestCount) {
+          const newestSet = new Set(
+            [...allChildren]
+              .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
+              .slice(0, v2.topNewestCount)
+              .map(c => c.id)
+          );
+          const accessSet = new Set(
+            [...allChildren]
+              .filter(c => c.access_count > 0)
+              .sort((a, b) => b.access_count - a.access_count)
+              .slice(0, v2.topAccessCount)
+              .map(c => c.id)
+          );
+          const selectedIds = new Set([...newestSet, ...accessSet]);
+          children = allChildren.filter(c => selectedIds.has(c.id));
+          if (children.length < allChildren.length) {
+            hiddenChildrenCount = allChildren.length - children.length;
+          }
+        } else {
+          children = allChildren;
+        }
 
-        // Resolve links (depth 1, no family)
+        // Resolve links — skip entries already visible in bulk read
         const links: string[] = r.links ? JSON.parse(r.links) : [];
         if (links.length > 0) {
           linkedEntries = links.flatMap(linkId => {
+            if (visibleIds.has(linkId)) return []; // already shown in bulk read
             try {
               return this.read({ id: linkId, resolveLinks: false, linkDepth: 0 });
             } catch { return []; }
@@ -573,6 +599,7 @@ export class HmemStore {
       const entry = this.rowToEntry(r, children);
       entry.promoted = promoted;
       entry.expanded = isExpanded;
+      if (hiddenChildrenCount !== undefined) entry.hiddenChildrenCount = hiddenChildrenCount;
       if (linkedEntries && linkedEntries.length > 0) entry.linkedEntries = linkedEntries;
 
       return entry;
