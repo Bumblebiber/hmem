@@ -128,10 +128,13 @@ npx hmem-mcp init
 That's it. The interactive installer will:
 - Detect your installed AI coding tools (Claude Code, OpenCode, Cursor, Windsurf, Cline)
 - Ask whether to install **system-wide** (memories in `~/.hmem/`) or **project-local** (memories in current directory)
+- **Offer an example memory** with 67 real entries from hmem development — or start fresh
 - Configure each tool's MCP settings automatically
 - Create the memory directory and `hmem.config.json`
 
 After the installer finishes, restart your AI tool and call `read_memory()` to verify.
+
+> **Example memory:** The installer includes `hmem_developer.hmem` — a real `.hmem` database with 67 entries and 287 nodes from actual hmem development. It contains lessons learned, architecture decisions, error fixes, and project milestones — a great way to see how hmem works in practice before writing your own entries. You can explore it immediately with `read_memory()` after install, or browse it in the TUI viewer with `python3 hmem.py path/to/memory.hmem`.
 
 > **Don't forget the skill files!** The MCP server provides the tools (read_memory, write_memory, etc.), but the slash commands (`/hmem-save`, `/hmem-read`) require skill files to be copied to your tool's skills directory. See the [Skill Files](#skill-files) section below — it's a one-time copy-paste.
 >
