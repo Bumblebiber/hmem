@@ -107,7 +107,7 @@ export const DEFAULT_CONFIG: HmemConfig = {
   maxDepth: 5,
   defaultReadLimit: 100,
   prefixes: { ...DEFAULT_PREFIXES },
-  maxTitleChars: 30,
+  maxTitleChars: 50,
   accessCountTopN: 5,
   prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
   bulkReadV2: {
