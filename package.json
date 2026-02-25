@@ -34,7 +34,8 @@
     "server.json",
     "README.md",
     "LICENSE",
-    "hmem.config.example.json"
+    "hmem.config.example.json",
+    "hmem_developer.hmem"
   ],
   "scripts": {
     "build": "tsc",

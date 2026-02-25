@@ -378,6 +378,29 @@ export async function runInit(): Promise<void> {
       console.log(`  Created: ${absMemDir}`);
     }
 
+    // Step 4b: Example memory
+    const memoryPath = path.join(absMemDir, "memory.hmem");
+    if (!fs.existsSync(memoryPath)) {
+      const exampleIdx = await askChoice(
+        "Start with an example memory? (67 real entries from hmem development — lessons, decisions, errors, milestones)",
+        [
+          "Start fresh (empty memory)",
+          "Install example (recommended for first-time users)",
+        ]
+      );
+      if (exampleIdx === 1) {
+        // Find the bundled example file relative to this script (dist/cli-init.js → ../hmem_developer.hmem)
+        const exampleSrc = path.join(import.meta.dirname, "..", "hmem_developer.hmem");
+        if (fs.existsSync(exampleSrc)) {
+          fs.copyFileSync(exampleSrc, memoryPath);
+          console.log(`\n  Installed example memory: ${memoryPath}`);
+          console.log(`  67 entries, 287 nodes — call read_memory() to explore.`);
+        } else {
+          console.log(`\n  Example file not found (${exampleSrc}) — starting fresh.`);
+        }
+      }
+    }
+
     // Step 5: Write MCP configs
     console.log("\n  Writing MCP configuration...\n");
 
