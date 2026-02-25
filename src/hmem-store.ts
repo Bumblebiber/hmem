@@ -123,6 +123,8 @@ export interface ReadOptions {
   followObsolete?: boolean;
   /** Show the full obsolete chain path (all intermediate entries). Default: false. */
   showObsoletePath?: boolean;
+  /** Return only titles — compact listing without V2 selection, children, or links. */
+  titlesOnly?: boolean;
 }
 
 export interface WriteResult {
@@ -580,6 +582,55 @@ export class HmemStore {
     const expandedNonObsolete = nonObsoleteRows.filter(r => expandedIds.has(r.id));
     const visibleRows = [...expandedNonObsolete, ...visibleObsolete];
     const visibleIds = new Set(visibleRows.map(r => r.id));
+
+    // titles_only: V2 selection applies, but skip link resolution
+    if (opts.titlesOnly) {
+      // Bulk-fetch L2 child counts (one query for all visible entries)
+      const allIds = visibleRows.map(r => r.id);
+      const childCounts = this.bulkChildCount(allIds);
+
+      return visibleRows.map(r => {
+        const isExpanded = expandedIds.has(r.id);
+        const totalChildren = childCounts.get(r.id) ?? 0;
+
+        let children: MemoryNode[] | undefined;
+        let hiddenCount: number | undefined;
+
+        if (isExpanded && totalChildren > 0) {
+          // Fetch L2 children with V2 selection (top newest + accessed), no links
+          const allChildren = this.fetchChildren(r.id);
+          if (allChildren.length > v2.topNewestCount) {
+            const newestSet = new Set(
+              [...allChildren]
+                .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
+                .slice(0, v2.topNewestCount)
+                .map(c => c.id)
+            );
+            const accessSet = new Set(
+              [...allChildren]
+                .filter(c => c.access_count > 0)
+                .sort((a, b) => b.access_count - a.access_count)
+                .slice(0, v2.topAccessCount)
+                .map(c => c.id)
+            );
+            const selectedIds = new Set([...newestSet, ...accessSet]);
+            children = allChildren.filter(c => selectedIds.has(c.id));
+            hiddenCount = allChildren.length - children.length;
+          } else {
+            children = allChildren;
+          }
+        } else if (totalChildren > 0) {
+          hiddenCount = totalChildren;
+        }
+
+        const entry = this.rowToEntry(r, children);
+        if (r.favorite === 1) entry.promoted = "favorite";
+        else if (topAccess.some(t => t.id === r.id)) entry.promoted = "access";
+        if (isExpanded) entry.expanded = true;
+        if (hiddenCount !== undefined && hiddenCount > 0) entry.hiddenChildrenCount = hiddenCount;
+        return entry;
+      });
+    }
 
     return visibleRows.map(r => {
       const isExpanded = expandedIds.has(r.id);
@@ -1220,6 +1271,18 @@ export class HmemStore {
   }
 
   /** Fetch direct children of a node (root or compound), including their grandchild counts. */
+  /** Bulk-fetch direct child counts for multiple parent IDs in one query. */
+  private bulkChildCount(parentIds: string[]): Map<string, number> {
+    if (parentIds.length === 0) return new Map();
+    const placeholders = parentIds.map(() => "?").join(", ");
+    const rows = this.db.prepare(
+      `SELECT parent_id, COUNT(*) as cnt FROM memory_nodes WHERE parent_id IN (${placeholders}) GROUP BY parent_id`
+    ).all(...parentIds) as any[];
+    const map = new Map<string, number>();
+    for (const r of rows) map.set(r.parent_id, r.cnt);
+    return map;
+  }
+
   private fetchChildren(parentId: string): MemoryNode[] {
     return this.fetchChildrenDeep(parentId, 2, 2);
   }

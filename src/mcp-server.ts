@@ -417,7 +417,8 @@ server.tool(
     "- By prefix: read_memory({ prefix: 'L' }) → All Lessons Learned (Level 1)\n" +
     "- By time: read_memory({ after: '2026-02-15', before: '2026-02-17' })\n" +
     "- Search: read_memory({ search: 'SSE' }) → Full-text search across all levels\n" +
-    "- Time-around: read_memory({ time_around: 'P0001' }) → entries near P0001's timestamp\n\n" +
+    "- Time-around: read_memory({ time_around: 'P0001' }) → entries near P0001's timestamp\n" +
+    "- Title listing: read_memory({ titles_only: true }) → compact table of contents (ID + date + title)\n\n" +
     "Lazy loading: ID queries always return the node + its DIRECT children only.\n" +
     "To go deeper, call read_memory(id=child_id). depth parameter is ignored for ID queries.\n\n" +
     "Store types:\n" +
@@ -437,6 +438,10 @@ server.tool(
     show_obsolete_path: z.boolean().optional().describe(
       "When reading an obsolete entry by ID, show the full correction chain instead of just the final valid entry."
     ),
+    titles_only: z.boolean().optional().describe(
+      "Compact title listing — shows all entries as ID + date + title, without V2 selection or children. " +
+      "Like a table of contents. Combine with prefix to filter by category."
+    ),
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Source store: 'personal' or 'company'"
     ),
@@ -444,7 +449,7 @@ server.tool(
       "Set true to show full metadata (access counts, roles, dates). For curators only."
     ),
   },
-  async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, store: storeName, curator }) => {
+  async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, store: storeName, curator }) => {
     if (AGENT_ID === "UNKNOWN") {
       return {
         content: [{ type: "text" as const, text: "ERROR: Agent-ID unknown. read_memory is only available for spawned agents." }],
@@ -473,6 +478,7 @@ server.tool(
           time, period, timeAround: time_around,
           showObsolete: show_obsolete,
           showObsoletePath: show_obsolete_path,
+          titlesOnly: titles_only,
         });
 
         if (entries.length === 0) {
@@ -485,9 +491,11 @@ server.tool(
 
         // Format output
         const isBulkListing = !id && !search && !time_around;
-        const output = isBulkListing
-          ? formatGroupedOutput(hmemStore, entries, curator ?? false, hmemConfig)
-          : formatFlatOutput(entries, curator ?? false);
+        const output = titles_only
+          ? formatTitlesOnly(entries, hmemConfig)
+          : isBulkListing
+            ? formatGroupedOutput(hmemStore, entries, curator ?? false, hmemConfig)
+            : formatFlatOutput(entries, curator ?? false);
 
         const stats = hmemStore.stats();
         const storeLabel = storeName === "company" ? "company" : templateName;
@@ -920,6 +928,52 @@ server.tool(
  * Format bulk-read output grouped by prefix with header entries.
  * Non-curator: strips [♥], [★] markers, shortens [OBSOLETE] to [!].
  */
+/**
+ * Format compact title listing — ID + date + title, grouped by prefix.
+ * V2 selection applies. Favorites/top-accessed show L2 children titles.
+ * Non-expanded entries show (N) child count indicator.
+ */
+function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig): string {
+  const CHILD_TITLE_LEN = 50;
+  const lines: string[] = [];
+  const byPrefix = new Map<string, MemoryEntry[]>();
+  for (const e of entries) {
+    const arr = byPrefix.get(e.prefix);
+    if (arr) arr.push(e);
+    else byPrefix.set(e.prefix, [e]);
+  }
+  for (const [prefix, prefixEntries] of byPrefix) {
+    const desc = config.prefixDescriptions[prefix] ?? config.prefixes[prefix] ?? prefix;
+    lines.push(`## ${desc} (${prefixEntries.length} total)\n`);
+    for (const e of prefixEntries) {
+      const mmdd = e.created_at.substring(5, 10);
+      const fav = e.favorite ? " [♥]" : "";
+      const obs = e.obsolete ? " [!]" : "";
+
+      if (e.expanded && e.children && e.children.length > 0) {
+        // Expanded entry (favorite/top-accessed): show with L2 children
+        lines.push(`${e.id} ${mmdd}${fav}${obs}  ${e.title}`);
+        for (const child of e.children as MemoryNode[]) {
+          const short = child.content.length > CHILD_TITLE_LEN
+            ? child.content.substring(0, CHILD_TITLE_LEN)
+            : child.content;
+          const grandchildren = (child.child_count ?? 0) > 0 ? ` (${child.child_count})` : "";
+          lines.push(`  ${child.id}  ${short}${grandchildren}`);
+        }
+        if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
+          lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
+        }
+      } else {
+        // Non-expanded: compact line with child count
+        const childHint = (e.hiddenChildrenCount ?? 0) > 0 ? ` (${e.hiddenChildrenCount})` : "";
+        lines.push(`${e.id} ${mmdd}${fav}${obs}  ${e.title}${childHint}`);
+      }
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
 function formatGroupedOutput(
   store: HmemStore,
   entries: MemoryEntry[],
