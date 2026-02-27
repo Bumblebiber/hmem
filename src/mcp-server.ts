@@ -25,6 +25,7 @@ import { openAgentMemory, openCompanyMemory, resolveHmemPath, HmemStore } from "
 import type { AgentRole, MemoryEntry, MemoryNode } from "./hmem-store.js";
 import { loadHmemConfig, formatPrefixList } from "./hmem-config.js";
 import type { HmemConfig } from "./hmem-config.js";
+import { SessionCache } from "./session-cache.js";
 
 // ---- Environment ----
 // HMEM_* vars are the canonical names; COUNCIL_* kept for backwards compatibility
@@ -62,10 +63,13 @@ function log(msg: string) {
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
 log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth}`);
 
+// Session-scoped cache — persists across tool calls within this MCP connection
+const sessionCache = new SessionCache();
+
 // ---- Server ----
 const server = new McpServer({
   name: "hmem",
-  version: "1.1.0",
+  version: "2.2.0",
 });
 
 // ---- Tool: search_memory ----
@@ -250,7 +254,9 @@ server.tool(
     "- Mark as obsolete: FIRST write the correction, THEN update with [✓ID] reference:\n" +
     "  1. write_memory(prefix='E', content='Correct fix is...') → E0076\n" +
     "  2. update_memory(id='E0042', content='Wrong — see [✓E0076]', obsolete=true)\n" +
-    "- Mark as favorite: update_memory(id='D0010', content='...', favorite=true)\n\n" +
+    "- Mark as favorite: update_memory(id='D0010', content='...', favorite=true)\n" +
+    "- Mark as irrelevant: update_memory(id='L0042', content='...', irrelevant=true)\n" +
+    "  No correction entry needed (unlike obsolete). Hidden from bulk reads.\n\n" +
     "To add new child nodes, use append_memory. " +
     "To replace the entire tree, use delete_agent_memory + write_memory (curator only).",
   {
@@ -264,14 +270,18 @@ server.tool(
       "Requires [✓ID] correction reference in content (e.g. 'Wrong — see [✓E0076]')."
     ),
     favorite: z.boolean().optional().describe(
-      "Set or clear the [♥] favorite flag on this root entry (root entries only). " +
-      "Favorites are always shown with L2 detail in bulk reads."
+      "Set or clear the [♥] favorite flag. Works on root entries and sub-nodes. " +
+      "Root favorites are always shown with L2 detail in bulk reads."
+    ),
+    irrelevant: z.boolean().optional().describe(
+      "Mark this root entry as irrelevant [-] (root entries only). " +
+      "No correction entry needed (unlike obsolete). Irrelevant entries are hidden from bulk reads."
     ),
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Target store: 'personal' or 'company'"
     ),
   },
-  async ({ id, content, links, obsolete, favorite, store: storeName }) => {
+  async ({ id, content, links, obsolete, favorite, irrelevant, store: storeName }) => {
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker") as AgentRole;
 
@@ -297,9 +307,9 @@ server.tool(
           };
         }
 
-        const ok = hmemStore.updateNode(id, content, links, obsolete, favorite);
+        const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant);
         const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
-        log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}`);
+        log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${irrelevant ? " (marked irrelevant)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}`);
 
         if (!ok) {
           return {
@@ -311,6 +321,8 @@ server.tool(
         const parts: string[] = [`Updated: ${id}`];
         if (links !== undefined) parts.push("links updated");
         if (obsolete === true) parts.push("marked as [!] obsolete");
+        if (irrelevant === true) parts.push("marked as [-] irrelevant");
+        if (irrelevant === false) parts.push("irrelevant flag cleared");
         if (favorite === true) parts.push("marked as [♥] favorite");
         if (favorite === false) parts.push("favorite flag cleared");
         return { content: [{ type: "text" as const, text: parts.join(" | ") }] };
@@ -442,6 +454,18 @@ server.tool(
       "Compact title listing — shows all entries as ID + date + title, without V2 selection or children. " +
       "Like a table of contents. Combine with prefix to filter by category."
     ),
+    expand: z.boolean().optional().describe(
+      "Expand full tree with complete node content (ID queries only). " +
+      "Use to deep-dive into a project after a long break. " +
+      "depth controls how deep (default: 5 = full tree). " +
+      "Example: read_memory({ id: 'P0001', expand: true, depth: 3 })"
+    ),
+    mode: z.enum(["discover", "essentials"]).optional().describe(
+      "Bulk read mode. 'discover' (default for first read): newest-heavy — good for getting an overview. " +
+      "'essentials': importance-heavy (more favorites + most-accessed, fewer newest) — " +
+      "use after context compression to recover key knowledge. " +
+      "Auto-selected if omitted: first bulk read → discover, subsequent → essentials."
+    ),
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Source store: 'personal' or 'company'"
     ),
@@ -449,7 +473,7 @@ server.tool(
       "Set true to show full metadata (access counts, roles, dates). For curators only."
     ),
   },
-  async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, store: storeName, curator }) => {
+  async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator }) => {
     if (AGENT_ID === "UNKNOWN") {
       return {
         content: [{ type: "text" as const, text: "ERROR: Agent-ID unknown. read_memory is only available for spawned agents." }],
@@ -471,6 +495,16 @@ server.tool(
 
         const effectiveDepth = depth || (id ? 2 : 1);
 
+        // Session cache: apply sliding window for bulk reads (personal store only)
+        const isBulkListing = !id && !search && !time_around;
+        const useCache = isBulkListing && storeName === "personal";
+        const suppressedIds = useCache ? sessionCache.getSuppressedIds() : undefined;
+        const maxNewNewest = useCache ? sessionCache.getNewestSlotCount() : undefined;
+        const maxNewAccess = useCache ? sessionCache.getAccessSlotCount() : undefined;
+
+        // Auto-select mode: first bulk read → discover, subsequent → essentials
+        const effectiveMode = mode ?? (useCache && sessionCache.readCount > 0 ? "essentials" : "discover");
+
         const entries = hmemStore.read({
           id, depth: effectiveDepth, prefix, after, before, search,
           limit: maxResults,
@@ -479,6 +513,11 @@ server.tool(
           showObsolete: show_obsolete,
           showObsoletePath: show_obsolete_path,
           titlesOnly: titles_only,
+          expand,
+          suppressedIds,
+          maxNewNewest,
+          maxNewAccess,
+          mode: isBulkListing ? effectiveMode : undefined,
         });
 
         if (entries.length === 0) {
@@ -489,21 +528,38 @@ server.tool(
           return { content: [{ type: "text" as const, text: hint }] };
         }
 
+        // Update session cache after bulk read
+        if (useCache) {
+          const allIds = entries.filter(e => !e.obsolete).map(e => e.id);
+          const promotedIds = new Set(
+            entries.filter(e => e.promoted === "favorite" || e.promoted === "access").map(e => e.id)
+          );
+          sessionCache.registerDelivered(allIds, promotedIds);
+        }
+
         // Format output
-        const isBulkListing = !id && !search && !time_around;
         const output = titles_only
           ? formatTitlesOnly(entries, hmemConfig)
           : isBulkListing
             ? formatGroupedOutput(hmemStore, entries, curator ?? false, hmemConfig)
-            : formatFlatOutput(entries, curator ?? false);
+            : formatFlatOutput(entries, curator ?? false, expand ?? false);
 
         const stats = hmemStore.stats();
         const storeLabel = storeName === "company" ? "company" : templateName;
         const visibleCount = entries.length;
-        const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
-          `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}\n`;
 
-        log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole})`);
+        // Cache status in header (when active)
+        const cacheInfo = useCache && sessionCache.size > 0
+          ? ` | Cache: ${sessionCache.size} seen`
+          : "";
+
+        // Mode info in header (only for bulk reads)
+        const modeInfo = isBulkListing ? ` | Mode: ${effectiveMode}` : "";
+
+        const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
+          `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}${modeInfo}${cacheInfo}\n`;
+
+        log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole}${cacheInfo})`);
 
         return {
           content: [{
@@ -524,6 +580,31 @@ server.tool(
 );
 
 // bump_memory removed — access_count is auto-incremented on reads, favorites cover explicit importance
+
+// ---- Session Cache Reset ----
+
+server.tool(
+  "reset_memory_cache",
+  "Clear the session cache so all entries are treated as unseen again. " +
+    "The next bulk read will behave like the first read of a fresh session " +
+    "(full Fibonacci slots, no suppressed entries).\n\n" +
+    "Use when you need a clean slate — e.g., after a major topic change " +
+    "or when you suspect important entries were suppressed.",
+  {},
+  async () => {
+    const before = sessionCache.size;
+    const readsBefore = sessionCache.readCount;
+    sessionCache.reset();
+    return {
+      content: [{
+        type: "text" as const,
+        text: `Session cache reset. Cleared ${before} tracked entries, ` +
+          `bulk read counter ${readsBefore} → 0. ` +
+          `Next read_memory() will return the full first-read selection.`,
+      }],
+    };
+  }
+);
 
 // ---- Curator Tools (ceo role only) ----
 
@@ -661,8 +742,9 @@ server.tool(
         const role = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
         const access = e.access_count > 0 ? ` (${e.access_count}x)` : "";
         const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
+        const irrelevantTag = e.irrelevant ? " [- IRRELEVANT]" : "";
         const favTag = e.favorite ? " [♥]" : "";
-        lines.push(`[${e.id}] ${date}${role}${favTag}${obsoleteTag}${access}`);
+        lines.push(`[${e.id}] ${date}${role}${favTag}${obsoleteTag}${irrelevantTag}${access}`);
         lines.push(`  ${e.title}`);
         if (e.level_1 !== e.title) lines.push(`  ${e.level_1}`);
         if (e.children && e.children.length > 0) {
@@ -690,7 +772,7 @@ server.tool(
   "fix_agent_memory",
   "CURATOR ONLY (ceo role). Correct a specific entry or node in any agent's memory.\n\n" +
     "Accepts both root IDs ('L0003') and compound node IDs ('L0003.2'):\n" +
-    "- Root ID: updates L1 summary text, min_role clearance, and/or obsolete flag\n" +
+    "- Root ID: updates L1 summary text, min_role clearance, obsolete/irrelevant/favorite flags\n" +
     "- Compound node ID: updates the content of that specific node\n\n" +
     "To fix wrong prefix: delete + re-add (prefix cannot be changed in-place).\n" +
     "To consolidate fragmented P entries: use read_agent_memory to read them, " +
@@ -715,8 +797,11 @@ server.tool(
     favorite: z.boolean().optional().describe(
       "Set or clear the [♥] favorite flag (root entries only)."
     ),
+    irrelevant: z.boolean().optional().describe(
+      "Mark or unmark as irrelevant (root entries only). Irrelevant entries are hidden from bulk reads. No correction entry needed."
+    ),
   },
-  async ({ agent_name, entry_id, content, min_role, obsolete, favorite }) => {
+  async ({ agent_name, entry_id, content, min_role, obsolete, favorite, irrelevant }) => {
     if (!isCurator()) {
       return {
         content: [{ type: "text" as const, text: "ERROR: fix_agent_memory is only available to the ceo/curator role." }],
@@ -750,27 +835,30 @@ server.tool(
         if (ok) changed.push("content");
       } else {
         // Root entry — update memories table
-        if (!content && min_role === undefined && obsolete === undefined && favorite === undefined) {
+        if (!content && min_role === undefined && obsolete === undefined && favorite === undefined && irrelevant === undefined) {
           return {
-            content: [{ type: "text" as const, text: "ERROR: Provide at least one of: content, min_role, obsolete, favorite." }],
+            content: [{ type: "text" as const, text: "ERROR: Provide at least one of: content, min_role, obsolete, favorite, irrelevant." }],
             isError: true,
           };
         }
         if (content) {
-          ok = store.updateNode(entry_id, content, undefined, obsolete, favorite, true /* curatorBypass */);
+          ok = store.updateNode(entry_id, content, undefined, obsolete, favorite, true /* curatorBypass */, irrelevant);
           changed.push("L1");
           if (obsolete !== undefined) changed.push("obsolete");
           if (favorite !== undefined) changed.push("favorite");
+          if (irrelevant !== undefined) changed.push("irrelevant");
         } else {
           const fields: any = {};
           if (min_role !== undefined) fields.min_role = min_role;
           if (obsolete !== undefined) fields.obsolete = obsolete;
           if (favorite !== undefined) fields.favorite = favorite;
+          if (irrelevant !== undefined) fields.irrelevant = irrelevant;
           ok = store.update(entry_id, fields);
         }
         if (min_role !== undefined) changed.push("min_role");
         if (!content && obsolete !== undefined) changed.push("obsolete");
         if (!content && favorite !== undefined) changed.push("favorite");
+        if (!content && irrelevant !== undefined) changed.push("irrelevant");
       }
 
       log(`fix_agent_memory [CURATOR]: ${agent_name} ${entry_id} → ${ok ? "updated" : "not found"} (${changed.join(", ")})`);
@@ -949,6 +1037,7 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig): string {
       const mmdd = e.created_at.substring(5, 10);
       const fav = e.favorite ? " [♥]" : "";
       const obs = e.obsolete ? " [!]" : "";
+      const irr = e.irrelevant ? " [-]" : "";
 
       if (e.expanded && e.children && e.children.length > 0) {
         // Expanded entry (favorite/top-accessed): show with L2 children
@@ -958,7 +1047,8 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig): string {
             ? child.content.substring(0, CHILD_TITLE_LEN)
             : child.content);
           const grandchildren = (child.child_count ?? 0) > 0 ? ` (${child.child_count})` : "";
-          lines.push(`  ${child.id}  ${short}${grandchildren}`);
+          const cfav = child.favorite ? " [♥]" : "";
+          lines.push(`  ${child.id}${cfav}  ${short}${grandchildren}`);
         }
         if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
           lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
@@ -1020,7 +1110,7 @@ function formatGroupedOutput(
   return lines.join("\n");
 }
 
-function formatFlatOutput(entries: MemoryEntry[], curator: boolean): string {
+function formatFlatOutput(entries: MemoryEntry[], curator: boolean, expand: boolean = false): string {
   const lines: string[] = [];
 
   // Obsolete chain resolution note
@@ -1035,12 +1125,17 @@ function formatFlatOutput(entries: MemoryEntry[], curator: boolean): string {
   }
 
   for (const e of entries) {
-    renderEntryFormatted(lines, e, curator);
+    renderEntryFormatted(lines, e, curator, expand);
   }
   return lines.join("\n");
 }
 
-function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean): void {
+/** Favorite marker for child nodes. */
+function nodeFav(node: MemoryNode): string {
+  return node.favorite ? " [♥]" : "";
+}
+
+function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean, expand: boolean = false): void {
   const isNode = e.id.includes(".");
   const hasDetail = !!(e.children?.length || e.linkedEntries?.length);
 
@@ -1059,16 +1154,18 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
     if (curator) {
       const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
       const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
+      const irrelevantTag = e.irrelevant ? " [- IRRELEVANT]" : "";
       const date = e.created_at.substring(0, 10);
       const accessed = e.access_count > 0 ? ` (${e.access_count}x accessed)` : "";
       const roleTag = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
-      lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${obsoleteTag}${accessed}`);
+      lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${obsoleteTag}${irrelevantTag}${accessed}`);
       lines.push(`  ${e.title}`);
     } else {
       const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
       const obsoleteTag = e.obsolete ? " [!]" : "";
+      const irrelevantTag = e.irrelevant ? " [-]" : "";
       const mmdd = e.created_at.substring(5, 10);
-      lines.push(`${e.id} ${mmdd}${promotedTag}${obsoleteTag}  ${e.title}`);
+      lines.push(`${e.id} ${mmdd}${promotedTag}${obsoleteTag}${irrelevantTag}  ${e.title}`);
     }
     // Show full level_1 content below title when entry is expanded/drilled
     if (hasDetail && e.level_1 !== e.title) {
@@ -1076,9 +1173,12 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
     }
   }
 
-  // Children — show titles only (drill into child.id for full content)
+  // Children
   if (e.children && e.children.length > 0) {
-    if (e.expanded) {
+    if (expand) {
+      // Expand mode: full content + recursive children
+      renderChildrenExpanded(lines, e.children, curator);
+    } else if (e.expanded && !expand) {
       renderChildrenFormatted(lines, e.children, curator);
       if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
         lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
@@ -1086,13 +1186,14 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
     } else if (e.hiddenChildrenCount !== undefined) {
       // Non-expanded bulk read: show only the latest child title
       const child = e.children[0] as MemoryNode;
+      const fav = nodeFav(child);
       const hint = (child.child_count ?? 0) > 0
         ? `  [+${child.child_count} → ${child.id}]`
         : "";
       if (curator) {
-        lines.push(`  [${child.id}] ${child.title}${hint}`);
+        lines.push(`  [${child.id}]${fav} ${child.title}${hint}`);
       } else {
-        lines.push(`  ${child.id}  ${child.title}${hint}`);
+        lines.push(`  ${child.id}${fav}  ${child.title}${hint}`);
       }
       if (e.hiddenChildrenCount > 0) {
         lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
@@ -1104,7 +1205,14 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
   }
 
   // Links
-  if (e.links && e.links.length > 0) lines.push(`  Links: ${e.links.join(", ")}`);
+  if (e.links && e.links.length > 0) {
+    const parts: string[] = [`Links: ${e.links.join(", ")}`];
+    const hiddenParts: string[] = [];
+    if (e.hiddenObsoleteLinks && e.hiddenObsoleteLinks > 0) hiddenParts.push(`${e.hiddenObsoleteLinks} obsolete`);
+    if (e.hiddenIrrelevantLinks && e.hiddenIrrelevantLinks > 0) hiddenParts.push(`${e.hiddenIrrelevantLinks} irrelevant`);
+    if (hiddenParts.length > 0) parts.push(`(+${hiddenParts.join(", ")} hidden)`);
+    lines.push(`  ${parts.join(" ")}`);
+  }
 
   // Auto-resolved linked entries
   if (e.linkedEntries && e.linkedEntries.length > 0) {
@@ -1124,7 +1232,7 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
           const hint = (lchild.child_count ?? 0) > 0
             ? ` (${lchild.child_count} ${lchild.child_count === 1 ? "child" : "children"} — use id="${lchild.id}" to expand)`
             : "";
-          lines.push(`    [${lchild.id}] ${lchild.title}${hint}`);
+          lines.push(`    [${lchild.id}]${nodeFav(lchild)} ${lchild.title}${hint}`);
         }
       }
     }
@@ -1133,18 +1241,63 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean)
   lines.push("");
 }
 
+/**
+ * Render a list of child nodes — shows titles for navigation.
+ * Use read_memory(id=child.id) to see full content.
+ */
 function renderChildrenFormatted(lines: string[], children: MemoryNode[], curator: boolean): void {
   for (const child of children) {
     const indent = "  ".repeat(child.depth - 1);
+    const fav = nodeFav(child);
     const hint = (child.child_count ?? 0) > 0
       ? `  [+${child.child_count} → ${child.id}]`
       : "";
     if (curator) {
-      lines.push(`${indent}[${child.id}] ${child.title}${hint}`);
+      lines.push(`${indent}[${child.id}]${fav} ${child.title}${hint}`);
     } else {
-      lines.push(`${indent}${child.id}  ${child.title}${hint}`);
+      lines.push(`${indent}${child.id}${fav}  ${child.title}${hint}`);
     }
     // Don't recurse into grandchildren — titles only, drill for content
+  }
+}
+
+/**
+ * Render children with full content (expand mode).
+ * Shows complete node text and recurses into grandchildren.
+ * At the depth boundary (children loaded but THEIR children are not),
+ * renders as titles instead of full content.
+ */
+function renderChildrenExpanded(lines: string[], children: MemoryNode[], curator: boolean): void {
+  for (const child of children) {
+    const indent = "  ".repeat(child.depth - 1);
+    const fav = nodeFav(child);
+    const hasLoadedChildren = child.children && child.children.length > 0;
+    const isBoundary = !hasLoadedChildren && (child.child_count ?? 0) > 0;
+
+    if (hasLoadedChildren) {
+      // Inner node: full content + recurse
+      if (curator) {
+        lines.push(`${indent}[${child.id}]${fav} ${child.content}`);
+      } else {
+        lines.push(`${indent}${child.id}${fav}  ${child.content}`);
+      }
+      renderChildrenExpanded(lines, child.children!, curator);
+    } else if (isBoundary) {
+      // Boundary: title only + child count hint
+      const hint = `  [+${child.child_count} → ${child.id}]`;
+      if (curator) {
+        lines.push(`${indent}[${child.id}]${fav} ${child.title}${hint}`);
+      } else {
+        lines.push(`${indent}${child.id}${fav}  ${child.title}${hint}`);
+      }
+    } else {
+      // Leaf node (no children at all): full content
+      if (curator) {
+        lines.push(`${indent}[${child.id}]${fav} ${child.content}`);
+      } else {
+        lines.push(`${indent}${child.id}${fav}  ${child.content}`);
+      }
+    }
   }
 }
 

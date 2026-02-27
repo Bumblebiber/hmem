@@ -46,6 +46,10 @@ export interface MemoryEntry {
     obsolete?: boolean;
     /** True if the agent explicitly marked this entry as a favorite. Shown with [♥] in reads. */
     favorite?: boolean;
+    /** True if the agent marked this entry as irrelevant. Hidden from bulk reads, no correction needed. */
+    irrelevant?: boolean;
+    /** True if this entry was already delivered in a previous bulk read (session cache). */
+    suppressed?: boolean;
     /**
      * Set by bulk reads to indicate why this entry received extra depth inline.
      * 'favorite' = favorite flag set, 'access' = top-N by access_count.
@@ -65,6 +69,10 @@ export interface MemoryEntry {
     isHeader?: boolean;
     children?: MemoryNode[];
     linkedEntries?: MemoryEntry[];
+    /** Number of linked entries hidden because they are obsolete. */
+    hiddenObsoleteLinks?: number;
+    /** Number of linked entries hidden because they are irrelevant. */
+    hiddenIrrelevantLinks?: number;
     /** If this entry was reached via obsolete chain resolution, the chain of IDs traversed. */
     obsoleteChain?: string[];
 }
@@ -80,6 +88,7 @@ export interface MemoryNode {
     created_at: string;
     access_count: number;
     last_accessed: string | null;
+    favorite?: boolean;
     child_count?: number;
     children?: MemoryNode[];
 }
@@ -114,6 +123,16 @@ export interface ReadOptions {
     showObsoletePath?: boolean;
     /** Return only titles — compact listing without V2 selection, children, or links. */
     titlesOnly?: boolean;
+    /** Expand full tree with complete node content (for deep-dive into a project). depth controls how deep. */
+    expand?: boolean;
+    /** IDs already delivered in this session — completely hidden in bulk reads. */
+    suppressedIds?: Set<string>;
+    /** Max newest entries per prefix (Fibonacci decay). */
+    maxNewNewest?: number;
+    /** Max most-accessed entries per prefix (Fibonacci decay). */
+    maxNewAccess?: number;
+    /** Bulk read mode: 'discover' (newest-heavy, default) or 'essentials' (importance-heavy). */
+    mode?: "discover" | "essentials";
 }
 export interface WriteResult {
     id: string;
@@ -170,7 +189,7 @@ export declare class HmemStore {
     /**
      * Update specific fields of an existing root entry (curator use only).
      */
-    update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite">>): boolean;
+    update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite" | "irrelevant">>): boolean;
     /**
      * Delete an entry by ID (curator use only).
      * Also deletes all associated memory_nodes.
@@ -182,7 +201,7 @@ export declare class HmemStore {
      * For sub-nodes: updates node content only.
      * Does NOT modify children — use appendChildren to extend the tree.
      */
-    updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean): boolean;
+    updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean): boolean;
     /**
      * Append new child nodes under an existing entry (root or node).
      * Content is tab-indented relative to the parent:

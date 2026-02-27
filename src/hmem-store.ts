@@ -55,6 +55,10 @@ export interface MemoryEntry {
   obsolete?: boolean;
   /** True if the agent explicitly marked this entry as a favorite. Shown with [♥] in reads. */
   favorite?: boolean;
+  /** True if the agent marked this entry as irrelevant. Hidden from bulk reads, no correction needed. */
+  irrelevant?: boolean;
+  /** True if this entry was already delivered in a previous bulk read (session cache). */
+  suppressed?: boolean;
   /**
    * Set by bulk reads to indicate why this entry received extra depth inline.
    * 'favorite' = favorite flag set, 'access' = top-N by access_count.
@@ -74,6 +78,10 @@ export interface MemoryEntry {
   isHeader?: boolean;
   children?: MemoryNode[];       // populated for ID-based reads and bulk reads (latest child)
   linkedEntries?: MemoryEntry[]; // auto-resolved linked entries (ID-based reads only)
+  /** Number of linked entries hidden because they are obsolete. */
+  hiddenObsoleteLinks?: number;
+  /** Number of linked entries hidden because they are irrelevant. */
+  hiddenIrrelevantLinks?: number;
   /** If this entry was reached via obsolete chain resolution, the chain of IDs traversed. */
   obsoleteChain?: string[];
 }
@@ -90,6 +98,7 @@ export interface MemoryNode {
   created_at: string;
   access_count: number;
   last_accessed: string | null;
+  favorite?: boolean;       // true if marked as a favorite
   child_count?: number;     // populated when fetching children
   children?: MemoryNode[];  // populated when fetching with depth > 1
 }
@@ -125,6 +134,16 @@ export interface ReadOptions {
   showObsoletePath?: boolean;
   /** Return only titles — compact listing without V2 selection, children, or links. */
   titlesOnly?: boolean;
+  /** Expand full tree with complete node content (for deep-dive into a project). depth controls how deep. */
+  expand?: boolean;
+  /** IDs already delivered in this session — completely hidden in bulk reads. */
+  suppressedIds?: Set<string>;
+  /** Max newest entries per prefix (Fibonacci decay). */
+  maxNewNewest?: number;
+  /** Max most-accessed entries per prefix (Fibonacci decay). */
+  maxNewAccess?: number;
+  /** Bulk read mode: 'discover' (newest-heavy, default) or 'essentials' (importance-heavy). */
+  mode?: "discover" | "essentials";
 }
 
 export interface WriteResult {
@@ -162,7 +181,8 @@ CREATE TABLE IF NOT EXISTS memories (
     links         TEXT,
     min_role      TEXT DEFAULT 'worker',
     obsolete      INTEGER DEFAULT 0,
-    favorite      INTEGER DEFAULT 0
+    favorite      INTEGER DEFAULT 0,
+    irrelevant    INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_prefix ON memories(prefix);
 CREATE INDEX IF NOT EXISTS idx_created ON memories(created_at);
@@ -196,6 +216,8 @@ const MIGRATIONS = [
   "ALTER TABLE memories ADD COLUMN favorite INTEGER DEFAULT 0",
   "ALTER TABLE memories ADD COLUMN title TEXT",
   "ALTER TABLE memory_nodes ADD COLUMN title TEXT",
+  "ALTER TABLE memories ADD COLUMN irrelevant INTEGER DEFAULT 0",
+  "ALTER TABLE memory_nodes ADD COLUMN favorite INTEGER DEFAULT 0",
 ];
 
 // ---- HmemStore class ----
@@ -341,8 +363,13 @@ export class HmemStore {
         if (!row) return [];
         this.bumpNodeAccess(opts.id);
 
-        const children = this.fetchChildren(opts.id);
-        return [this.nodeToEntry(this.rowToNode(row), children)];
+        const nodeDepth = (row as any).depth ?? 2;
+        // expand: fetch requested depth + 1 extra level (for boundary titles)
+        const expandDepth = opts.expand ? (opts.depth || 5) + 1 : nodeDepth + 1;
+        const children = this.fetchChildrenDeep(opts.id, nodeDepth + 1, expandDepth);
+        const entry = this.nodeToEntry(this.rowToNode(row), children);
+        if (opts.expand) entry.expanded = true;
+        return [entry];
       } else {
         // Root ID — fetch from memories
         const sql = `SELECT * FROM memories WHERE id = ?${roleFilter.sql ? ` AND ${roleFilter.sql}` : ""}`;
@@ -388,8 +415,11 @@ export class HmemStore {
 
         this.bumpAccess(opts.id);
 
-        const children = this.fetchChildren(opts.id);
+        // expand: fetch requested depth + 1 extra level (for boundary titles)
+        const expandDepth = opts.expand ? (opts.depth || 5) + 1 : 2;
+        const children = this.fetchChildrenDeep(opts.id, 2, expandDepth);
         const entry = this.rowToEntry(row, children);
+        if (opts.expand) entry.expanded = true;
 
         // Auto-resolve links
         this.resolveEntryLinks(entry, opts);
@@ -526,9 +556,13 @@ export class HmemStore {
   private readBulkV2(rows: any[], opts: ReadOptions): MemoryEntry[] {
     const v2 = this.cfg.bulkReadV2;
 
+    // Step 0: Filter out irrelevant entries (never shown in bulk reads)
+    const irrelevantCount = rows.filter(r => r.irrelevant === 1).length;
+    const activeRows = rows.filter(r => r.irrelevant !== 1);
+
     // Step 1: Separate obsolete from non-obsolete FIRST
-    const obsoleteRows = rows.filter(r => r.obsolete === 1);
-    const nonObsoleteRows = rows.filter(r => r.obsolete !== 1);
+    const obsoleteRows = activeRows.filter(r => r.obsolete === 1);
+    const nonObsoleteRows = activeRows.filter(r => r.obsolete !== 1);
 
     // Step 2: Group NON-OBSOLETE by prefix (obsolete must not steal expansion slots)
     const byPrefix = new Map<string, any[]>();
@@ -538,47 +572,61 @@ export class HmemStore {
       else byPrefix.set(r.prefix, [r]);
     }
 
+    // Session cache: filter out already-seen entries completely
+    const suppressed = opts.suppressedIds ?? new Set<string>();
+    const hasCacheActive = suppressed.size > 0;
+
     // Step 3: Build expansion set from non-obsolete rows
     const expandedIds = new Set<string>();
 
-    // Per prefix: top N newest + top M most-accessed
+    // Mode-based ratios: essentials shifts weight from newest to most-accessed
+    const isEssentials = opts.mode === "essentials";
+    const totalSlots = v2.topNewestCount + v2.topAccessCount; // 8 by default
+    const baseNewest = isEssentials ? Math.max(1, Math.floor(v2.topNewestCount * 0.4)) : v2.topNewestCount;
+    const baseAccess = isEssentials ? totalSlots - baseNewest : v2.topAccessCount;
+
+    // Fibonacci-limited counts (when cache is active, use separate Fibonacci values)
+    const newestCount = (hasCacheActive && opts.maxNewNewest !== undefined)
+      ? opts.maxNewNewest : baseNewest;
+    const accessCount = (hasCacheActive && opts.maxNewAccess !== undefined)
+      ? opts.maxNewAccess : baseAccess;
+
+    // Per prefix: top N newest (sliding window) + top M most-accessed (backfill)
     for (const [, prefixRows] of byPrefix) {
-      // Newest (already sorted by effective_date DESC)
-      for (const r of prefixRows.slice(0, v2.topNewestCount)) {
+      // Newest: sliding window — only from unseen entries
+      const unseenRows = hasCacheActive
+        ? prefixRows.filter(r => !suppressed.has(r.id))
+        : prefixRows;
+      for (const r of unseenRows.slice(0, newestCount)) {
         expandedIds.add(r.id);
       }
-      // Most-accessed
-      const mostAccessed = [...prefixRows]
-        .filter(r => r.access_count > 0)
+
+      // Most-accessed: from unseen entries, excluding those already picked as newest.
+      // Minimum threshold: access_count >= 2 — a single access can be noise.
+      const mostAccessed = [...unseenRows]
+        .filter(r => r.access_count >= 2 && !expandedIds.has(r.id))
         .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
-        .slice(0, v2.topAccessCount);
+        .slice(0, accessCount);
       for (const r of mostAccessed) expandedIds.add(r.id);
     }
 
-    // Global: all favorites (from non-obsolete)
+    // Global: all unseen favorites
     for (const r of nonObsoleteRows) {
-      if (r.favorite === 1) expandedIds.add(r.id);
+      if (r.favorite === 1 && !suppressed.has(r.id)) {
+        expandedIds.add(r.id);
+      }
     }
 
-    // topAccess reference for promoted marker
+    // topAccess reference for promoted marker (time-weighted, min 2 accesses)
     const topAccess = [...nonObsoleteRows]
-      .filter(r => r.access_count > 0)
+      .filter(r => r.access_count >= 2)
       .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
       .slice(0, v2.topAccessCount);
 
-    let visibleObsolete: any[];
-    if (opts.showObsolete) {
-      visibleObsolete = obsoleteRows;
-    } else {
-      // Keep only top N most-accessed obsolete entries ("biggest mistakes")
-      visibleObsolete = [...obsoleteRows]
-        .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
-        .slice(0, v2.topObsoleteCount);
-    }
+    // Obsolete entries: only shown when explicitly requested
+    const visibleObsolete = opts.showObsolete ? obsoleteRows : [];
 
-    const hiddenObsoleteCount = obsoleteRows.length - visibleObsolete.length;
-
-    // Step 4: Only show expanded entries + visible obsolete (non-expanded are hidden from bulk output)
+    // Step 4: Show expanded entries + visible obsolete (cached entries completely hidden)
     const expandedNonObsolete = nonObsoleteRows.filter(r => expandedIds.has(r.id));
     const visibleRows = [...expandedNonObsolete, ...visibleObsolete];
     const visibleIds = new Set(visibleRows.map(r => r.id));
@@ -608,7 +656,7 @@ export class HmemStore {
             );
             const accessSet = new Set(
               [...allChildren]
-                .filter(c => c.access_count > 0)
+                .filter(c => c.access_count >= 2)
                 .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
                 .slice(0, v2.topAccessCount)
                 .map(c => c.id)
@@ -641,6 +689,8 @@ export class HmemStore {
       let children: MemoryNode[] | undefined;
       let linkedEntries: MemoryEntry[] | undefined;
       let hiddenChildrenCount: number | undefined;
+      let hiddenObsoleteLinks = 0;
+      let hiddenIrrelevantLinks = 0;
 
       if (isExpanded) {
         // Fetch all L2 children, then apply V2 selection (same params as L1)
@@ -671,12 +721,17 @@ export class HmemStore {
         // Resolve links — skip entries already visible in bulk read
         const links: string[] = r.links ? JSON.parse(r.links) : [];
         if (links.length > 0) {
-          linkedEntries = links.flatMap(linkId => {
+          const allLinked = links.flatMap(linkId => {
             if (visibleIds.has(linkId)) return []; // already shown in bulk read
             try {
               return this.read({ id: linkId, resolveLinks: false, linkDepth: 0 });
             } catch { return []; }
-          }).filter(e => !e.obsolete);
+          });
+          for (const e of allLinked) {
+            if (e.obsolete) hiddenObsoleteLinks++;
+            else if (e.irrelevant) hiddenIrrelevantLinks++;
+          }
+          linkedEntries = allLinked.filter(e => !e.obsolete && !e.irrelevant);
         }
       }
 
@@ -685,6 +740,8 @@ export class HmemStore {
       entry.expanded = isExpanded;
       if (hiddenChildrenCount !== undefined) entry.hiddenChildrenCount = hiddenChildrenCount;
       if (linkedEntries && linkedEntries.length > 0) entry.linkedEntries = linkedEntries;
+      if (hiddenObsoleteLinks > 0) entry.hiddenObsoleteLinks = hiddenObsoleteLinks;
+      if (hiddenIrrelevantLinks > 0) entry.hiddenIrrelevantLinks = hiddenIrrelevantLinks;
 
       return entry;
     });
@@ -782,7 +839,7 @@ export class HmemStore {
   /**
    * Update specific fields of an existing root entry (curator use only).
    */
-  update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite">>): boolean {
+  update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite" | "irrelevant">>): boolean {
     this.guardCorrupted();
     const sets: string[] = [];
     const params: any[] = [];
@@ -791,7 +848,7 @@ export class HmemStore {
       sets.push(`${key} = ?`);
       if (key === "links" && Array.isArray(val)) {
         params.push(JSON.stringify(val));
-      } else if (key === "obsolete" || key === "favorite") {
+      } else if (key === "obsolete" || key === "favorite" || key === "irrelevant") {
         params.push(val ? 1 : 0);
       } else {
         params.push(val);
@@ -824,7 +881,7 @@ export class HmemStore {
    * For sub-nodes: updates node content only.
    * Does NOT modify children — use appendChildren to extend the tree.
    */
-  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean): boolean {
+  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean): boolean {
     this.guardCorrupted();
     const trimmed = newContent.trim();
     if (id.includes(".")) {
@@ -835,7 +892,14 @@ export class HmemStore {
       if (trimmed.length > nodeLimit) {
         throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
       }
-      const result = this.db.prepare("UPDATE memory_nodes SET content = ?, title = ? WHERE id = ?").run(trimmed, this.autoExtractTitle(trimmed), id);
+      const sets = ["content = ?", "title = ?"];
+      const params: any[] = [trimmed, this.autoExtractTitle(trimmed)];
+      if (favorite !== undefined) {
+        sets.push("favorite = ?");
+        params.push(favorite ? 1 : 0);
+      }
+      params.push(id);
+      const result = this.db.prepare(`UPDATE memory_nodes SET ${sets.join(", ")} WHERE id = ?`).run(...params);
       return result.changes > 0;
     } else {
       // Root entry in memories — check L1 char limit
@@ -891,6 +955,10 @@ export class HmemStore {
       if (favorite !== undefined) {
         sets.push("favorite = ?");
         params.push(favorite ? 1 : 0);
+      }
+      if (irrelevant !== undefined) {
+        sets.push("irrelevant = ?");
+        params.push(irrelevant ? 1 : 0);
       }
       params.push(id);
       const result = this.db.prepare(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`).run(...params);
@@ -1210,7 +1278,7 @@ export class HmemStore {
     if (linkDepth > 0 && entry.links && entry.links.length > 0) {
       const visited = opts._visitedLinks ?? new Set<string>();
       visited.add(entry.id);
-      entry.linkedEntries = entry.links.flatMap(linkId => {
+      const allLinked = entry.links.flatMap(linkId => {
         if (visited.has(linkId)) return []; // cycle detected — skip
         try {
           return this.read({
@@ -1223,7 +1291,16 @@ export class HmemStore {
         } catch {
           return [];
         }
-      }).filter(e => !e.obsolete);
+      });
+      let hiddenObsolete = 0;
+      let hiddenIrrelevant = 0;
+      for (const e of allLinked) {
+        if (e.obsolete) hiddenObsolete++;
+        else if (e.irrelevant) hiddenIrrelevant++;
+      }
+      entry.linkedEntries = allLinked.filter(e => !e.obsolete && !e.irrelevant);
+      if (hiddenObsolete > 0) entry.hiddenObsoleteLinks = hiddenObsolete;
+      if (hiddenIrrelevant > 0) entry.hiddenIrrelevantLinks = hiddenIrrelevant;
     }
   }
 
@@ -1360,6 +1437,7 @@ export class HmemStore {
       created_at: row.created_at,
       access_count: row.access_count || 0,
       last_accessed: row.last_accessed || null,
+      favorite: row.favorite === 1 ? true : undefined,
       child_count: childCount,
     };
   }
@@ -1382,6 +1460,7 @@ export class HmemStore {
       min_role: row.min_role || "worker",
       obsolete: row.obsolete === 1,
       favorite: row.favorite === 1,
+      irrelevant: row.irrelevant === 1,
       children,
     };
   }

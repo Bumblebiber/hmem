@@ -2,8 +2,7 @@
 
 > AI agents forget everything when a session ends. hmem changes that.
 
-> **Beta:** hmem is functional and actively used in production, but APIs and file formats
-> may still change. Feedback and bug reports welcome. Also the parameters I chose need to be tested and tweaked.
+> hmem is actively used in production. APIs are stable since v2.0. Feedback and bug reports welcome.
 
 **hmem** is a Model Context Protocol (MCP) server that gives AI agents persistent, humanlike memory — modeled after how human memory actually works.
 
@@ -71,12 +70,13 @@ Each node gets a compound ID (`L0003.2.1`) so any branch is individually address
 Entries can be updated without deleting and recreating them:
 
 ```
-update_memory(id="L0003", content="Corrected L1 summary")
-update_memory(id="L0003.2", content="Fixed sub-node text")
+update_memory(id="L0003", content="Corrected L1 summary")   # update text
+update_memory(id="L0003", favorite=true)                     # toggle flag only
+update_memory(id="L0003.2", content="Fixed sub-node text")   # fix a sub-node
 append_memory(id="L0003", content="New finding\n\tSub-detail")
 ```
 
-`update_memory` replaces the text of a single node (children preserved). `append_memory` adds new child nodes to an existing entry.
+`update_memory` replaces the text of a single node (children preserved). Content is optional — pass only flags to toggle them without repeating the text. `append_memory` adds new child nodes to an existing entry.
 
 ### Obsolete Entries
 
@@ -104,13 +104,17 @@ A dedicated curator agent runs periodically to maintain memory health. It detect
 
 - **Hierarchical retrieval** — lazy loading of detail levels saves tokens
 - **True tree structure** — multiple siblings at the same depth (not just one chain)
+- **Compact output** — child IDs render as `.7` instead of `P0029.7`; dates shown only when differing from parent
 - **Persistent across sessions** — agents remember previous work even after restart
-- **Editable without deletion** — `update_memory` and `append_memory` modify entries in place
-- **Obsolete flag** — mark outdated entries as obsolete; hidden from bulk reads but still searchable — knowledge is never destroyed, only archived
-- **Favorite flag** — mark any entry as `[♥]` to always see it with L2 detail, regardless of category
-- **Access-count promotion** — the top-N most-accessed entries are automatically shown with L2 detail (`[★]`)
-- **Effective-date sorting** — entries with recent appends surface to the top (old P entries grow over time without losing their position)
-- **Token-efficient bulk reads** — only the most recent L2 child is shown in bulk reads, with a "+N more" hint
+- **Editable without deletion** — `update_memory` and `append_memory` modify entries in place; content is optional when toggling flags
+- **Markers** — `[♥]` favorite, `[!]` obsolete, `[-]` irrelevant, `[*]` active, `[s]` secret — on root entries and sub-nodes
+- **Obsolete chain resolution** — mark entries/sub-nodes obsolete with `[✓ID]` reference; `read_memory` auto-follows the chain to the current version
+- **Access-count promotion** — most-accessed entries get expanded automatically (`[★]`); most-referenced sub-nodes shown as "Hot Nodes"
+- **Session cache** — bulk reads suppress already-seen entries with Fibonacci decay; two modes: `discover` (newest-heavy) and `essentials` (importance-heavy)
+- **Active-prefix filtering** — mark entries as `[*]` active to focus bulk reads on what matters now; non-active entries still show as compact titles
+- **Secret entries** — `[s]` entries/nodes excluded from `export_memory`
+- **Titles & compact views** — auto-extracted titles; `titles_only` mode for table-of-contents view
+- **Effective-date sorting** — entries with recent appends surface to the top
 - **Per-agent memory** — each agent has its own `.hmem` file (SQLite)
 - **Skill-file driven** — agents are instructed via skill files, no hardcoded logic
 - **MCP-native** — works with Claude Code, Gemini CLI, OpenCode, and any MCP-compatible tool
@@ -134,7 +138,7 @@ That's it. The interactive installer will:
 
 After the installer finishes, restart your AI tool and call `read_memory()` to verify.
 
-> **Example memory:** The installer includes `hmem_developer.hmem` — a real `.hmem` database with 67 entries and 287 nodes from actual hmem development. It contains lessons learned, architecture decisions, error fixes, and project milestones — a great way to see how hmem works in practice before writing your own entries. You can explore it immediately with `read_memory()` after install, or browse it in the TUI viewer with `python3 hmem.py path/to/memory.hmem`.
+> **Example memory:** The installer includes `hmem_developer.hmem` — a real `.hmem` database with 67 entries and 287 nodes from actual hmem development. It contains lessons learned, architecture decisions, error fixes, and project milestones — a great way to see how hmem works in practice before writing your own entries. You can explore it immediately with `read_memory()` after install, or browse it in the TUI viewer with `python3 hmem-reader.py path/to/memory.hmem`.
 
 > **Don't forget the skill files!** The MCP server provides the tools (read_memory, write_memory, etc.), but the slash commands (`/hmem-save`, `/hmem-read`) require skill files to be copied to your tool's skills directory. See the [Skill Files](#skill-files) section below — it's a one-time copy-paste.
 >
@@ -271,10 +275,12 @@ done
 
 | Tool | Description |
 |------|-------------|
-| `read_memory` | Read hierarchical memories — L1 summaries or drill into any node by ID |
+| `read_memory` | Read memories — L1 summaries, drill by ID, filter by prefix, search by time |
 | `write_memory` | Save new memory entries with tab-indented hierarchy |
-| `update_memory` | Update the text of an existing entry or sub-node (children preserved) |
-| `append_memory` | Append new child nodes to an existing entry without overwriting it |
+| `update_memory` | Update text and/or flags of an entry or sub-node (content optional) |
+| `append_memory` | Append new child nodes to an existing entry or sub-node |
+| `export_memory` | Export all non-secret entries as text |
+| `reset_memory_cache` | Clear session cache so all entries are treated as unseen |
 | `search_memory` | Full-text search across all agent `.hmem` databases |
 
 ### Curator Tools (role: ceo)
@@ -342,11 +348,13 @@ Place an optional `hmem.config.json` in your `HMEM_PROJECT_DIR` to tune behavior
   "maxL1Chars": 120,
   "maxLnChars": 50000,
   "maxDepth": 5,
+  "maxTitleChars": 50,
   "accessCountTopN": 5,
-  "recentDepthTiers": [
-    { "count": 10, "depth": 2 },
-    { "count": 3,  "depth": 3 }
-  ],
+  "bulkReadV2": {
+    "topNewestCount": 5,
+    "topAccessCount": 3,
+    "topObsoleteCount": 3
+  },
   "prefixes": {
     "R": "Research"
   }
@@ -375,9 +383,9 @@ To add your own, add entries to the `"prefixes"` key in `hmem.config.json`. Cust
 Any entry can be marked as a **favorite** — regardless of its prefix category. Favorites always appear with their L2 detail in bulk reads, marked with `[♥]`.
 
 ```
-write_memory(prefix="D", content="...", favorite=true)     # set at creation
-update_memory(id="D0010", content="...", favorite=true)    # set on existing entry
-update_memory(id="D0010", content="...", favorite=false)   # clear the flag
+write_memory(prefix="D", content="...", favorite=true)   # set at creation
+update_memory(id="D0010", favorite=true)                 # set on existing entry
+update_memory(id="D0010", favorite=false)                # clear the flag
 ```
 
 Use favorites for reference info you need to see every session — key decisions, API endpoints, frequently consulted patterns. Use sparingly: if everything is a favorite, nothing is.
@@ -405,11 +413,16 @@ This means a 1-day-old entry with 5 accesses (score 3.16) outranks a 1-year-old 
 | **favorite flag** | Entries you know are important from day 1 — even with zero access history |
 | **accessCountTopN** | Entries that proved important over time — emerges from actual usage |
 
-### Token-efficient bulk reads
+### Bulk reads (V2 algorithm)
 
-In a default `read_memory()` call, each entry shows only its **most recently added** L2 child (with that child's timestamp). A `+N more` hint indicates when additional L2 nodes exist. This keeps the bulk output compact while remaining discoverable.
+`read_memory()` groups entries by prefix category. Each category expands a limited number of entries (newest + most-accessed + favorites) with their L2 children; the rest show only the L1 title. Two modes:
 
-To see all children of an entry, use `read_memory(id="P0005")`.
+- **`discover`** (default on first read): newest-heavy — good for getting an overview after session start.
+- **`essentials`** (auto-selected after context compression): importance-heavy — more favorites + most-accessed, fewer newest.
+
+A **session cache** tracks which entries were already shown. Subsequent bulk reads suppress seen entries with Fibonacci decay `[5,3,2,1,0]`, keeping output fresh without repetition. Use `reset_memory_cache` to clear the cache.
+
+To see all children of an entry, use `read_memory(id="P0005")`. For a deep dive with full content, use `read_memory(id="P0005", expand=true)`. For a compact table of contents, use `read_memory(titles_only=true)`.
 
 ### Effective-date sorting
 
@@ -433,43 +446,31 @@ With 5 depth levels this yields: `[120, 12780, 25440, 38120, 50000]`
 { "maxCharsPerLevel": [120, 2500, 10000, 25000, 50000] }
 ```
 
-### Recency gradient (`recentDepthTiers`)
+### Bulk read tuning (`bulkReadV2`)
 
-Controls how deep children are inlined for the most recent entries in a default `read_memory()` call. Each tier is `{ count, depth }`: the *count* most recent entries get children inlined up to *depth*.
-
-Tiers are cumulative — the **highest applicable depth wins** for each entry position.
+Controls how many entries are expanded in each category during a bulk read:
 
 ```json
-"recentDepthTiers": [
-  { "count": 3,  "depth": 3 },   // last 3 entries  → L1 + L2 + L3
-  { "count": 10, "depth": 2 }    // last 10 entries → L1 + L2
-]
+"bulkReadV2": {
+  "topNewestCount": 5,     // expand the 5 newest entries per prefix
+  "topAccessCount": 3,     // expand the 3 most-accessed per prefix
+  "topObsoleteCount": 3    // show up to 3 obsolete entries (by access count)
+}
 ```
 
-Result:
-| Entry position | Depth inlined |
-|---|---|
-| 0–2 (most recent) | L1 + L2 + L3 |
-| 3–9 | L1 + L2 |
-| 10+ | L1 only |
-
-This mirrors how human memory works: you remember today's events in full detail, last week's in outline, older ones only as headlines.
-
-Set to `[]` to disable recency inlining (L1-only for all entries).
-
-**Backward compat:** The old `"recentChildrenCount": N` key is still accepted and treated as `[{ "count": N, "depth": 2 }]`.
+Favorites are always expanded regardless of these limits. Entries expanded by one slot (e.g. newest) don't count against another (e.g. access).
 
 ---
 
-## TUI Viewer (hmem.py)
+## TUI Viewer (hmem-reader.py)
 
 A terminal-based interactive viewer for browsing `.hmem` memory files. Built with [Textual](https://textual.textualize.io/).
 
 ```bash
 pip install textual     # one-time dependency
-python3 hmem.py         # agent selection screen (scans Agents/ directory)
-python3 hmem.py THOR    # open a specific agent's memory
-python3 hmem.py ~/path/to/file.hmem  # open any .hmem file directly
+python3 hmem-reader.py         # agent selection screen (scans Agents/ directory)
+python3 hmem-reader.py THOR    # open a specific agent's memory
+python3 hmem-reader.py ~/path/to/file.hmem  # open any .hmem file directly
 ```
 
 **Keys:**
@@ -480,7 +481,7 @@ python3 hmem.py ~/path/to/file.hmem  # open any .hmem file directly
 | `q` | Quit |
 | `Escape` | Back to agent list |
 
-The V2 view mirrors the MCP server's bulk-read algorithm — including time-weighted access scoring, per-prefix selection, and favorite/promoted markers — so you can see exactly what an agent sees at session start.
+The V2 view mirrors the MCP server's bulk-read algorithm — including time-weighted access scoring, per-prefix selection, active-prefix filtering, and all markers (`[♥]`, `[!]`, `[*]`, `[s]`, `[-]`) — so you can see exactly what an agent sees at session start.
 
 ---
 

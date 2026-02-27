@@ -23,16 +23,11 @@ If the tool `read_memory` is not available, tell the user:
 
 ---
 
-## After loading — flag obviously outdated entries
+## After loading — proactive cleanup
 
-Scan the L1 summaries for entries that are clearly no longer valid today:
+Scan the L1 summaries and flag entries as you go:
 
-- Decisions describing something as "planned" or "not yet implemented" that has since been done
-- Error patterns for bugs that are fully resolved and superseded by a better approach
-- Project notes describing a state that no longer exists
-
-Mark them obsolete with a correction reference:
-
+**Mark obsolete** (entries that are clearly wrong today):
 ```
 # Step 1: Write the correction first
 write_memory(prefix="E", content="Correct approach is XYZ\n\tDetails...")  # → E0076
@@ -41,9 +36,17 @@ write_memory(prefix="E", content="Correct approach is XYZ\n\tDetails...")  # →
 update_memory(id="E0023", content="Wrong approach — see [✓E0076]", obsolete=true)
 ```
 
-**Rule:** Marking obsolete requires a `[✓ID]` correction reference in the content. Write the correction first, then mark the old entry. The system enforces this and creates bidirectional links automatically.
+**Mark irrelevant** (entries that are just noise — not wrong, but no longer useful):
+```
+update_memory(id="T0005", content="...", irrelevant=true)
+```
 
-**Exception:** If the entry is just stale (no correction needed), the curator can bypass this rule.
+**Mark favorites** (reference entries you need every session):
+```
+update_memory(id="S0001", content="...", favorite=true)
+```
+
+For a thorough review, use the `/hmem-self-curate` skill.
 
 ---
 
