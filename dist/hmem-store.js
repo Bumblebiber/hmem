@@ -537,7 +537,7 @@ export class HmemStore {
                         if (visibleIds.has(linkId))
                             return []; // already shown in bulk read
                         try {
-                            return this.read({ id: linkId, resolveLinks: false, linkDepth: 0 });
+                            return this.read({ id: linkId, resolveLinks: false, linkDepth: 0, followObsolete: false });
                         }
                         catch {
                             return [];
@@ -636,7 +636,10 @@ export class HmemStore {
         const byPrefix = {};
         for (const r of rows)
             byPrefix[r.prefix] = r.c;
-        return { total, byPrefix };
+        // Total characters across all entries + nodes (for token estimation)
+        const memChars = this.db.prepare("SELECT COALESCE(SUM(LENGTH(level_1)),0) as c FROM memories WHERE seq > 0").get().c;
+        const nodeChars = this.db.prepare("SELECT COALESCE(SUM(LENGTH(content)),0) as c FROM memory_nodes").get().c;
+        return { total, byPrefix, totalChars: memChars + nodeChars };
     }
     /**
      * Update specific fields of an existing root entry (curator use only).

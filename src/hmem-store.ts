@@ -724,7 +724,7 @@ export class HmemStore {
           const allLinked = links.flatMap(linkId => {
             if (visibleIds.has(linkId)) return []; // already shown in bulk read
             try {
-              return this.read({ id: linkId, resolveLinks: false, linkDepth: 0 });
+              return this.read({ id: linkId, resolveLinks: false, linkDepth: 0, followObsolete: false });
             } catch { return []; }
           });
           for (const e of allLinked) {
@@ -825,7 +825,7 @@ export class HmemStore {
   /**
    * Get statistics about the memory store.
    */
-  stats(): { total: number; byPrefix: Record<string, number> } {
+  stats(): { total: number; byPrefix: Record<string, number>; totalChars: number } {
     const total = (this.db.prepare("SELECT COUNT(*) as c FROM memories WHERE seq > 0").get() as any).c;
     const rows = this.db.prepare(
       "SELECT prefix, COUNT(*) as c FROM memories WHERE seq > 0 GROUP BY prefix"
@@ -833,7 +833,11 @@ export class HmemStore {
 
     const byPrefix: Record<string, number> = {};
     for (const r of rows) byPrefix[r.prefix] = r.c;
-    return { total, byPrefix };
+
+    // Total characters across all entries + nodes (for token estimation)
+    const memChars = (this.db.prepare("SELECT COALESCE(SUM(LENGTH(level_1)),0) as c FROM memories WHERE seq > 0").get() as any).c;
+    const nodeChars = (this.db.prepare("SELECT COALESCE(SUM(LENGTH(content)),0) as c FROM memory_nodes").get() as any).c;
+    return { total, byPrefix, totalChars: memChars + nodeChars };
   }
 
   /**

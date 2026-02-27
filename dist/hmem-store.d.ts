@@ -185,6 +185,7 @@ export declare class HmemStore {
     stats(): {
         total: number;
         byPrefix: Record<string, number>;
+        totalChars: number;
     };
     /**
      * Update specific fields of an existing root entry (curator use only).

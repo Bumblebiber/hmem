@@ -447,8 +447,13 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                 : "";
             // Mode info in header (only for bulk reads)
             const modeInfo = isBulkListing ? ` | Mode: ${effectiveMode}` : "";
+            // Token estimation: output tokens / total tokens
+            const outputTokens = Math.round(output.length / 4);
+            const totalTokens = Math.round(stats.totalChars / 4);
+            const fmtTok = (n) => n < 1000 ? String(n) : n < 10000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
+            const tokenInfo = ` | ${fmtTok(outputTokens)}/${fmtTok(totalTokens)} tokens`;
             const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
-                `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}${modeInfo}${cacheInfo}\n`;
+                `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}${modeInfo}${cacheInfo}${tokenInfo}\n`;
             log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole}${cacheInfo})`);
             return {
                 content: [{
