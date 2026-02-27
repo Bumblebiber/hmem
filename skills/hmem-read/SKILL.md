@@ -23,27 +23,28 @@ If the tool `read_memory` is not available, tell the user:
 
 ---
 
-## After loading — proactive cleanup
+## After loading — clean up what you see
 
-Scan the L1 summaries and flag entries as you go:
+**You MUST scan the L1 summaries and act immediately** when you spot stale entries.
+Do not defer this — marking entries takes seconds and keeps your memory useful.
 
-**Mark obsolete** (entries that are clearly wrong today):
+**Mark irrelevant** — entries that are noise, not wrong, just no longer useful:
+```
+update_memory(id="T0005", irrelevant=true)
+```
+
+**Mark obsolete** — entries that are factually wrong or superseded:
 ```
 # Step 1: Write the correction first
 write_memory(prefix="E", content="Correct approach is XYZ\n\tDetails...")  # → E0076
 
-# Step 2: Mark the old entry obsolete with [✓ID] tag
-update_memory(id="E0023", content="Wrong approach — see [✓E0076]", obsolete=true)
+# Step 2: Mark old entry obsolete with [✓ID] tag (content optional)
+update_memory(id="E0023", content="Wrong — see [✓E0076]", obsolete=true)
 ```
 
-**Mark irrelevant** (entries that are just noise — not wrong, but no longer useful):
+**Mark favorites** — reference entries you need every session:
 ```
-update_memory(id="T0005", content="...", irrelevant=true)
-```
-
-**Mark favorites** (reference entries you need every session):
-```
-update_memory(id="S0001", content="...", favorite=true)
+update_memory(id="S0001", favorite=true)
 ```
 
 For a thorough review, use the `/hmem-self-curate` skill.
