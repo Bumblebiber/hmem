@@ -38,10 +38,10 @@ def weighted_access_score(entry: dict) -> float:
     return ac / math.log2(age_days + 2)
 
 from textual.app import App, ComposeResult, Screen
-from textual.widgets import Tree, Header, Footer, ListView, ListItem, Label
+from textual.widgets import Tree, Header, Footer, ListView, ListItem, Label, Static
 from textual.binding import Binding
 
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = Path(__file__).resolve().parent / "Althing_CEO"
 
 # Built-in prefix labels — extended/overridden by hmem.config.json
 DEFAULT_PREFIX_LABELS = {
@@ -347,13 +347,14 @@ def add_node_to_tree(parent, node: dict, children_map: dict[str, list[dict]]):
     title = escape_markup(node_title(node))
     markers = node_markers(node)
     label = f"\\[{node['id']}]{markers} {title}"
+    content = node.get("content", "")
     children = children_map.get(node["id"], [])
     if children:
-        tree_node = parent.add(label)
+        tree_node = parent.add(label, data=content)
         for child in children:
             add_node_to_tree(tree_node, child, children_map)
     else:
-        parent.add_leaf(label)
+        parent.add_leaf(label, data=content)
 
 
 def entry_title(entry: dict) -> str:
@@ -408,14 +409,15 @@ def add_entry_to_tree(
     else:
         hidden = 0
 
+    content = entry.get("level_1", "")
     if children:
-        node = parent.add(label)
+        node = parent.add(label, data=content)
         for child in children:
             add_node_to_tree(node, child, children_map)
         if hidden > 0:
             node.add_leaf(f"\\[+{hidden} more → {entry['id']}]")
     else:
-        parent.add_leaf(label)
+        parent.add_leaf(label, data=content)
 
 
 # ── Memory detail screen ───────────────────────────────────────────────────
@@ -429,7 +431,16 @@ class MemoryScreen(Screen):
         Binding("c", "collapse_all", "Collapse all"),
         Binding("r", "toggle_v2", "V2 Read"),
     ]
-    CSS = "Tree { height: 1fr; padding: 0 1; }"
+    CSS = """
+        Tree { height: 1fr; padding: 0 1; }
+        #detail {
+            height: 7;
+            border-top: solid $primary;
+            padding: 0 1;
+            overflow-y: auto;
+            color: $text-muted;
+        }
+    """
 
     def __init__(self, agent_name: str, db_path: Path):
         super().__init__()
@@ -440,10 +451,15 @@ class MemoryScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Tree(self.agent_name)
+        yield Static("", id="detail")
         yield Footer()
 
     def on_mount(self):
         self.rebuild_tree()
+
+    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        content = event.node.data or ""
+        self.query_one("#detail", Static).update(escape_markup(content))
 
     def action_toggle_v2(self):
         self.v2_mode = not self.v2_mode
