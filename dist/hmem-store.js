@@ -1143,6 +1143,14 @@ export class HmemStore {
                 sets.push("irrelevant = ?");
                 params.push(irrelevant ? 1 : 0);
             }
+            if (sets.length === 0) {
+                // Only tags to update — no SQL UPDATE needed
+                if (tags !== undefined) {
+                    this.setTags(id, tags.length > 0 ? this.validateTags(tags) : []);
+                    return true;
+                }
+                return false;
+            }
             params.push(id);
             const result = this.db.prepare(`UPDATE memory_nodes SET ${sets.join(", ")} WHERE id = ?`).run(...params);
             if (result.changes > 0 && tags !== undefined) {
@@ -1210,6 +1218,14 @@ export class HmemStore {
             if (pinned !== undefined) {
                 sets.push("pinned = ?");
                 params.push(pinned ? 1 : 0);
+            }
+            if (sets.length === 0) {
+                // Only tags to update — no SQL UPDATE needed
+                if (tags !== undefined) {
+                    this.setTags(id, tags.length > 0 ? this.validateTags(tags) : []);
+                    return true;
+                }
+                return false;
             }
             params.push(id);
             const result = this.db.prepare(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`).run(...params);
