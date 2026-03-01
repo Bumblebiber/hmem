@@ -115,6 +115,7 @@ server.tool("search_memory", "Searches the collective memory: agent memories (le
 // ---- Humanlike Memory (.hmem) ----
 const prefixList = formatPrefixList(hmemConfig.prefixes);
 const prefixKeys = Object.keys(hmemConfig.prefixes);
+const REMINDER_HINT = "\nACTION: Scan the entries above. Mark stale/noise as irrelevant, important ones as favorite, wrong ones as obsolete. Do it NOW — don't just note it.\n  update_memory(id=\"X\", irrelevant=true)  — hide noise\n  update_memory(id=\"X\", favorite=true)    — pin important\n  update_memory(id=\"X\", content=\"Wrong — see [✓correctionId]\", obsolete=true)  — correct mistakes";
 server.tool("write_memory", "Write a new memory entry to your hierarchical long-term memory (.hmem). " +
     "Use tab indentation to create depth levels:\n" +
     "  Level 1: No indentation — the rough summary (always visible at startup)\n" +
@@ -135,9 +136,13 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
     links: z.array(z.string()).optional().describe("Optional: IDs of related memories, e.g. ['P0001', 'L0005']"),
     favorite: z.boolean().optional().describe("Mark this entry as a favorite — shown with [♥] in bulk reads and always inlined with L2 detail. " +
         "Use for reference info you need to see every session, regardless of category."),
+    tags: z.array(z.string()).optional().describe("Optional hashtags for cross-cutting search, e.g. ['#hmem', '#curation']. " +
+        "Max 10, lowercase, must start with #. Shown after title in reads."),
+    pinned: z.boolean().optional().describe("Mark this entry as pinned [P] (super-favorite). Pinned entries show full L2 content in bulk reads. " +
+        "Use for reference entries you need to see in full every session."),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
     min_role: z.enum(["worker", "al", "pl", "ceo"]).default("worker").describe("Minimum role to see this entry"),
-}, async ({ prefix, content, links, favorite, store: storeName, min_role: minRole }) => {
+}, async ({ prefix, content, links, favorite, tags, pinned, store: storeName, min_role: minRole }) => {
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker");
     const isFirstTime = !AGENT_ID && !fs.existsSync(resolveHmemPath(PROJECT_DIR, ""));
@@ -166,7 +171,7 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
                 };
             }
             const effectiveMinRole = storeName === "company" ? minRole : "worker";
-            const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite);
+            const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite, tags, pinned);
             const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
             log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix}, min_role=${effectiveMinRole})`);
             const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
@@ -214,10 +219,14 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
         "Requires [✓ID] correction reference in content (e.g. 'Wrong — see [✓E0076]')."),
     favorite: z.boolean().optional().describe("Set or clear the [♥] favorite flag. Works on root entries and sub-nodes. " +
         "Root favorites are always shown with L2 detail in bulk reads."),
-    irrelevant: z.boolean().optional().describe("Mark this root entry as irrelevant [-] (root entries only). " +
-        "No correction entry needed (unlike obsolete). Irrelevant entries are hidden from bulk reads."),
+    irrelevant: z.boolean().optional().describe("Mark as irrelevant [-]. Works on root entries and sub-nodes. " +
+        "No correction entry needed (unlike obsolete). Irrelevant entries/nodes are hidden from output."),
+    tags: z.array(z.string()).optional().describe("Set tags on this entry/node. Replaces all existing tags. " +
+        "Pass empty array [] to remove all tags. E.g. ['#hmem', '#curation']."),
+    pinned: z.boolean().optional().describe("Set or clear the [P] pinned flag (root entries only). " +
+        "Pinned entries show full L2 content in bulk reads (super-favorite)."),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
-}, async ({ id, content, links, obsolete, favorite, irrelevant, store: storeName }) => {
+}, async ({ id, content, links, obsolete, favorite, irrelevant, tags, pinned, store: storeName }) => {
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker");
     if (storeName === "company") {
@@ -240,7 +249,7 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                     isError: true,
                 };
             }
-            const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant);
+            const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant, tags, pinned);
             const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
             log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${irrelevant ? " (marked irrelevant)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}`);
             if (!ok) {
@@ -262,6 +271,12 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                 parts.push("marked as [♥] favorite");
             if (favorite === false)
                 parts.push("favorite flag cleared");
+            if (pinned === true)
+                parts.push("marked as [P] pinned");
+            if (pinned === false)
+                parts.push("pinned flag cleared");
+            if (tags !== undefined)
+                parts.push(tags.length > 0 ? `tags: ${tags.join(" ")}` : "tags cleared");
             return { content: [{ type: "text", text: parts.join(" | ") }] };
         }
         finally {
@@ -379,7 +394,11 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
         "Auto-selected if omitted: first bulk read → discover, subsequent → essentials."),
     store: z.enum(["personal", "company"]).default("personal").describe("Source store: 'personal' or 'company'"),
     curator: z.boolean().optional().describe("Set true to show full metadata (access counts, roles, dates). For curators only."),
-}, async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator }) => {
+    show_all: z.boolean().optional().describe("Curation mode: show ALL entries of the selected prefix with depth 3 children. " +
+        "Bypasses V2 selection and session cache. Use with prefix filter for manageable output."),
+    tag: z.string().optional().describe("Filter by hashtag, e.g. '#hmem'. Only entries with this tag are shown in bulk reads. " +
+        "Also works with search to find tagged entries."),
+}, async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator, show_all, tag }) => {
     if (AGENT_ID === "UNKNOWN") {
         return {
             content: [{ type: "text", text: "ERROR: Agent-ID unknown. read_memory is only available for spawned agents." }],
@@ -397,12 +416,12 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                 ? "⚠ WARNING: Memory database is corrupted! Reads may be incomplete. A backup (.corrupt) was saved.\n\n"
                 : "";
             const effectiveDepth = depth || (id ? 2 : 1);
-            // Session cache: apply sliding window for bulk reads (personal store only)
+            // Session cache: cached entries shown as titles in subsequent bulk reads
             const isBulkListing = !id && !search && !time_around;
-            const useCache = isBulkListing && storeName === "personal";
-            const suppressedIds = useCache ? sessionCache.getSuppressedIds() : undefined;
-            const maxNewNewest = useCache ? sessionCache.getNewestSlotCount() : undefined;
-            const maxNewAccess = useCache ? sessionCache.getAccessSlotCount() : undefined;
+            const useCache = isBulkListing && storeName === "personal" && !show_all;
+            const cachedIds = useCache ? sessionCache.getCachedIds() : undefined;
+            const hiddenIds = useCache ? sessionCache.getHiddenIds() : undefined;
+            const slotFraction = useCache ? sessionCache.getSlotFraction() : undefined;
             // Auto-select mode: first bulk read → discover, subsequent → essentials
             const effectiveMode = mode ?? (useCache && sessionCache.readCount > 0 ? "essentials" : "discover");
             const entries = hmemStore.read({
@@ -414,10 +433,12 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                 showObsoletePath: show_obsolete_path,
                 titlesOnly: titles_only,
                 expand,
-                suppressedIds,
-                maxNewNewest,
-                maxNewAccess,
+                cachedIds,
+                hiddenIds,
+                slotFraction,
+                showAll: show_all,
                 mode: isBulkListing ? effectiveMode : undefined,
+                tag,
             });
             if (entries.length === 0) {
                 const hint = id ? `No memory with ID "${id}".` :
@@ -442,8 +463,10 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             const storeLabel = storeName === "company" ? "company" : templateName;
             const visibleCount = entries.length;
             // Cache status in header (when active)
+            const hiddenCount = hiddenIds?.size ?? 0;
+            const cachedCount = cachedIds?.size ?? 0;
             const cacheInfo = useCache && sessionCache.size > 0
-                ? ` | Cache: ${sessionCache.size} seen`
+                ? ` | Cache: ${sessionCache.size} seen` + (hiddenCount > 0 ? ` (${hiddenCount} hidden)` : "")
                 : "";
             // Mode info in header (only for bulk reads)
             const modeInfo = isBulkListing ? ` | Mode: ${effectiveMode}` : "";
@@ -458,7 +481,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             return {
                 content: [{
                         type: "text",
-                        text: corruptionWarning + header + "\n" + output,
+                        text: corruptionWarning + header + "\n" + output + REMINDER_HINT,
                     }],
             };
         }
@@ -491,6 +514,82 @@ server.tool("reset_memory_cache", "Clear the session cache so all entries are tr
                     `Next read_memory() will return the full first-read selection.`,
             }],
     };
+});
+// ---- Export Memory ----
+server.tool("export_memory", "Export your memory, excluding secret entries and secret sub-nodes. " +
+    "Use for sharing, backup, or publishing a sanitized version of your memory.", {
+    store: z.enum(["personal", "company"]).default("personal").describe("Source store: 'personal' (your own memory) or 'company' (shared company store)"),
+    format: z.enum(["text", "hmem"]).default("text").describe("Export format: 'text' = Markdown (returned inline), " +
+        "'hmem' = SQLite .hmem file (written to disk)"),
+    output_path: z.string().optional().describe("Output path for 'hmem' format. Default: export.hmem next to the source file. " +
+        "Ignored for 'text' format."),
+}, async ({ store: storeName, format, output_path }) => {
+    try {
+        const hmemStore = storeName === "company"
+            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        try {
+            if (format === "hmem") {
+                const defaultPath = path.join(path.dirname(hmemStore.getDbPath()), "export.hmem");
+                const outPath = output_path || defaultPath;
+                const result = hmemStore.exportPublicToHmem(outPath);
+                return { content: [{ type: "text", text: `Exported to ${outPath}\n${result.entries} entries, ${result.nodes} nodes, ${result.tags} tags` }] };
+            }
+            else {
+                const output = hmemStore.exportMarkdown();
+                return { content: [{ type: "text", text: output }] };
+            }
+        }
+        finally {
+            hmemStore.close();
+        }
+    }
+    catch (e) {
+        return {
+            content: [{ type: "text", text: `ERROR: ${e}` }],
+            isError: true,
+        };
+    }
+});
+// ---- Import Memory ----
+server.tool("import_memory", "Import entries from a .hmem file into your memory. " +
+    "Deduplicates by L1 content (merges sub-nodes), remaps IDs on conflict.", {
+    source_path: z.string().describe("Path to .hmem file to import"),
+    store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' (your own memory) or 'company' (shared company store)"),
+    dry_run: z.boolean().default(false).describe("Preview only — report what would happen without modifying the database"),
+}, async ({ source_path, store: storeName, dry_run }) => {
+    try {
+        const hmemStore = storeName === "company"
+            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        try {
+            const result = hmemStore.importFromHmem(source_path, dry_run);
+            const mode = dry_run ? "preview" : "imported";
+            log(`import_memory: ${mode} from ${source_path} (${result.inserted} new, ${result.merged} merged)`);
+            const lines = [];
+            lines.push(dry_run
+                ? `Import preview from ${source_path}:`
+                : `Imported from ${source_path}:`);
+            lines.push(`  ${result.inserted} entries ${dry_run ? "to insert" : "inserted"}`);
+            lines.push(`  ${result.merged} entries ${dry_run ? "to merge" : "merged"} (L1 match)`);
+            lines.push(`  ${result.nodesInserted} nodes ${dry_run ? "to insert" : "inserted"}`);
+            lines.push(`  ${result.nodesSkipped} nodes skipped (duplicate L2)`);
+            lines.push(`  ${result.tagsImported} tags ${dry_run ? "to import" : "imported"}`);
+            if (result.remapped) {
+                lines.push(`  ID remapping ${dry_run ? "required" : "applied"} (${result.conflicts} conflicts)`);
+            }
+            return { content: [{ type: "text", text: lines.join("\n") }] };
+        }
+        finally {
+            hmemStore.close();
+        }
+    }
+    catch (e) {
+        return {
+            content: [{ type: "text", text: `ERROR: ${e}` }],
+            isError: true,
+        };
+    }
 });
 // ---- Curator Tools (ceo role only) ----
 const AUDIT_STATE_FILE = process.env.HMEM_AUDIT_STATE_PATH
@@ -844,6 +943,12 @@ server.tool("mark_audited", "CURATOR ONLY (ceo role). Mark an agent as audited (
  * V2 selection applies. Favorites/top-accessed show L2 children titles.
  * Non-expanded entries show (N) child count indicator.
  */
+/** Format tags as a compact suffix: "  #hmem #curation" or "" if no tags. */
+function formatTagSuffix(tags) {
+    if (!tags || tags.length === 0)
+        return "";
+    return "  " + tags.join(" ");
+}
 function formatTitlesOnly(entries, config) {
     const CHILD_TITLE_LEN = 50;
     const lines = [];
@@ -864,9 +969,11 @@ function formatTitlesOnly(entries, config) {
             const obs = e.obsolete ? " [!]" : "";
             const irr = e.irrelevant ? " [-]" : "";
             if (e.expanded && e.children && e.children.length > 0) {
+                const visibleChildren = e.children.filter(c => !c.irrelevant);
+                const hiddenIrr = e.children.length - visibleChildren.length;
                 // Expanded entry (favorite/top-accessed): show with L2 children
-                lines.push(`${e.id} ${mmdd}${fav}${obs}  ${e.title}`);
-                for (const child of e.children) {
+                lines.push(`${e.id} ${mmdd}${fav}${obs}  ${e.title}${formatTagSuffix(e.tags)}`);
+                for (const child of visibleChildren) {
                     const short = child.title || (child.content.length > CHILD_TITLE_LEN
                         ? child.content.substring(0, CHILD_TITLE_LEN)
                         : child.content);
@@ -877,11 +984,14 @@ function formatTitlesOnly(entries, config) {
                 if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
                     lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
                 }
+                if (hiddenIrr > 0) {
+                    lines.push(`  (+${hiddenIrr} irrelevant hidden)`);
+                }
             }
             else {
                 // Non-expanded: compact line with child count
                 const childHint = (e.hiddenChildrenCount ?? 0) > 0 ? ` (${e.hiddenChildrenCount})` : "";
-                lines.push(`${e.id} ${mmdd}${fav}${obs}  ${e.title}${childHint}`);
+                lines.push(`${e.id} ${mmdd}${fav}${obs}  ${e.title}${formatTagSuffix(e.tags)}${childHint}`);
             }
         }
         lines.push("");
@@ -942,19 +1052,22 @@ function formatFlatOutput(entries, curator, expand = false) {
     return lines.join("\n");
 }
 /** Favorite marker for child nodes. */
-function nodeFav(node) {
-    return node.favorite ? " [♥]" : "";
+function nodeMarkers(node) {
+    const fav = node.favorite ? " [♥]" : "";
+    const irr = node.irrelevant ? " [-]" : "";
+    return `${fav}${irr}`;
 }
 function renderEntryFormatted(lines, e, curator, expand = false) {
     const isNode = e.id.includes(".");
     const hasDetail = !!(e.children?.length || e.linkedEntries?.length);
+    const tagStr = formatTagSuffix(e.tags);
     // Headline: use title for navigation, show full content below when drilling in
     if (isNode) {
         if (curator) {
-            lines.push(`[${e.id}] ${e.title}`);
+            lines.push(`[${e.id}] ${e.title}${tagStr}`);
         }
         else {
-            lines.push(`${e.id}  ${e.title}`);
+            lines.push(`${e.id}  ${e.title}${tagStr}`);
         }
         // Node drilldown: show full content below title
         if (hasDetail && e.level_1 !== e.title) {
@@ -964,50 +1077,56 @@ function renderEntryFormatted(lines, e, curator, expand = false) {
     else {
         if (curator) {
             const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
+            const pinnedTag = e.pinned ? " [P]" : "";
             const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
             const irrelevantTag = e.irrelevant ? " [- IRRELEVANT]" : "";
             const date = e.created_at.substring(0, 10);
             const accessed = e.access_count > 0 ? ` (${e.access_count}x accessed)` : "";
             const roleTag = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
-            lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${obsoleteTag}${irrelevantTag}${accessed}`);
-            lines.push(`  ${e.title}`);
+            lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${pinnedTag}${obsoleteTag}${irrelevantTag}${accessed}`);
+            lines.push(`  ${e.title}${tagStr}`);
         }
         else {
             const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
+            const pinnedTag = e.pinned ? " [P]" : "";
             const obsoleteTag = e.obsolete ? " [!]" : "";
             const irrelevantTag = e.irrelevant ? " [-]" : "";
             const mmdd = e.created_at.substring(5, 10);
-            lines.push(`${e.id} ${mmdd}${promotedTag}${obsoleteTag}${irrelevantTag}  ${e.title}`);
+            lines.push(`${e.id} ${mmdd}${promotedTag}${pinnedTag}${obsoleteTag}${irrelevantTag}  ${e.title}${tagStr}`);
         }
         // Show full level_1 content below title when entry is expanded/drilled
         if (hasDetail && e.level_1 !== e.title) {
             lines.push(`  ${e.level_1}`);
         }
     }
-    // Children
+    // Children — filter out irrelevant nodes
     if (e.children && e.children.length > 0) {
+        const visibleChildren = e.children.filter(c => !c.irrelevant);
+        const hiddenIrrelevant = e.children.length - visibleChildren.length;
         if (expand) {
             // Expand mode: full content + recursive children
-            renderChildrenExpanded(lines, e.children, curator);
+            renderChildrenExpanded(lines, visibleChildren, curator);
         }
         else if (e.expanded && !expand) {
-            renderChildrenFormatted(lines, e.children, curator);
+            renderChildrenFormatted(lines, visibleChildren, curator);
             if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
                 lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
             }
         }
         else if (e.hiddenChildrenCount !== undefined) {
-            // Non-expanded bulk read: show only the latest child title
-            const child = e.children[0];
-            const fav = nodeFav(child);
-            const hint = (child.child_count ?? 0) > 0
-                ? `  [+${child.child_count} → ${child.id}]`
-                : "";
-            if (curator) {
-                lines.push(`  [${child.id}]${fav} ${child.title}${hint}`);
-            }
-            else {
-                lines.push(`  ${child.id}${fav}  ${child.title}${hint}`);
+            // Non-expanded bulk read: show only the latest visible child title
+            const child = visibleChildren[0];
+            if (child) {
+                const fav = nodeMarkers(child);
+                const hint = (child.child_count ?? 0) > 0
+                    ? `  [+${child.child_count} → ${child.id}]`
+                    : "";
+                if (curator) {
+                    lines.push(`  [${child.id}]${fav} ${child.title}${hint}`);
+                }
+                else {
+                    lines.push(`  ${child.id}${fav}  ${child.title}${hint}`);
+                }
             }
             if (e.hiddenChildrenCount > 0) {
                 lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
@@ -1015,7 +1134,10 @@ function renderEntryFormatted(lines, e, curator, expand = false) {
         }
         else {
             // ID-based read: show all direct children as titles
-            renderChildrenFormatted(lines, e.children, curator);
+            renderChildrenFormatted(lines, visibleChildren, curator);
+        }
+        if (hiddenIrrelevant > 0) {
+            lines.push(`  (+${hiddenIrrelevant} irrelevant hidden)`);
         }
     }
     // Links
@@ -1049,9 +1171,17 @@ function renderEntryFormatted(lines, e, curator, expand = false) {
                     const hint = (lchild.child_count ?? 0) > 0
                         ? ` (${lchild.child_count} ${lchild.child_count === 1 ? "child" : "children"} — use id="${lchild.id}" to expand)`
                         : "";
-                    lines.push(`    [${lchild.id}]${nodeFav(lchild)} ${lchild.title}${hint}`);
+                    lines.push(`    [${lchild.id}]${nodeMarkers(lchild)} ${lchild.title}${hint}`);
                 }
             }
+        }
+    }
+    // Related entries (shared tags)
+    if (e.relatedEntries && e.relatedEntries.length > 0) {
+        lines.push(`  --- Related (shared tags) ---`);
+        for (const rel of e.relatedEntries) {
+            const rmmdd = rel.created_at.substring(5, 10);
+            lines.push(`  ${rel.id} ${rmmdd}  ${rel.title}${formatTagSuffix(rel.tags)}`);
         }
     }
     lines.push("");
@@ -1063,15 +1193,16 @@ function renderEntryFormatted(lines, e, curator, expand = false) {
 function renderChildrenFormatted(lines, children, curator) {
     for (const child of children) {
         const indent = "  ".repeat(child.depth - 1);
-        const fav = nodeFav(child);
+        const fav = nodeMarkers(child);
+        const ctags = formatTagSuffix(child.tags);
         const hint = (child.child_count ?? 0) > 0
             ? `  [+${child.child_count} → ${child.id}]`
             : "";
         if (curator) {
-            lines.push(`${indent}[${child.id}]${fav} ${child.title}${hint}`);
+            lines.push(`${indent}[${child.id}]${fav} ${child.title}${ctags}${hint}`);
         }
         else {
-            lines.push(`${indent}${child.id}${fav}  ${child.title}${hint}`);
+            lines.push(`${indent}${child.id}${fav}  ${child.title}${ctags}${hint}`);
         }
         // Don't recurse into grandchildren — titles only, drill for content
     }
@@ -1085,8 +1216,9 @@ function renderChildrenFormatted(lines, children, curator) {
 function renderChildrenExpanded(lines, children, curator) {
     for (const child of children) {
         const indent = "  ".repeat(child.depth - 1);
-        const fav = nodeFav(child);
-        const hasLoadedChildren = child.children && child.children.length > 0;
+        const fav = nodeMarkers(child);
+        const visibleGrandchildren = child.children?.filter(c => !c.irrelevant);
+        const hasLoadedChildren = visibleGrandchildren && visibleGrandchildren.length > 0;
         const isBoundary = !hasLoadedChildren && (child.child_count ?? 0) > 0;
         if (hasLoadedChildren) {
             // Inner node: full content + recurse
@@ -1096,7 +1228,7 @@ function renderChildrenExpanded(lines, children, curator) {
             else {
                 lines.push(`${indent}${child.id}${fav}  ${child.content}`);
             }
-            renderChildrenExpanded(lines, child.children, curator);
+            renderChildrenExpanded(lines, visibleGrandchildren, curator);
         }
         else if (isBoundary) {
             // Boundary: title only + child count hint

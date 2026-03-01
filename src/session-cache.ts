@@ -1,77 +1,59 @@
 /**
  * Session Cache — tracks which memory entries were delivered to an agent
- * within the current MCP session. Prevents showing the same entries twice.
+ * within the current MCP session.
  *
- * Two lists with different TTLs:
- *   List A (normal entries): long TTL (default 30 min)
- *   List B (favorites + most-accessed): shorter TTL — more important, resurface sooner
+ * Three-phase lifecycle per entry:
+ *   1. Hidden (< 5 min):    completely excluded from output
+ *   2. Title-only (5–30 min): shown as compact one-liner, no expansion
+ *   3. Expired (> 30 min):   removed from cache, can be expanded again
  *
- * Fibonacci-like decay for successive bulk reads:
- *   Read 1: 5 newest + 3 most-accessed per prefix
- *   Read 2: 3 newest + 2 most-accessed
- *   Read 3: 2 newest + 1 most-accessed
- *   Read 4: 1 newest + 1 most-accessed
- *   Read 5+: 0 → nothing new until TTL expires
+ * Promoted entries (favorites/most-accessed) have a shorter main TTL (15 min).
  *
- * Already-delivered entries are completely hidden (not shown as [cached]).
+ * Slot reduction: each successive bulk read halves the expansion percentage
+ * (20% → 10% → 5% → ...). The min caps in config prevent it from hitting zero.
  */
 
-export interface SessionCacheConfig {
-  /** TTL for normal entries in ms (default: 30 min). */
-  ttlNormal: number;
-  /** TTL for promoted entries (favorites + most-accessed) in ms (default: 15 min). */
-  ttlPromoted: number;
-  /** Fibonacci-like sequence for newest entries per prefix per bulk read. */
-  fibNewest: number[];
-  /** Fibonacci-like sequence for most-accessed entries per prefix per bulk read. */
-  fibAccess: number[];
-}
-
-const DEFAULT_SESSION_CACHE_CONFIG: SessionCacheConfig = {
-  ttlNormal: 30 * 60 * 1000,     // 30 min
-  ttlPromoted: 15 * 60 * 1000,   // 15 min
-  fibNewest: [5, 3, 2, 1, 0],
-  fibAccess: [3, 2, 1, 1, 0],
-};
-
 interface CacheEntry {
-  deliveredAt: number;  // Date.now() when first delivered
-  promoted: boolean;    // true = favorite/most-accessed → shorter TTL
+  deliveredAt: number;
+  promoted: boolean;
 }
 
 export class SessionCache {
   private cache = new Map<string, CacheEntry>();
-  private bulkReadCount = 0;
-  private cfg: SessionCacheConfig;
+  private bulkReads = 0;
+  private ttlHidden = 5 * 60 * 1000;      // 5 min — completely hidden
+  private ttlNormal = 30 * 60 * 1000;     // 30 min — title-only → expired
+  private ttlPromoted = 15 * 60 * 1000;   // 15 min — promoted title-only → expired
 
-  constructor(config?: Partial<SessionCacheConfig>) {
-    this.cfg = { ...DEFAULT_SESSION_CACHE_CONFIG, ...config };
-  }
-
-  /**
-   * Get the set of entry IDs that should be hidden
-   * because they were already delivered in a previous bulk read.
-   * Expired entries are pruned first.
-   */
-  getSuppressedIds(): Set<string> {
+  /** Entries past hidden phase but within main TTL — shown as title-only. */
+  getCachedIds(): Set<string> {
     this.prune();
-    return new Set(this.cache.keys());
+    const now = Date.now();
+    const result = new Set<string>();
+    for (const [id, entry] of this.cache) {
+      if (now - entry.deliveredAt >= this.ttlHidden) {
+        result.add(id);
+      }
+    }
+    return result;
   }
 
-  /**
-   * How many newest entries per prefix to show in the current bulk read.
-   */
-  getNewestSlotCount(): number {
-    const seq = this.cfg.fibNewest;
-    return seq[Math.min(this.bulkReadCount, seq.length - 1)];
+  /** Entries within hidden phase (< 5 min) — completely excluded from output. */
+  getHiddenIds(): Set<string> {
+    this.prune();
+    const now = Date.now();
+    const result = new Set<string>();
+    for (const [id, entry] of this.cache) {
+      if (now - entry.deliveredAt < this.ttlHidden) {
+        result.add(id);
+      }
+    }
+    return result;
   }
 
-  /**
-   * How many most-accessed entries per prefix to show in the current bulk read.
-   */
-  getAccessSlotCount(): number {
-    const seq = this.cfg.fibAccess;
-    return seq[Math.min(this.bulkReadCount, seq.length - 1)];
+  /** Slot reduction factor: 1.0 → 0.5 → 0.25 → ... (halves each read). */
+  getSlotFraction(): number {
+    return Math.pow(0.5, this.bulkReads);
   }
 
   /**
@@ -81,22 +63,22 @@ export class SessionCache {
    * @param entryIds - All entry IDs included in the bulk read output
    * @param promotedIds - Subset that are favorites or most-accessed (shorter TTL)
    */
-  registerDelivered(entryIds: string[], promotedIds: Set<string>): void {
+  registerDelivered(entryIds: string[], promotedIds?: Set<string>): void {
     const now = Date.now();
     for (const id of entryIds) {
       if (!this.cache.has(id)) {
         this.cache.set(id, {
           deliveredAt: now,
-          promoted: promotedIds.has(id),
+          promoted: promotedIds?.has(id) ?? false,
         });
       }
     }
-    this.bulkReadCount++;
+    this.bulkReads++;
   }
 
   /** Current bulk read number (0-based). */
   get readCount(): number {
-    return this.bulkReadCount;
+    return this.bulkReads;
   }
 
   /** Number of entries currently in the cache. */
@@ -110,14 +92,14 @@ export class SessionCache {
    */
   reset(): void {
     this.cache.clear();
-    this.bulkReadCount = 0;
+    this.bulkReads = 0;
   }
 
-  /** Remove expired entries. */
+  /** Remove expired entries (past main TTL). */
   private prune(): void {
     const now = Date.now();
     for (const [id, entry] of this.cache) {
-      const ttl = entry.promoted ? this.cfg.ttlPromoted : this.cfg.ttlNormal;
+      const ttl = entry.promoted ? this.ttlPromoted : this.ttlNormal;
       if (now - entry.deliveredAt > ttl) {
         this.cache.delete(id);
       }

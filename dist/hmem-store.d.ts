@@ -75,6 +75,17 @@ export interface MemoryEntry {
     hiddenIrrelevantLinks?: number;
     /** If this entry was reached via obsolete chain resolution, the chain of IDs traversed. */
     obsoleteChain?: string[];
+    /** Optional hashtags for cross-cutting search, e.g. ["#hmem", "#curation"]. */
+    tags?: string[];
+    /** Entries sharing 2+ tags with this entry (populated on ID-based reads). */
+    relatedEntries?: {
+        id: string;
+        title: string;
+        created_at: string;
+        tags: string[];
+    }[];
+    /** True if the entry is pinned (super-favorite). Pinned entries show full L2 content in bulk reads. */
+    pinned?: boolean;
 }
 export interface MemoryNode {
     id: string;
@@ -89,8 +100,11 @@ export interface MemoryNode {
     access_count: number;
     last_accessed: string | null;
     favorite?: boolean;
+    irrelevant?: boolean;
     child_count?: number;
     children?: MemoryNode[];
+    /** Optional hashtags, e.g. ["#hmem", "#curation"]. */
+    tags?: string[];
 }
 export interface ReadOptions {
     id?: string;
@@ -125,25 +139,44 @@ export interface ReadOptions {
     titlesOnly?: boolean;
     /** Expand full tree with complete node content (for deep-dive into a project). depth controls how deep. */
     expand?: boolean;
-    /** IDs already delivered in this session — completely hidden in bulk reads. */
-    suppressedIds?: Set<string>;
-    /** Max newest entries per prefix (Fibonacci decay). */
-    maxNewNewest?: number;
-    /** Max most-accessed entries per prefix (Fibonacci decay). */
-    maxNewAccess?: number;
+    /** IDs already delivered in this session — shown as title-only in subsequent bulk reads. */
+    cachedIds?: Set<string>;
+    /** IDs within hidden phase (< 5 min) — completely excluded from output. */
+    hiddenIds?: Set<string>;
+    /** Slot reduction fraction: 1.0 = full, 0.5 = half percentage, 0.25 = quarter, ... */
+    slotFraction?: number;
     /** Bulk read mode: 'discover' (newest-heavy, default) or 'essentials' (importance-heavy). */
     mode?: "discover" | "essentials";
+    /** Curation mode: show ALL entries (bypass V2 selection + session cache), depth 3 children, no child V2. */
+    showAll?: boolean;
+    /** Filter by tag, e.g. "#hmem". Only entries/nodes with this tag are included. */
+    tag?: string;
 }
 export interface WriteResult {
     id: string;
     timestamp: string;
 }
+export interface ImportResult {
+    inserted: number;
+    merged: number;
+    nodesInserted: number;
+    nodesSkipped: number;
+    tagsImported: number;
+    remapped: boolean;
+    conflicts: number;
+}
 export declare class HmemStore {
     private db;
     private readonly dbPath;
+    getDbPath(): string;
     private readonly cfg;
     /** True if integrity_check found errors on open (read-only mode recommended). */
     readonly corrupted: boolean;
+    /**
+     * Char-limit tolerance: configured limits are the "recommended" target shown in skills/errors.
+     * Actual hard reject is at limit * CHAR_LIMIT_TOLERANCE (25% buffer to avoid wasted retries).
+     */
+    private static readonly CHAR_LIMIT_TOLERANCE;
     constructor(hmemPath: string, config?: HmemConfig);
     /** Throw if the database is corrupted — prevents silent data loss on write operations. */
     private guardCorrupted;
@@ -155,7 +188,7 @@ export declare class HmemStore {
      * Each indented line → its own memory_nodes row with compound ID
      * Multiple lines at the same indent depth → siblings (new capability)
      */
-    write(prefix: string, content: string, links?: string[], minRole?: AgentRole, favorite?: boolean): WriteResult;
+    write(prefix: string, content: string, links?: string[], minRole?: AgentRole, favorite?: boolean, tags?: string[], pinned?: boolean): WriteResult;
     /**
      * Read memories with flexible querying.
      *
@@ -165,6 +198,12 @@ export declare class HmemStore {
      * For bulk queries: returns L1 summaries (depth=1 default).
      */
     read(opts?: ReadOptions): MemoryEntry[];
+    /**
+     * Calculate V2 selection slot counts based on the number of relevant entries.
+     * Uses percentage-based scaling with min/max caps when configured,
+     * falls back to fixed topNewestCount/topAccessCount otherwise.
+     */
+    private calcV2Slots;
     /**
      * V2 bulk-read algorithm: per-prefix expansion, smart obsolete filtering,
      * expanded entries with all L2 children + links.
@@ -179,6 +218,20 @@ export declare class HmemStore {
      * Export entire memory to Markdown for git tracking.
      */
     exportMarkdown(): string;
+    /**
+     * Export memory to a new .hmem SQLite file.
+     * Creates a standalone copy that can be opened with HmemStore or hmem.py.
+     */
+    exportPublicToHmem(outputPath: string): {
+        entries: number;
+        nodes: number;
+        tags: number;
+    };
+    /**
+     * Import entries from another .hmem file with L1 deduplication and ID remapping.
+     */
+    importFromHmem(sourcePath: string, dryRun?: boolean): ImportResult;
+    private _doImport;
     /**
      * Get statistics about the memory store.
      */
@@ -202,7 +255,7 @@ export declare class HmemStore {
      * For sub-nodes: updates node content only.
      * Does NOT modify children — use appendChildren to extend the tree.
      */
-    updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean): boolean;
+    updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean, tags?: string[], pinned?: boolean): boolean;
     /**
      * Append new child nodes under an existing entry (root or node).
      * Content is tab-indented relative to the parent:
@@ -225,6 +278,32 @@ export declare class HmemStore {
      */
     getHeaders(): MemoryEntry[];
     close(): void;
+    private static readonly TAG_REGEX;
+    private static readonly MAX_TAGS_PER_ENTRY;
+    /** Validate and normalize tags: lowercase, must match #word pattern. */
+    private validateTags;
+    /** Replace all tags on an entry/node. Pass empty array to clear. */
+    private setTags;
+    /** Get tags for a single entry/node. */
+    private fetchTags;
+    /** Bulk-fetch tags for multiple IDs at once. */
+    private fetchTagsBulk;
+    /**
+     * Find entries sharing 2+ tags with the given entry.
+     * Returns title-only results sorted by number of shared tags (descending).
+     */
+    findRelated(entryId: string, tags: string[], limit?: number): {
+        id: string;
+        title: string;
+        created_at: string;
+        tags: string[];
+    }[];
+    /** Bulk-assign tags to entries + their children from a single fetchTagsBulk call. */
+    private assignBulkTags;
+    /** Recursively collect all node IDs from a tree of MemoryNodes. */
+    private collectNodeIds;
+    /** Get root IDs that have a specific tag (for bulk-read filtering). */
+    private getRootIdsByTag;
     private migrate;
     /**
      * One-time migration: move level_2..level_5 data to memory_nodes tree.

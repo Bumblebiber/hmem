@@ -58,12 +58,19 @@ export interface HmemConfig {
      * Controls how many entries receive expanded treatment in default reads.
      */
     bulkReadV2: {
-        /** Number of top-accessed entries to expand (default: 3) */
+        /** Number of top-accessed entries to expand — legacy fixed fallback (default: 3) */
         topAccessCount: number;
-        /** Number of newest entries to expand (default: 5) */
+        /** Number of newest entries to expand — legacy fixed fallback (default: 5) */
         topNewestCount: number;
         /** Number of obsolete entries to keep visible (default: 3) */
         topObsoleteCount: number;
+        /** Percentage-based selection (overrides fixed counts when set) */
+        newestPercent?: number;
+        newestMin?: number;
+        newestMax?: number;
+        accessPercent?: number;
+        accessMin?: number;
+        accessMax?: number;
     };
 }
 export declare const DEFAULT_PREFIXES: Record<string, string>;

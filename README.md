@@ -107,7 +107,10 @@ A dedicated curator agent runs periodically to maintain memory health. It detect
 - **Compact output** — child IDs render as `.7` instead of `P0029.7`; dates shown only when differing from parent
 - **Persistent across sessions** — agents remember previous work even after restart
 - **Editable without deletion** — `update_memory` and `append_memory` modify entries in place; content is optional when toggling flags
-- **Markers** — `[♥]` favorite, `[!]` obsolete, `[-]` irrelevant, `[*]` active, `[s]` secret — on root entries and sub-nodes
+- **Markers** — `[♥]` favorite, `[P]` pinned, `[!]` obsolete, `[-]` irrelevant, `[*]` active, `[s]` secret — on root entries and sub-nodes
+- **Pinned entries** — super-favorites that show all children titles in bulk reads (not just the latest); use for reference entries you need in full every session
+- **Hashtags** — cross-cutting tags (`#hmem`, `#security`) for filtering and discovering related entries across prefixes
+- **Import/Export** — `export_memory` as Markdown or `.hmem` SQLite clone (excluding secrets); `import_memory` with L1 deduplication, sub-node merge, and automatic ID remapping on conflict
 - **Obsolete chain resolution** — mark entries/sub-nodes obsolete with `[✓ID]` reference; `read_memory` auto-follows the chain to the current version
 - **Access-count promotion** — most-accessed entries get expanded automatically (`[★]`); most-referenced sub-nodes shown as "Hot Nodes"
 - **Session cache** — bulk reads suppress already-seen entries with Fibonacci decay; two modes: `discover` (newest-heavy) and `essentials` (importance-heavy)
@@ -279,7 +282,8 @@ done
 | `write_memory` | Save new memory entries with tab-indented hierarchy |
 | `update_memory` | Update text and/or flags of an entry or sub-node (content optional) |
 | `append_memory` | Append new child nodes to an existing entry or sub-node |
-| `export_memory` | Export all non-secret entries as text |
+| `export_memory` | Export non-secret entries as Markdown text or `.hmem` SQLite file |
+| `import_memory` | Import entries from a `.hmem` file with deduplication and ID remapping |
 | `reset_memory_cache` | Clear session cache so all entries are treated as unseen |
 | `search_memory` | Full-text search across all agent `.hmem` databases |
 
@@ -389,6 +393,34 @@ update_memory(id="D0010", favorite=false)                # clear the flag
 ```
 
 Use favorites for reference info you need to see every session — key decisions, API endpoints, frequently consulted patterns. Use sparingly: if everything is a favorite, nothing is.
+
+### Pinned entries
+
+Pinned entries are "super-favorites" — they show **all** children titles in bulk reads, not just the latest one. While favorites show the newest child + `[+N more →]`, pinned entries give you the full table of contents at a glance.
+
+```
+write_memory(prefix="S", content="...", pinned=true)   # set at creation
+update_memory(id="S0005", pinned=true)                 # set on existing entry
+```
+
+| Display | Normal | Favorite `[♥]` | Pinned `[P]` | `expand=true` |
+|---|---|---|---|---|
+| Children shown | Latest only | All titles | All titles | All with full content |
+| `[+N more →]` hint | Yes | No | No | No |
+
+Use pinned for entries with many structured sub-entries (handbooks, reference lists, project summaries) where you always want to see the full outline.
+
+### Hashtags
+
+Tag entries for cross-cutting search across prefix categories:
+
+```
+write_memory(prefix="L", content="...", tags=["#security", "#hmem"])
+read_memory(tag="#security")      # filter bulk reads by tag
+read_memory(id="L0042")          # shows related entries (2+ shared tags)
+```
+
+Tags are lowercase, must start with `#`, max 10 per entry. They work on root entries and sub-nodes.
 
 ### Access-count auto-promotion (`accessCountTopN`)
 

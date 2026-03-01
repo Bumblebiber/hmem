@@ -84,6 +84,12 @@ export interface MemoryEntry {
   hiddenIrrelevantLinks?: number;
   /** If this entry was reached via obsolete chain resolution, the chain of IDs traversed. */
   obsoleteChain?: string[];
+  /** Optional hashtags for cross-cutting search, e.g. ["#hmem", "#curation"]. */
+  tags?: string[];
+  /** Entries sharing 2+ tags with this entry (populated on ID-based reads). */
+  relatedEntries?: { id: string; title: string; created_at: string; tags: string[] }[];
+  /** True if the entry is pinned (super-favorite). Pinned entries show full L2 content in bulk reads. */
+  pinned?: boolean;
 }
 
 export interface MemoryNode {
@@ -99,8 +105,11 @@ export interface MemoryNode {
   access_count: number;
   last_accessed: string | null;
   favorite?: boolean;       // true if marked as a favorite
+  irrelevant?: boolean;     // true if marked as irrelevant (hidden from output)
   child_count?: number;     // populated when fetching children
   children?: MemoryNode[];  // populated when fetching with depth > 1
+  /** Optional hashtags, e.g. ["#hmem", "#curation"]. */
+  tags?: string[];
 }
 
 export interface ReadOptions {
@@ -136,19 +145,33 @@ export interface ReadOptions {
   titlesOnly?: boolean;
   /** Expand full tree with complete node content (for deep-dive into a project). depth controls how deep. */
   expand?: boolean;
-  /** IDs already delivered in this session — completely hidden in bulk reads. */
-  suppressedIds?: Set<string>;
-  /** Max newest entries per prefix (Fibonacci decay). */
-  maxNewNewest?: number;
-  /** Max most-accessed entries per prefix (Fibonacci decay). */
-  maxNewAccess?: number;
+  /** IDs already delivered in this session — shown as title-only in subsequent bulk reads. */
+  cachedIds?: Set<string>;
+  /** IDs within hidden phase (< 5 min) — completely excluded from output. */
+  hiddenIds?: Set<string>;
+  /** Slot reduction fraction: 1.0 = full, 0.5 = half percentage, 0.25 = quarter, ... */
+  slotFraction?: number;
   /** Bulk read mode: 'discover' (newest-heavy, default) or 'essentials' (importance-heavy). */
   mode?: "discover" | "essentials";
+  /** Curation mode: show ALL entries (bypass V2 selection + session cache), depth 3 children, no child V2. */
+  showAll?: boolean;
+  /** Filter by tag, e.g. "#hmem". Only entries/nodes with this tag are included. */
+  tag?: string;
 }
 
 export interface WriteResult {
   id: string;
   timestamp: string;
+}
+
+export interface ImportResult {
+  inserted: number;
+  merged: number;
+  nodesInserted: number;
+  nodesSkipped: number;
+  tagsImported: number;
+  remapped: boolean;
+  conflicts: number;
 }
 
 // Prefixes are now loaded from config — see this.cfg.prefixes
@@ -218,6 +241,12 @@ const MIGRATIONS = [
   "ALTER TABLE memory_nodes ADD COLUMN title TEXT",
   "ALTER TABLE memories ADD COLUMN irrelevant INTEGER DEFAULT 0",
   "ALTER TABLE memory_nodes ADD COLUMN favorite INTEGER DEFAULT 0",
+  "ALTER TABLE memory_nodes ADD COLUMN irrelevant INTEGER DEFAULT 0",
+  // Hashtag support: join table for cross-cutting tags on entries and nodes
+  "CREATE TABLE IF NOT EXISTS memory_tags (entry_id TEXT NOT NULL, tag TEXT NOT NULL, PRIMARY KEY (entry_id, tag))",
+  "CREATE INDEX IF NOT EXISTS idx_tags_tag ON memory_tags(tag)",
+  // Pinned: super-favorites that show full L2 content in bulk reads
+  "ALTER TABLE memories ADD COLUMN pinned INTEGER DEFAULT 0",
 ];
 
 // ---- HmemStore class ----
@@ -225,9 +254,16 @@ const MIGRATIONS = [
 export class HmemStore {
   private db: Database.Database;
   private readonly dbPath: string;
+  getDbPath(): string { return this.dbPath; }
   private readonly cfg: HmemConfig;
   /** True if integrity_check found errors on open (read-only mode recommended). */
   public readonly corrupted: boolean;
+
+  /**
+   * Char-limit tolerance: configured limits are the "recommended" target shown in skills/errors.
+   * Actual hard reject is at limit * CHAR_LIMIT_TOLERANCE (25% buffer to avoid wasted retries).
+   */
+  private static readonly CHAR_LIMIT_TOLERANCE = 1.25;
 
   constructor(hmemPath: string, config?: HmemConfig) {
     this.dbPath = hmemPath;
@@ -238,6 +274,7 @@ export class HmemStore {
     }
     this.db = new Database(hmemPath);
     this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
 
     // Integrity check — detect corruption before any writes
     this.corrupted = false;
@@ -281,7 +318,7 @@ export class HmemStore {
    * Each indented line → its own memory_nodes row with compound ID
    * Multiple lines at the same indent depth → siblings (new capability)
    */
-  write(prefix: string, content: string, links?: string[], minRole: AgentRole = "worker", favorite?: boolean): WriteResult {
+  write(prefix: string, content: string, links?: string[], minRole: AgentRole = "worker", favorite?: boolean, tags?: string[], pinned?: boolean): WriteResult {
     this.guardCorrupted();
     prefix = prefix.toUpperCase();
     if (!this.cfg.prefixes[prefix]) {
@@ -300,13 +337,14 @@ export class HmemStore {
       throw new Error("Content must have at least one line (Level 1).");
     }
     const l1Limit = this.cfg.maxCharsPerLevel[0];
-    if (level1.length > l1Limit) {
+    const t = HmemStore.CHAR_LIMIT_TOLERANCE;
+    if (level1.length > l1Limit * t) {
       throw new Error(`Level 1 exceeds ${l1Limit} character limit (${level1.length} chars). Keep L1 compact.`);
     }
     for (const node of nodes) {
       // depth 2-5 → index 1-4
       const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(node.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
-      if (node.content.length > nodeLimit) {
+      if (node.content.length > nodeLimit * t) {
         throw new Error(
           `L${node.depth} content exceeds ${nodeLimit} character limit ` +
           `(${node.content.length} chars). Split into multiple write_memory calls or use file references.`
@@ -315,14 +353,17 @@ export class HmemStore {
     }
 
     const insertRoot = this.db.prepare(`
-      INSERT INTO memories (id, prefix, seq, created_at, title, level_1, level_2, level_3, level_4, level_5, links, min_role, favorite)
-      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?)
+      INSERT INTO memories (id, prefix, seq, created_at, title, level_1, level_2, level_3, level_4, level_5, links, min_role, favorite, pinned)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?)
     `);
 
     const insertNode = this.db.prepare(`
       INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
+
+    // Validate tags before transaction
+    const validatedTags = tags && tags.length > 0 ? this.validateTags(tags) : [];
 
     // Run in a transaction
     this.db.transaction(() => {
@@ -331,10 +372,14 @@ export class HmemStore {
         title, level1,
         links ? JSON.stringify(links) : null,
         minRole,
-        favorite ? 1 : 0
+        favorite ? 1 : 0,
+        pinned ? 1 : 0
       );
       for (const node of nodes) {
         insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.title, node.content, timestamp);
+      }
+      if (validatedTags.length > 0) {
+        this.setTags(rootId, validatedTags);
       }
     })();
 
@@ -369,6 +414,15 @@ export class HmemStore {
         const children = this.fetchChildrenDeep(opts.id, nodeDepth + 1, expandDepth);
         const entry = this.nodeToEntry(this.rowToNode(row), children);
         if (opts.expand) entry.expanded = true;
+
+        // Load tags for this node + its children
+        const allNodeIds = [opts.id, ...children.map(c => c.id)];
+        const tagMap = this.fetchTagsBulk(allNodeIds);
+        if (tagMap.has(opts.id)) entry.tags = tagMap.get(opts.id);
+        for (const child of children) {
+          if (tagMap.has(child.id)) child.tags = tagMap.get(child.id);
+        }
+
         return [entry];
       } else {
         // Root ID — fetch from memories
@@ -424,6 +478,24 @@ export class HmemStore {
         // Auto-resolve links
         this.resolveEntryLinks(entry, opts);
 
+        // Load tags for entry + children, find related entries
+        const allIds = [opts.id, ...this.collectNodeIds(children)];
+        const tagMap = this.fetchTagsBulk(allIds);
+        if (tagMap.has(opts.id)) entry.tags = tagMap.get(opts.id);
+        for (const child of children) {
+          if (tagMap.has(child.id)) child.tags = tagMap.get(child.id);
+          if (child.children) {
+            for (const gc of child.children) {
+              if (tagMap.has(gc.id)) gc.tags = tagMap.get(gc.id);
+            }
+          }
+        }
+        // Related entries: find other entries sharing 2+ tags
+        const entryTags = entry.tags ?? [];
+        if (entryTags.length >= 2) {
+          entry.relatedEntries = this.findRelated(opts.id, entryTags, 5);
+        }
+
         return [entry];
       }
     }
@@ -469,6 +541,15 @@ export class HmemStore {
         `SELECT DISTINCT root_id FROM memory_nodes WHERE content LIKE ?${nodeLimitClause}`
       ).all(pattern) as any[];
       const nodeRootIds = new Set(nodeRows.map(r => r.root_id));
+
+      // Also search tags (e.g. search="#hmem" matches tag "#hmem")
+      const tagRows = this.db.prepare(
+        "SELECT entry_id FROM memory_tags WHERE tag LIKE ?"
+      ).all(pattern) as any[];
+      for (const row of tagRows) {
+        const eid = row.entry_id as string;
+        nodeRootIds.add(eid.includes(".") ? eid.split(".")[0] : eid);
+      }
 
       const memLimitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
       const memRows = this.db.prepare(
@@ -525,6 +606,15 @@ export class HmemStore {
       params.push(end.toISOString());
     }
 
+    // Tag-based filtering: restrict to entries that have the specified tag
+    if (opts.tag) {
+      const tagRootIds = this.getRootIdsByTag(opts.tag.toLowerCase());
+      if (tagRootIds.size === 0) return [];
+      const placeholders = [...tagRootIds].map(() => "?").join(", ");
+      conditions.push(`id IN (${placeholders})`);
+      params.push(...tagRootIds);
+    }
+
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     // Sort by effective_date: the most recent of root created_at OR latest child node created_at.
     // This ensures entries with recently appended L2 nodes surface alongside genuinely new entries.
@@ -550,6 +640,40 @@ export class HmemStore {
 
 
   /**
+   * Calculate V2 selection slot counts based on the number of relevant entries.
+   * Uses percentage-based scaling with min/max caps when configured,
+   * falls back to fixed topNewestCount/topAccessCount otherwise.
+   */
+  private calcV2Slots(relevantCount: number, isEssentials: boolean = false, fraction: number = 1.0): { newestCount: number; accessCount: number } {
+    const v2 = this.cfg.bulkReadV2;
+    let newest: number, access: number;
+
+    if (v2.newestPercent !== undefined) {
+      const effNewest = v2.newestPercent * fraction;
+      const effAccess = (v2.accessPercent ?? 10) * fraction;
+      newest = Math.min(
+        v2.newestMax ?? 15,
+        Math.max(v2.newestMin ?? 5, Math.ceil(relevantCount * (effNewest / 100)))
+      );
+      access = Math.min(
+        v2.accessMax ?? 8,
+        Math.max(v2.accessMin ?? 3, Math.ceil(relevantCount * (effAccess / 100)))
+      );
+    } else {
+      newest = Math.max(1, Math.round(v2.topNewestCount * fraction));
+      access = Math.max(1, Math.round(v2.topAccessCount * fraction));
+    }
+
+    if (isEssentials) {
+      const total = newest + access;
+      newest = Math.max(1, Math.floor(newest * 0.4));
+      access = total - newest;
+    }
+
+    return { newestCount: newest, accessCount: access };
+  }
+
+  /**
    * V2 bulk-read algorithm: per-prefix expansion, smart obsolete filtering,
    * expanded entries with all L2 children + links.
    */
@@ -572,63 +696,92 @@ export class HmemStore {
       else byPrefix.set(r.prefix, [r]);
     }
 
-    // Session cache: filter out already-seen entries completely
-    const suppressed = opts.suppressedIds ?? new Set<string>();
-    const hasCacheActive = suppressed.size > 0;
+    // === Curation mode: show ALL entries, bypass V2 + session cache, depth 3 children ===
+    if (opts.showAll) {
+      const visibleObsolete = opts.showObsolete ? obsoleteRows : [];
+      const allVisible = [...nonObsoleteRows, ...visibleObsolete];
+      const visibleIds = new Set(allVisible.map(r => r.id));
+
+      const entries = allVisible.map(r => {
+        // Fetch children to depth 3 (L2 + L3), no V2 selection, filter irrelevant
+        const allChildren = this.fetchChildrenDeep(r.id, 2, 4)
+          .filter(c => !c.irrelevant);
+
+        // Resolve links
+        let linkedEntries: MemoryEntry[] | undefined;
+        const links: string[] = r.links ? JSON.parse(r.links) : [];
+        if (links.length > 0) {
+          linkedEntries = links.flatMap(linkId => {
+            if (visibleIds.has(linkId)) return [];
+            try {
+              return this.read({ id: linkId, resolveLinks: false, linkDepth: 0, followObsolete: false });
+            } catch { return []; }
+          }).filter(e => !e.obsolete && !e.irrelevant);
+        }
+
+        const entry = this.rowToEntry(r, allChildren);
+        entry.expanded = true;
+        if (r.favorite === 1) entry.promoted = "favorite";
+        if (linkedEntries && linkedEntries.length > 0) entry.linkedEntries = linkedEntries;
+        return entry;
+      });
+      this.assignBulkTags(entries);
+      return entries;
+    }
+
+    // === Normal mode: V2 selection + session cache ===
+
+    // Session cache: two phases — hidden (< 5 min, excluded) and cached (5-30 min, title-only)
+    const cached = opts.cachedIds ?? new Set<string>();
+    const hidden = opts.hiddenIds ?? new Set<string>();
+    const fraction = opts.slotFraction ?? 1.0;
 
     // Step 3: Build expansion set from non-obsolete rows
     const expandedIds = new Set<string>();
-
-    // Mode-based ratios: essentials shifts weight from newest to most-accessed
     const isEssentials = opts.mode === "essentials";
-    const totalSlots = v2.topNewestCount + v2.topAccessCount; // 8 by default
-    const baseNewest = isEssentials ? Math.max(1, Math.floor(v2.topNewestCount * 0.4)) : v2.topNewestCount;
-    const baseAccess = isEssentials ? totalSlots - baseNewest : v2.topAccessCount;
 
-    // Fibonacci-limited counts (when cache is active, use separate Fibonacci values)
-    const newestCount = (hasCacheActive && opts.maxNewNewest !== undefined)
-      ? opts.maxNewNewest : baseNewest;
-    const accessCount = (hasCacheActive && opts.maxNewAccess !== undefined)
-      ? opts.maxNewAccess : baseAccess;
-
-    // Per prefix: top N newest (sliding window) + top M most-accessed (backfill)
+    // Per prefix: top N newest + top M most-accessed — slot counts scale with prefix size
     for (const [, prefixRows] of byPrefix) {
-      // Newest: sliding window — only from unseen entries
-      const unseenRows = hasCacheActive
-        ? prefixRows.filter(r => !suppressed.has(r.id))
-        : prefixRows;
-      for (const r of unseenRows.slice(0, newestCount)) {
+      const { newestCount, accessCount } = this.calcV2Slots(prefixRows.length, isEssentials, fraction);
+
+      // Newest: skip cached AND hidden entries, fill from fresh entries only
+      const uncachedRows = prefixRows.filter(r => !cached.has(r.id) && !hidden.has(r.id));
+      for (const r of uncachedRows.slice(0, newestCount)) {
         expandedIds.add(r.id);
       }
 
-      // Most-accessed: from unseen entries, excluding those already picked as newest.
+      // Most-accessed: from uncached entries, excluding those already picked as newest.
       // Minimum threshold: access_count >= 2 — a single access can be noise.
-      const mostAccessed = [...unseenRows]
+      const mostAccessed = [...uncachedRows]
         .filter(r => r.access_count >= 2 && !expandedIds.has(r.id))
         .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
         .slice(0, accessCount);
       for (const r of mostAccessed) expandedIds.add(r.id);
     }
 
-    // Global: all unseen favorites
+    // Global: all uncached+unhidden favorites
     for (const r of nonObsoleteRows) {
-      if (r.favorite === 1 && !suppressed.has(r.id)) {
+      if ((r.favorite === 1 || r.pinned === 1) && !cached.has(r.id) && !hidden.has(r.id)) {
         expandedIds.add(r.id);
       }
     }
 
     // topAccess reference for promoted marker (time-weighted, min 2 accesses)
+    const { accessCount: globalAccessSlots } = this.calcV2Slots(nonObsoleteRows.length);
     const topAccess = [...nonObsoleteRows]
       .filter(r => r.access_count >= 2)
       .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
-      .slice(0, v2.topAccessCount);
+      .slice(0, globalAccessSlots);
 
     // Obsolete entries: only shown when explicitly requested
     const visibleObsolete = opts.showObsolete ? obsoleteRows : [];
 
-    // Step 4: Show expanded entries + visible obsolete (cached entries completely hidden)
+    // Step 4: Build visible rows (hidden entries completely excluded)
+    // - Expanded entries: full content with children
+    // - Cached entries: title-only (no expansion, no children)
     const expandedNonObsolete = nonObsoleteRows.filter(r => expandedIds.has(r.id));
-    const visibleRows = [...expandedNonObsolete, ...visibleObsolete];
+    const cachedVisible = nonObsoleteRows.filter(r => cached.has(r.id) && !expandedIds.has(r.id) && !hidden.has(r.id));
+    const visibleRows = [...expandedNonObsolete, ...cachedVisible, ...visibleObsolete];
     const visibleIds = new Set(visibleRows.map(r => r.id));
 
     // titles_only: V2 selection applies, but skip link resolution
@@ -637,7 +790,7 @@ export class HmemStore {
       const allIds = visibleRows.map(r => r.id);
       const childCounts = this.bulkChildCount(allIds);
 
-      return visibleRows.map(r => {
+      const entries = visibleRows.map(r => {
         const isExpanded = expandedIds.has(r.id);
         const totalChildren = childCounts.get(r.id) ?? 0;
 
@@ -645,20 +798,21 @@ export class HmemStore {
         let hiddenCount: number | undefined;
 
         if (isExpanded && totalChildren > 0) {
-          // Fetch L2 children with V2 selection (top newest + accessed), no links
-          const allChildren = this.fetchChildren(r.id);
-          if (allChildren.length > v2.topNewestCount) {
+          // Fetch L2 children with V2 selection (percentage-based), no links
+          const allChildren = this.fetchChildren(r.id).filter(c => !c.irrelevant);
+          const childSlots = this.calcV2Slots(allChildren.length);
+          if (allChildren.length > childSlots.newestCount) {
             const newestSet = new Set(
               [...allChildren]
                 .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
-                .slice(0, v2.topNewestCount)
+                .slice(0, childSlots.newestCount)
                 .map(c => c.id)
             );
             const accessSet = new Set(
               [...allChildren]
                 .filter(c => c.access_count >= 2)
                 .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
-                .slice(0, v2.topAccessCount)
+                .slice(0, childSlots.accessCount)
                 .map(c => c.id)
             );
             const selectedIds = new Set([...newestSet, ...accessSet]);
@@ -678,9 +832,11 @@ export class HmemStore {
         if (hiddenCount !== undefined && hiddenCount > 0) entry.hiddenChildrenCount = hiddenCount;
         return entry;
       });
+      this.assignBulkTags(entries);
+      return entries;
     }
 
-    return visibleRows.map(r => {
+    const entries = visibleRows.map(r => {
       const isExpanded = expandedIds.has(r.id);
       let promoted: "access" | "favorite" | undefined;
       if (r.favorite === 1) promoted = "favorite";
@@ -693,20 +849,21 @@ export class HmemStore {
       let hiddenIrrelevantLinks = 0;
 
       if (isExpanded) {
-        // Fetch all L2 children, then apply V2 selection (same params as L1)
-        const allChildren = this.fetchChildren(r.id);
-        if (allChildren.length > v2.topNewestCount) {
+        // Fetch all L2 children, then apply V2 selection (percentage-based)
+        const allChildren = this.fetchChildren(r.id).filter(c => !c.irrelevant);
+        const childSlots = this.calcV2Slots(allChildren.length);
+        if (allChildren.length > childSlots.newestCount) {
           const newestSet = new Set(
             [...allChildren]
               .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
-              .slice(0, v2.topNewestCount)
+              .slice(0, childSlots.newestCount)
               .map(c => c.id)
           );
           const accessSet = new Set(
             [...allChildren]
               .filter(c => c.access_count > 0)
               .sort((a, b) => this.weightedAccessScore(b) - this.weightedAccessScore(a))
-              .slice(0, v2.topAccessCount)
+              .slice(0, childSlots.accessCount)
               .map(c => c.id)
           );
           const selectedIds = new Set([...newestSet, ...accessSet]);
@@ -745,6 +902,8 @@ export class HmemStore {
 
       return entry;
     });
+    this.assignBulkTags(entries);
+    return entries;
   }
 
   /**
@@ -823,6 +982,356 @@ export class HmemStore {
   }
 
   /**
+   * Export memory to a new .hmem SQLite file.
+   * Creates a standalone copy that can be opened with HmemStore or hmem.py.
+   */
+  exportPublicToHmem(outputPath: string): { entries: number; nodes: number; tags: number } {
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+    if (fs.existsSync(outputPath + "-wal")) fs.unlinkSync(outputPath + "-wal");
+    if (fs.existsSync(outputPath + "-shm")) fs.unlinkSync(outputPath + "-shm");
+
+    const exportDb = new Database(outputPath);
+    exportDb.pragma("journal_mode = WAL");
+    exportDb.exec(SCHEMA);
+    for (const sql of MIGRATIONS) {
+      try { exportDb.exec(sql); } catch {}
+    }
+
+    // Determine export-compatible columns (source may have extra columns)
+    const memCols = (exportDb.pragma("table_info(memories)") as any[]).map((c: any) => c.name);
+    const nodeCols = (exportDb.pragma("table_info(memory_nodes)") as any[]).map((c: any) => c.name);
+
+    // Copy all entries (only columns the export schema knows)
+    const rows = this.db.prepare(
+      `SELECT ${memCols.join(", ")} FROM memories WHERE seq > 0 ORDER BY prefix, seq`
+    ).all() as any[];
+
+    if (rows.length > 0) {
+      const placeholders = memCols.map(() => "?").join(", ");
+      const insertMem = exportDb.prepare(
+        `INSERT INTO memories (${memCols.join(", ")}) VALUES (${placeholders})`
+      );
+      const txn = exportDb.transaction((entries: any[]) => {
+        for (const r of entries) insertMem.run(...memCols.map(c => r[c]));
+      });
+      txn(rows);
+    }
+
+    // Copy all nodes
+    const allNodes = this.db.prepare(
+      `SELECT ${nodeCols.join(", ")} FROM memory_nodes ORDER BY root_id, depth, seq`
+    ).all() as any[];
+
+    if (allNodes.length > 0) {
+      const placeholders = nodeCols.map(() => "?").join(", ");
+      const insertNode = exportDb.prepare(
+        `INSERT INTO memory_nodes (${nodeCols.join(", ")}) VALUES (${placeholders})`
+      );
+      const txn = exportDb.transaction((nodes: any[]) => {
+        for (const n of nodes) insertNode.run(...nodeCols.map(c => n[c]));
+      });
+      txn(allNodes);
+    }
+
+    // Copy all tags
+    const allTags = this.db.prepare("SELECT * FROM memory_tags").all() as any[];
+
+    if (allTags.length > 0) {
+      const insertTag = exportDb.prepare(
+        "INSERT INTO memory_tags (entry_id, tag) VALUES (?, ?)"
+      );
+      const txn = exportDb.transaction((tags: any[]) => {
+        for (const t of tags) insertTag.run(t.entry_id, t.tag);
+      });
+      txn(allTags);
+    }
+
+    exportDb.pragma("wal_checkpoint(TRUNCATE)");
+    exportDb.close();
+
+    return { entries: rows.length, nodes: allNodes.length, tags: allTags.length };
+  }
+
+  /**
+   * Import entries from another .hmem file with L1 deduplication and ID remapping.
+   */
+  importFromHmem(sourcePath: string, dryRun: boolean = false): ImportResult {
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error(`Source file not found: ${sourcePath}`);
+    }
+
+    const sourceDb = new Database(sourcePath, { readonly: true });
+    try {
+      return this._doImport(sourceDb, dryRun);
+    } finally {
+      sourceDb.close();
+    }
+  }
+
+  private _doImport(sourceDb: Database.Database, dryRun: boolean): ImportResult {
+    // ---- Phase 1: Analyse ----
+    const srcEntries = sourceDb.prepare(
+      "SELECT * FROM memories WHERE seq > 0 ORDER BY prefix, seq"
+    ).all() as any[];
+    const srcNodes = sourceDb.prepare(
+      "SELECT * FROM memory_nodes ORDER BY root_id, depth, seq"
+    ).all() as any[];
+
+    let srcTags: any[] = [];
+    try {
+      srcTags = sourceDb.prepare("SELECT * FROM memory_tags").all() as any[];
+    } catch { /* table may not exist in older exports */ }
+
+    const srcNodesByRoot = new Map<string, any[]>();
+    for (const n of srcNodes) {
+      const arr = srcNodesByRoot.get(n.root_id);
+      if (arr) arr.push(n);
+      else srcNodesByRoot.set(n.root_id, [n]);
+    }
+
+    const srcTagsByEntry = new Map<string, string[]>();
+    for (const t of srcTags) {
+      const arr = srcTagsByEntry.get(t.entry_id);
+      if (arr) arr.push(t.tag);
+      else srcTagsByEntry.set(t.entry_id, [t.tag]);
+    }
+
+    type EntryAction = { type: "duplicate"; srcEntry: any; targetId: string }
+                     | { type: "new"; srcEntry: any };
+    const actions: EntryAction[] = [];
+    let conflicts = 0;
+
+    for (const src of srcEntries) {
+      const existing = this.db.prepare(
+        "SELECT id FROM memories WHERE prefix = ? AND level_1 = ? AND seq > 0"
+      ).get(src.prefix, src.level_1) as any;
+
+      if (existing) {
+        actions.push({ type: "duplicate", srcEntry: src, targetId: existing.id });
+      } else {
+        actions.push({ type: "new", srcEntry: src });
+        const conflict = this.db.prepare(
+          "SELECT id FROM memories WHERE id = ?"
+        ).get(src.id) as any;
+        if (conflict) conflicts++;
+      }
+    }
+
+    const needsRemap = conflicts > 0;
+
+    let totalNodesToInsert = 0;
+    let totalNodesToSkip = 0;
+
+    for (const action of actions) {
+      if (action.type === "duplicate") {
+        const srcChildren = (srcNodesByRoot.get(action.srcEntry.id) ?? [])
+          .filter((n: any) => n.depth === 2 && n.parent_id === action.srcEntry.id);
+        const targetChildren = this.db.prepare(
+          "SELECT content FROM memory_nodes WHERE parent_id = ? AND depth = 2"
+        ).all(action.targetId) as any[];
+        const targetContents = new Set(targetChildren.map((c: any) => c.content));
+
+        for (const sc of srcChildren) {
+          const descendants = (srcNodesByRoot.get(action.srcEntry.id) ?? [])
+            .filter((n: any) => n.id.startsWith(sc.id + ".") || n.id === sc.id);
+          if (targetContents.has(sc.content)) {
+            totalNodesToSkip += descendants.length;
+          } else {
+            totalNodesToInsert += descendants.length;
+          }
+        }
+      } else {
+        totalNodesToInsert += (srcNodesByRoot.get(action.srcEntry.id) ?? []).length;
+      }
+    }
+
+    const newCount = actions.filter(a => a.type === "new").length;
+    const dupeCount = actions.filter(a => a.type === "duplicate").length;
+
+    if (dryRun) {
+      return {
+        inserted: newCount, merged: dupeCount,
+        nodesInserted: totalNodesToInsert, nodesSkipped: totalNodesToSkip,
+        tagsImported: srcTags.length, remapped: needsRemap, conflicts,
+      };
+    }
+
+    // ---- Phase 2: ID Remapping ----
+    const idMap = new Map<string, string>();
+
+    if (needsRemap) {
+      const usedSeqs = new Map<string, number>();
+      for (const action of actions) {
+        if (action.type === "new") {
+          const prefix = action.srcEntry.prefix;
+          const baseSeq = this.nextSeq(prefix);
+          const offset = usedSeqs.get(prefix) ?? 0;
+          const seq = baseSeq + offset;
+          usedSeqs.set(prefix, offset + 1);
+          idMap.set(action.srcEntry.id, `${prefix}${String(seq).padStart(4, "0")}`);
+        }
+      }
+    }
+
+    for (const action of actions) {
+      if (action.type === "duplicate") {
+        idMap.set(action.srcEntry.id, action.targetId);
+      }
+    }
+
+    const remapId = (id: string): string => {
+      if (!id) return id;
+      const rootId = id.split(".")[0];
+      const newRootId = idMap.get(rootId);
+      if (!newRootId) return id;
+      return newRootId + id.substring(rootId.length);
+    };
+
+    const remapLinks = (linksJson: string | null): string | null => {
+      if (!linksJson) return linksJson;
+      try {
+        const links = JSON.parse(linksJson) as string[];
+        return JSON.stringify(links.map(remapId));
+      } catch { return linksJson; }
+    };
+
+    const remapContent = (content: string): string => {
+      if (!content) return content;
+      return content.replace(/\[✓([A-Z]\d{4}(?:\.\d+)*)\]/g, (match, id) => {
+        const newId = remapId(id);
+        return newId !== id ? `[✓${newId}]` : match;
+      });
+    };
+
+    // ---- Phase 3: Insert/Merge ----
+    const result: ImportResult = {
+      inserted: 0, merged: 0, nodesInserted: 0, nodesSkipped: 0,
+      tagsImported: 0, remapped: needsRemap, conflicts,
+    };
+
+    const memCols = (this.db.pragma("table_info(memories)") as any[]).map((c: any) => c.name);
+    const nodeCols = (this.db.pragma("table_info(memory_nodes)") as any[]).map((c: any) => c.name);
+    const srcMemCols = (() => { try { return (sourceDb.pragma("table_info(memories)") as any[]).map((c: any) => c.name); } catch { return []; } })();
+    const srcNodeCols = (() => { try { return (sourceDb.pragma("table_info(memory_nodes)") as any[]).map((c: any) => c.name); } catch { return []; } })();
+    const commonMemCols = memCols.filter(c => srcMemCols.includes(c));
+    const commonNodeCols = nodeCols.filter(c => srcNodeCols.includes(c));
+
+    this.db.transaction(() => {
+      for (const action of actions) {
+        if (action.type !== "new") continue;
+        const src = action.srcEntry;
+        const newId = idMap.get(src.id) ?? src.id;
+
+        const values: any = {};
+        for (const col of commonMemCols) values[col] = src[col];
+        values.id = newId;
+        if (needsRemap) {
+          values.links = remapLinks(src.links);
+          values.level_1 = remapContent(src.level_1);
+        }
+
+        this.db.prepare(
+          `INSERT INTO memories (${commonMemCols.join(", ")}) VALUES (${commonMemCols.map(() => "?").join(", ")})`
+        ).run(...commonMemCols.map(c => values[c]));
+
+        const entryNodes = srcNodesByRoot.get(src.id) ?? [];
+        for (const node of entryNodes) {
+          const nv: any = {};
+          for (const col of commonNodeCols) nv[col] = node[col];
+          nv.id = remapId(node.id);
+          nv.parent_id = remapId(node.parent_id);
+          nv.root_id = newId;
+          if (needsRemap) { nv.links = remapLinks(node.links); nv.content = remapContent(node.content); }
+
+          this.db.prepare(
+            `INSERT INTO memory_nodes (${commonNodeCols.join(", ")}) VALUES (${commonNodeCols.map(() => "?").join(", ")})`
+          ).run(...commonNodeCols.map(c => nv[c]));
+          result.nodesInserted++;
+        }
+
+        const entryTags = srcTagsByEntry.get(src.id) ?? [];
+        for (const tag of entryTags) {
+          this.db.prepare("INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)").run(newId, tag);
+          result.tagsImported++;
+        }
+        for (const node of entryNodes) {
+          for (const tag of (srcTagsByEntry.get(node.id) ?? [])) {
+            this.db.prepare("INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)").run(remapId(node.id), tag);
+            result.tagsImported++;
+          }
+        }
+        result.inserted++;
+      }
+
+      for (const action of actions) {
+        if (action.type !== "duplicate") continue;
+        const src = action.srcEntry;
+        const targetId = action.targetId;
+
+        const targetChildren = this.db.prepare(
+          "SELECT content FROM memory_nodes WHERE parent_id = ? AND depth = 2"
+        ).all(targetId) as any[];
+        const targetContents = new Set(targetChildren.map((c: any) => c.content));
+
+        const srcAllNodes = srcNodesByRoot.get(src.id) ?? [];
+        const srcL2 = srcAllNodes.filter((n: any) => n.depth === 2 && n.parent_id === src.id);
+
+        const maxSeqRow = this.db.prepare(
+          "SELECT MAX(seq) as maxSeq FROM memory_nodes WHERE parent_id = ?"
+        ).get(targetId) as any;
+        let nextChildSeq = (maxSeqRow?.maxSeq ?? 0) + 1;
+
+        for (const l2 of srcL2) {
+          if (targetContents.has(l2.content)) {
+            result.nodesSkipped += srcAllNodes.filter((n: any) =>
+              n.id === l2.id || n.id.startsWith(l2.id + ".")).length;
+            continue;
+          }
+
+          const descendants = srcAllNodes.filter((n: any) =>
+            n.id === l2.id || n.id.startsWith(l2.id + "."));
+          const l2NewId = `${targetId}.${nextChildSeq}`;
+          nextChildSeq++;
+
+          for (const desc of descendants) {
+            const nv: any = {};
+            for (const col of commonNodeCols) nv[col] = desc[col];
+            const oldPrefix = l2.id;
+            const newPrefix = l2NewId;
+            nv.id = desc.id === l2.id ? l2NewId : newPrefix + desc.id.substring(oldPrefix.length);
+            nv.parent_id = desc.parent_id === src.id ? targetId
+              : desc.parent_id === l2.id ? l2NewId
+              : newPrefix + desc.parent_id.substring(oldPrefix.length);
+            nv.root_id = targetId;
+            nv.content = remapContent(desc.content);
+            nv.links = remapLinks(desc.links);
+            if (desc.id === l2.id) nv.seq = nextChildSeq - 1;
+            if (!nv.title) nv.title = (nv.content || "").substring(0, this.cfg.maxTitleChars || 50);
+
+            this.db.prepare(
+              `INSERT INTO memory_nodes (${commonNodeCols.join(", ")}) VALUES (${commonNodeCols.map(() => "?").join(", ")})`
+            ).run(...commonNodeCols.map(c => nv[c]));
+            result.nodesInserted++;
+
+            for (const tag of (srcTagsByEntry.get(desc.id) ?? [])) {
+              this.db.prepare("INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)").run(nv.id, tag);
+              result.tagsImported++;
+            }
+          }
+        }
+
+        for (const tag of (srcTagsByEntry.get(src.id) ?? [])) {
+          this.db.prepare("INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)").run(targetId, tag);
+          result.tagsImported++;
+        }
+        result.merged++;
+      }
+    })();
+
+    return result;
+  }
+
+  /**
    * Get statistics about the memory store.
    */
   stats(): { total: number; byPrefix: Record<string, number>; totalChars: number } {
@@ -873,6 +1382,8 @@ export class HmemStore {
    */
   delete(id: string): boolean {
     this.guardCorrupted();
+    // Delete tags for root + all child nodes
+    this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ? OR entry_id LIKE ?").run(id, `${id}.%`);
     // Delete nodes first (no CASCADE in older SQLite)
     this.db.prepare("DELETE FROM memory_nodes WHERE root_id = ?").run(id);
     const result = this.db.prepare("DELETE FROM memories WHERE id = ?").run(id);
@@ -885,7 +1396,7 @@ export class HmemStore {
    * For sub-nodes: updates node content only.
    * Does NOT modify children — use appendChildren to extend the tree.
    */
-  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean): boolean {
+  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean, tags?: string[], pinned?: boolean): boolean {
     this.guardCorrupted();
     const trimmed = newContent.trim();
     if (id.includes(".")) {
@@ -893,7 +1404,7 @@ export class HmemStore {
       const nodeRow = this.db.prepare("SELECT depth FROM memory_nodes WHERE id = ?").get(id) as any;
       if (!nodeRow) return false;
       const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(nodeRow.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
-      if (trimmed.length > nodeLimit) {
+      if (trimmed.length > nodeLimit * HmemStore.CHAR_LIMIT_TOLERANCE) {
         throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
       }
       const sets = ["content = ?", "title = ?"];
@@ -902,13 +1413,20 @@ export class HmemStore {
         sets.push("favorite = ?");
         params.push(favorite ? 1 : 0);
       }
+      if (irrelevant !== undefined) {
+        sets.push("irrelevant = ?");
+        params.push(irrelevant ? 1 : 0);
+      }
       params.push(id);
       const result = this.db.prepare(`UPDATE memory_nodes SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+      if (result.changes > 0 && tags !== undefined) {
+        this.setTags(id, tags.length > 0 ? this.validateTags(tags) : []);
+      }
       return result.changes > 0;
     } else {
       // Root entry in memories — check L1 char limit
       const l1Limit = this.cfg.maxCharsPerLevel[0];
-      if (trimmed.length > l1Limit) {
+      if (trimmed.length > l1Limit * HmemStore.CHAR_LIMIT_TOLERANCE) {
         throw new Error(`Level 1 exceeds ${l1Limit} character limit (${trimmed.length} chars). Keep L1 compact.`);
       }
 
@@ -964,8 +1482,15 @@ export class HmemStore {
         sets.push("irrelevant = ?");
         params.push(irrelevant ? 1 : 0);
       }
+      if (pinned !== undefined) {
+        sets.push("pinned = ?");
+        params.push(pinned ? 1 : 0);
+      }
       params.push(id);
       const result = this.db.prepare(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+      if (result.changes > 0 && tags !== undefined) {
+        this.setTags(id, tags.length > 0 ? this.validateTags(tags) : []);
+      }
       return result.changes > 0;
     }
   }
@@ -1005,10 +1530,11 @@ export class HmemStore {
     const nodes = this.parseRelativeTree(content, parentId, parentDepth, startSeq);
     if (nodes.length === 0) return { count: 0, ids: [] };
 
-    // Validate char limits before writing
+    // Validate char limits before writing (with tolerance buffer)
+    const t = HmemStore.CHAR_LIMIT_TOLERANCE;
     for (const node of nodes) {
       const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(node.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
-      if (node.content.length > nodeLimit) {
+      if (node.content.length > nodeLimit * t) {
         throw new Error(
           `L${node.depth} content exceeds ${nodeLimit} character limit ` +
           `(${node.content.length} chars). Split into multiple calls or use file references.`
@@ -1090,6 +1616,157 @@ export class HmemStore {
   }
 
   // ---- Private helpers ----
+
+  // ---- Tag helpers ----
+
+  private static readonly TAG_REGEX = /^#[a-z0-9_-]{1,49}$/;
+  private static readonly MAX_TAGS_PER_ENTRY = 10;
+
+  /** Validate and normalize tags: lowercase, must match #word pattern. */
+  private validateTags(tags: string[]): string[] {
+    if (tags.length > HmemStore.MAX_TAGS_PER_ENTRY) {
+      throw new Error(`Too many tags (${tags.length}). Maximum is ${HmemStore.MAX_TAGS_PER_ENTRY}.`);
+    }
+    const normalized = tags.map(t => t.toLowerCase());
+    for (const tag of normalized) {
+      if (!HmemStore.TAG_REGEX.test(tag)) {
+        throw new Error(`Invalid tag "${tag}". Tags must match #word (lowercase, a-z 0-9 _ -).`);
+      }
+    }
+    return [...new Set(normalized)]; // deduplicate
+  }
+
+  /** Replace all tags on an entry/node. Pass empty array to clear. */
+  private setTags(entryId: string, tags: string[]): void {
+    this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ?").run(entryId);
+    if (tags.length === 0) return;
+    const insert = this.db.prepare("INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)");
+    for (const tag of tags) {
+      insert.run(entryId, tag);
+    }
+  }
+
+  /** Get tags for a single entry/node. */
+  private fetchTags(entryId: string): string[] {
+    return (this.db.prepare("SELECT tag FROM memory_tags WHERE entry_id = ? ORDER BY tag").all(entryId) as any[])
+      .map(r => r.tag);
+  }
+
+  /** Bulk-fetch tags for multiple IDs at once. */
+  private fetchTagsBulk(ids: string[]): Map<string, string[]> {
+    if (ids.length === 0) return new Map();
+    const map = new Map<string, string[]>();
+    // Process in chunks of 500 to avoid SQLite variable limits
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.db.prepare(
+        `SELECT entry_id, tag FROM memory_tags WHERE entry_id IN (${placeholders}) ORDER BY entry_id, tag`
+      ).all(...chunk) as any[];
+      for (const row of rows) {
+        const arr = map.get(row.entry_id);
+        if (arr) arr.push(row.tag);
+        else map.set(row.entry_id, [row.tag]);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Find entries sharing 2+ tags with the given entry.
+   * Returns title-only results sorted by number of shared tags (descending).
+   */
+  findRelated(entryId: string, tags: string[], limit: number = 5): { id: string; title: string; created_at: string; tags: string[] }[] {
+    if (tags.length < 2) return [];
+    const placeholders = tags.map(() => "?").join(", ");
+    // Find all entry_ids sharing at least 2 tags (exclude self)
+    const rows = this.db.prepare(`
+      SELECT entry_id, COUNT(*) as shared
+      FROM memory_tags
+      WHERE tag IN (${placeholders}) AND entry_id != ?
+      GROUP BY entry_id
+      HAVING COUNT(*) >= 2
+      ORDER BY shared DESC
+      LIMIT ?
+    `).all(...tags, entryId, limit * 3) as any[]; // fetch extra to account for node→root dedup
+
+    if (rows.length === 0) return [];
+
+    // Resolve node IDs to root entries, dedup
+    const seen = new Set<string>();
+    const results: { id: string; title: string; created_at: string; tags: string[] }[] = [];
+
+    for (const row of rows) {
+      if (results.length >= limit) break;
+      const eid = row.entry_id as string;
+      const isNode = eid.includes(".");
+      const rootId = isNode ? eid.split(".")[0] : eid;
+
+      if (seen.has(rootId) || rootId === entryId || rootId === entryId.split(".")[0]) continue;
+      seen.add(rootId);
+
+      // Fetch root entry title
+      const rootRow = this.db.prepare("SELECT title, level_1, created_at, irrelevant, obsolete FROM memories WHERE id = ?").get(rootId) as any;
+      if (!rootRow || rootRow.irrelevant === 1 || rootRow.obsolete === 1) continue;
+
+      const title = rootRow.title || this.autoExtractTitle(rootRow.level_1);
+      const entryTags = this.fetchTags(rootId);
+      results.push({ id: rootId, title, created_at: rootRow.created_at, tags: entryTags });
+    }
+
+    return results;
+  }
+
+  /** Bulk-assign tags to entries + their children from a single fetchTagsBulk call. */
+  private assignBulkTags(entries: MemoryEntry[]): void {
+    const allIds: string[] = [];
+    for (const e of entries) {
+      allIds.push(e.id);
+      if (e.children) allIds.push(...this.collectNodeIds(e.children));
+    }
+    if (allIds.length === 0) return;
+    const tagMap = this.fetchTagsBulk(allIds);
+    for (const e of entries) {
+      if (tagMap.has(e.id)) e.tags = tagMap.get(e.id);
+      if (e.children) {
+        for (const child of e.children) {
+          if (tagMap.has(child.id)) child.tags = tagMap.get(child.id);
+          if (child.children) {
+            for (const gc of child.children) {
+              if (tagMap.has(gc.id)) gc.tags = tagMap.get(gc.id);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /** Recursively collect all node IDs from a tree of MemoryNodes. */
+  private collectNodeIds(nodes: MemoryNode[]): string[] {
+    const ids: string[] = [];
+    for (const node of nodes) {
+      ids.push(node.id);
+      if (node.children) ids.push(...this.collectNodeIds(node.children));
+    }
+    return ids;
+  }
+
+  /** Get root IDs that have a specific tag (for bulk-read filtering). */
+  private getRootIdsByTag(tag: string): Set<string> {
+    const rows = this.db.prepare(
+      "SELECT entry_id FROM memory_tags WHERE tag = ?"
+    ).all(tag) as any[];
+    const rootIds = new Set<string>();
+    for (const row of rows) {
+      const eid = row.entry_id as string;
+      if (eid.includes(".")) {
+        rootIds.add(eid.split(".")[0]);
+      } else {
+        rootIds.add(eid);
+      }
+    }
+    return rootIds;
+  }
 
   private migrate(): void {
     for (const sql of MIGRATIONS) {
@@ -1357,7 +2034,7 @@ export class HmemStore {
     if (parentIds.length === 0) return new Map();
     const placeholders = parentIds.map(() => "?").join(", ");
     const rows = this.db.prepare(
-      `SELECT parent_id, COUNT(*) as cnt FROM memory_nodes WHERE parent_id IN (${placeholders}) GROUP BY parent_id`
+      `SELECT parent_id, COUNT(*) as cnt FROM memory_nodes WHERE parent_id IN (${placeholders}) AND COALESCE(irrelevant, 0) != 1 GROUP BY parent_id`
     ).all(...parentIds) as any[];
     const map = new Map<string, number>();
     for (const r of rows) map.set(r.parent_id, r.cnt);
@@ -1442,6 +2119,7 @@ export class HmemStore {
       access_count: row.access_count || 0,
       last_accessed: row.last_accessed || null,
       favorite: row.favorite === 1 ? true : undefined,
+      irrelevant: row.irrelevant === 1 ? true : undefined,
       child_count: childCount,
     };
   }
@@ -1465,6 +2143,7 @@ export class HmemStore {
       obsolete: row.obsolete === 1,
       favorite: row.favorite === 1,
       irrelevant: row.irrelevant === 1,
+      pinned: row.pinned === 1,
       children,
     };
   }
@@ -1499,7 +2178,7 @@ export class HmemStore {
    * Priority: text before " — " > word-boundary truncation > hard truncation.
    */
   private autoExtractTitle(text: string): string {
-    const maxLen = this.cfg.maxTitleChars;
+    const maxLen = Math.floor(this.cfg.maxTitleChars * HmemStore.CHAR_LIMIT_TOLERANCE);
     const dashIdx = text.indexOf(" — ");
     if (dashIdx > 0 && dashIdx <= maxLen) return text.substring(0, dashIdx);
     if (text.length <= maxLen) return text;

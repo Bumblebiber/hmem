@@ -41,6 +41,12 @@ export const DEFAULT_CONFIG = {
         topAccessCount: 3,
         topNewestCount: 5,
         topObsoleteCount: 3,
+        newestPercent: 20,
+        newestMin: 5,
+        newestMax: 15,
+        accessPercent: 10,
+        accessMin: 3,
+        accessMax: 8,
     },
 };
 /**
@@ -115,6 +121,19 @@ export function loadHmemConfig(projectDir) {
                 cfg.bulkReadV2.topNewestCount = v2.topNewestCount;
             if (typeof v2.topObsoleteCount === "number" && v2.topObsoleteCount >= 0)
                 cfg.bulkReadV2.topObsoleteCount = v2.topObsoleteCount;
+            // Percentage-based selection
+            if (typeof v2.newestPercent === "number" && v2.newestPercent > 0)
+                cfg.bulkReadV2.newestPercent = v2.newestPercent;
+            if (typeof v2.newestMin === "number" && v2.newestMin >= 0)
+                cfg.bulkReadV2.newestMin = v2.newestMin;
+            if (typeof v2.newestMax === "number" && v2.newestMax > 0)
+                cfg.bulkReadV2.newestMax = v2.newestMax;
+            if (typeof v2.accessPercent === "number" && v2.accessPercent > 0)
+                cfg.bulkReadV2.accessPercent = v2.accessPercent;
+            if (typeof v2.accessMin === "number" && v2.accessMin >= 0)
+                cfg.bulkReadV2.accessMin = v2.accessMin;
+            if (typeof v2.accessMax === "number" && v2.accessMax > 0)
+                cfg.bulkReadV2.accessMax = v2.accessMax;
         }
         // Resolve char limits: explicit array > linear endpoints > default
         if (Array.isArray(raw.maxCharsPerLevel) && raw.maxCharsPerLevel.length >= 1) {

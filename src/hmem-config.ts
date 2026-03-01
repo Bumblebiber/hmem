@@ -62,12 +62,19 @@ export interface HmemConfig {
    * Controls how many entries receive expanded treatment in default reads.
    */
   bulkReadV2: {
-    /** Number of top-accessed entries to expand (default: 3) */
+    /** Number of top-accessed entries to expand — legacy fixed fallback (default: 3) */
     topAccessCount: number;
-    /** Number of newest entries to expand (default: 5) */
+    /** Number of newest entries to expand — legacy fixed fallback (default: 5) */
     topNewestCount: number;
     /** Number of obsolete entries to keep visible (default: 3) */
     topObsoleteCount: number;
+    /** Percentage-based selection (overrides fixed counts when set) */
+    newestPercent?: number;
+    newestMin?: number;
+    newestMax?: number;
+    accessPercent?: number;
+    accessMin?: number;
+    accessMax?: number;
   };
 }
 
@@ -114,6 +121,12 @@ export const DEFAULT_CONFIG: HmemConfig = {
     topAccessCount: 3,
     topNewestCount: 5,
     topObsoleteCount: 3,
+    newestPercent: 20,
+    newestMin: 5,
+    newestMax: 15,
+    accessPercent: 10,
+    accessMin: 3,
+    accessMax: 8,
   },
 };
 
@@ -190,6 +203,13 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
       if (typeof v2.topAccessCount === "number" && v2.topAccessCount >= 0) cfg.bulkReadV2.topAccessCount = v2.topAccessCount;
       if (typeof v2.topNewestCount === "number" && v2.topNewestCount >= 0) cfg.bulkReadV2.topNewestCount = v2.topNewestCount;
       if (typeof v2.topObsoleteCount === "number" && v2.topObsoleteCount >= 0) cfg.bulkReadV2.topObsoleteCount = v2.topObsoleteCount;
+      // Percentage-based selection
+      if (typeof v2.newestPercent === "number" && v2.newestPercent > 0) cfg.bulkReadV2.newestPercent = v2.newestPercent;
+      if (typeof v2.newestMin === "number" && v2.newestMin >= 0) cfg.bulkReadV2.newestMin = v2.newestMin;
+      if (typeof v2.newestMax === "number" && v2.newestMax > 0) cfg.bulkReadV2.newestMax = v2.newestMax;
+      if (typeof v2.accessPercent === "number" && v2.accessPercent > 0) cfg.bulkReadV2.accessPercent = v2.accessPercent;
+      if (typeof v2.accessMin === "number" && v2.accessMin >= 0) cfg.bulkReadV2.accessMin = v2.accessMin;
+      if (typeof v2.accessMax === "number" && v2.accessMax > 0) cfg.bulkReadV2.accessMax = v2.accessMax;
     }
 
     // Resolve char limits: explicit array > linear endpoints > default
