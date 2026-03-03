@@ -12,6 +12,18 @@ Born as a side project of a multi-agent AI system, hmem solves a real problem: w
 
 ---
 
+
+## Examples
+
+<img width="1110" height="665" alt="image" src="https://github.com/user-attachments/assets/af7688d2-73e3-44f8-b414-f6afa8904e6c" />
+Well, it claims that it can't pinpoint timestamps. But that's not true. It just cant see them (due to token efficiency) :)
+
+
+<img width="1096" height="941" alt="image" src="https://github.com/user-attachments/assets/a751c8f3-41fc-46b6-916a-bcd3862008ad" />
+
+
+---
+
 ## The Problem
 
 When working across multiple PCs with AI coding agents, every new session was a fresh start. Agents had no knowledge of previous decisions, duplicated work, produced inconsistencies, and wasted tokens catching up.
