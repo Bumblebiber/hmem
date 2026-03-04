@@ -5,109 +5,126 @@ description: Curate your own memory. Systematically review entries — mark obso
 
 # Self-Curation: Review Your Own Memory
 
-You are curating **your own** memory — not another agent's. You know best which entries are still relevant. Use your regular tools: `read_memory`, `update_memory`, `write_memory`.
+You are curating **your own** memory. You know best which entries are still relevant.
 
 ---
 
-## Step 1 — Load overview
+## Step 0: Health Check First
+
+Before diving in, run an audit to get a prioritized list of issues:
 
 ```
-read_memory(titles_only=true)
+memory_health()
 ```
 
-This gives you every entry as a compact line: `ID date [flags] title`. Scan the full list before acting.
+This instantly shows:
+- **Broken links** — fix or remove them first (high impact, easy to miss manually)
+- **Orphaned entries** — root entries with no sub-nodes (likely draft stubs)
+- **Stale favorites/pinned** — favorites not accessed in >60 days (demote or verify)
+- **Broken obsolete chains** — `[✓ID]` pointing to deleted entries
+
+Also useful before starting:
+```
+memory_stats()          # overview: how many entries per prefix, stale count, etc.
+read_memory(stale_days=60)  # entries not touched in 60 days — prime curation candidates
+```
 
 ---
 
-## Step 2 — Identify candidates
+## Workflow: Prefix by Prefix
 
-Work through the list prefix by prefix. For each entry, decide:
+Work through one prefix at a time. Load all entries of a prefix with full depth:
+
+```
+read_memory(prefix="P", show_all=true)
+```
+
+This bypasses V2 selection and session cache — every entry is expanded with L2+L3 children visible. Review each entry in the output directly — no need to drill into individual entries.
+
+**Order:** Start with the prefix that has the most entries (usually P), then move to L, E, D, etc.
+
+If context overflows mid-prefix, continue with the remaining entries — your memory survives compression.
+
+---
+
+## For Each Entry: Decide and Act
 
 | Decision | Action |
 |----------|--------|
 | Still valid and useful | Skip (no action needed) |
 | Important reference I need every session | `update_memory(id="X", content="...", favorite=true)` |
-| Outdated — a better entry exists | Mark obsolete (see Step 3) |
+| Outdated — a better entry exists | Mark obsolete (see below) |
 | Just noise — not wrong, but irrelevant | `update_memory(id="X", content="...", irrelevant=true)` |
 | L1 wording is vague or misleading | `update_memory(id="X", content="Better wording")` |
 | Sub-node has valuable reference info | `update_memory(id="X.N", content="...", favorite=true)` |
 
-**Drill into entries** before judging: `read_memory(id="L0042")` to see L2 children. An entry with a weak L1 may have valuable detail underneath.
-
 ---
 
-## Step 3 — Marking obsolete
+## Marking Obsolete
 
-Obsolete requires a correction reference. Two patterns:
+Obsolete requires a correction reference. Three patterns:
 
-**Pattern A: Replacement exists already**
-Find the existing entry that supersedes it, then mark:
+**A: Replacement exists already**
 ```
 update_memory(id="E0023", content="Wrong approach — see [✓E0076]", obsolete=true)
 ```
 
-**Pattern B: No replacement exists yet**
-Write the correction first, then mark:
+**B: No replacement exists yet**
 ```
 write_memory(prefix="L", content="Correct approach is XYZ\n\tDetails...")  # -> L0090
 update_memory(id="L0042", content="Superseded — see [✓L0090]", obsolete=true)
 ```
 
-**Pattern C: Just stale, no correction needed**
-If the entry is simply outdated with no replacement (e.g., a task that's done, a project note about a past state), mark it irrelevant instead:
+**C: Just stale, no correction needed**
+If the entry is simply outdated with no replacement (e.g., a finished task, a past state):
 ```
 update_memory(id="T0005", content="...", irrelevant=true)
 ```
 
 ---
 
-## Step 4 — Consolidate duplicates
+## Consolidate Duplicates
 
-Look for entries that cover the same topic (common with P entries). Merge them:
+Look for entries covering the same topic (common with P entries). Merge them:
 
 1. Pick the **keeper** (the more complete one)
-2. Copy unique info from the duplicate into the keeper:
-   ```
-   append_memory(id="P0029", content="Session from duplicate entry\n\tDetail carried over")
-   ```
-3. Mark the duplicate irrelevant:
-   ```
-   update_memory(id="P0031", content="Merged into P0029", irrelevant=true)
-   ```
+2. Copy unique info from the duplicate: `append_memory(id="P0029", content="Session from duplicate\n\tDetail carried over")`
+3. **Delete** the duplicate: `delete_agent_memory(agent_name="YOUR_NAME", entry_id="P0031")`
 
-You cannot delete entries yourself (only the curator can). Marking irrelevant hides them from bulk reads, which is the same practical effect.
+**Delete, don't mark irrelevant.** Irrelevant duplicates still show up with `show_all=true` and flood the context on future curation runs. True duplicates (entire content exists in the keeper) must be deleted to keep the memory clean.
 
 ---
 
-## Step 5 — Favorite audit
+## Favorite Audit
 
-Check your current favorites: look for `[♥]` markers in the title listing.
+Check `[♥]` markers in the output.
 
-- **Too many favorites?** If more than ~10% of entries are favorites, they lose their purpose. Demote the less important ones: `update_memory(id="X", content="...", favorite=false)`
-- **Missing favorites?** Reference entries you always need (API endpoints, key architecture decisions, frequently-used patterns) should be favorited.
-- **Sub-node favorites:** If a specific L2/L3 detail is the real reference (not the whole entry), favorite the sub-node: `update_memory(id="L0042.2", content="...", favorite=true)`
+- **Too many?** If >10% are favorites, demote less important ones: `update_memory(id="X", content="...", favorite=false)`
+- **Missing?** Reference entries you always need (API endpoints, key decisions, patterns) should be favorited.
+- **Sub-nodes:** If a specific L2/L3 is the real reference, favorite the sub-node instead.
 
 ---
 
 ## Guidelines
 
-- **Work in batches.** Don't try to curate 100+ entries in one session. Focus on one or two prefixes per run.
-- **Read before marking.** Always `read_memory(id=X)` to see L2 children before marking obsolete/irrelevant. The L1 might be weak but the detail valuable.
-- **Preserve learning value.** Error entries (E) and lessons (L) that describe *why* something failed are valuable even if the bug is fixed. Only mark obsolete if the root cause analysis is wrong.
-- **When in doubt, skip.** You can always curate again later. False irrelevant/obsolete is harder to undo than leaving an entry alone.
-- **Update stale L1 text.** If an entry's summary doesn't match its content anymore, rewrite it. A clear L1 is the most impactful improvement you can make.
+- **One prefix per batch.** Don't try all 200+ entries at once — focus on one prefix per `show_all` call.
+- **Preserve learning value.** Error entries (E) and lessons (L) about *why* something failed are valuable even if the bug is fixed. Only mark obsolete if the analysis is wrong.
+- **When in doubt, skip.** False irrelevant/obsolete is harder to undo than leaving an entry alone.
+- **Update stale L1 text.** A clear L1 is the most impactful improvement you can make.
 
 ---
 
-## Quick reference
+## Quick Reference
 
 | Tool | When |
 |------|------|
-| `read_memory(titles_only=true)` | Get full overview |
-| `read_memory(titles_only=true, prefix="L")` | Focus on one category |
-| `read_memory(id="L0042")` | Drill into entry before judging |
+| `memory_health()` | **Start here** — broken links, orphans, stale favorites |
+| `memory_stats()` | Overview before starting |
+| `read_memory(stale_days=60)` | Prime curation targets |
+| `read_memory(prefix="X", show_all=true)` | Load entire prefix for review |
 | `update_memory(id, content, favorite=true)` | Mark as always-show reference |
 | `update_memory(id, content, irrelevant=true)` | Hide from bulk reads (noise) |
 | `update_memory(id, content, obsolete=true)` | Mark as wrong (needs [✓ID]) |
-| `append_memory(id, content)` | Merge info from duplicate |
-| `read_memory(show_obsolete=true)` | Review already-obsolete entries |
+| `append_memory(id, content)` | Merge info into keeper |
+| `delete_agent_memory(agent_name, entry_id)` | Delete true duplicates |
+| `read_memory(show_obsolete=true, prefix="X")` | Review already-obsolete entries |
