@@ -357,6 +357,12 @@ export declare class HmemStore {
      * Returns the final (non-obsolete) entry ID and the full chain of IDs traversed.
      */
     private resolveObsoleteChain;
+    /**
+     * Rewrite all external links that reference `obsoleteId` to point to `correctionId` instead.
+     * Called automatically when an entry is marked obsolete with a [✓ID] correction reference.
+     * Skips the obsolete entry itself and its correction (those are handled via addLink).
+     */
+    private rewriteLinksToObsolete;
     /** Fetch direct children of a node (root or compound), including their grandchild counts. */
     /** Bulk-fetch direct child counts for multiple parent IDs in one query. */
     private bulkChildCount;

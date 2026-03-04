@@ -1541,6 +1541,9 @@ export class HmemStore {
         this.addLink(id, correctionId);
         this.addLink(correctionId, id);
 
+        // Rewrite all external links that reference the obsolete entry → point to correction
+        this.rewriteLinksToObsolete(id, correctionId);
+
         // Transfer access_count: obsolete entry → correction entry, then reset obsolete to 0
         const oldEntry = this.db.prepare("SELECT access_count FROM memories WHERE id = ?").get(id) as { access_count: number } | undefined;
         if (oldEntry && oldEntry.access_count > 0) {
@@ -2170,6 +2173,47 @@ export class HmemStore {
     }
 
     return { finalId: currentId, chain };
+  }
+
+  /**
+   * Rewrite all external links that reference `obsoleteId` to point to `correctionId` instead.
+   * Called automatically when an entry is marked obsolete with a [✓ID] correction reference.
+   * Skips the obsolete entry itself and its correction (those are handled via addLink).
+   */
+  private rewriteLinksToObsolete(obsoleteId: string, correctionId: string): void {
+    // Scan memories.links
+    const memRows = this.db.prepare(
+      "SELECT id, links FROM memories WHERE links IS NOT NULL AND links LIKE ?"
+    ).all(`%"${obsoleteId}"%`) as { id: string; links: string }[];
+
+    for (const row of memRows) {
+      if (row.id === obsoleteId || row.id === correctionId) continue;
+      try {
+        const arr: string[] = JSON.parse(row.links);
+        if (!arr.includes(obsoleteId)) continue;
+        const updated = arr.map(l => l === obsoleteId ? correctionId : l);
+        // Deduplicate (in case correctionId was already in the list)
+        const deduped = [...new Set(updated)];
+        this.db.prepare("UPDATE memories SET links = ? WHERE id = ?")
+          .run(JSON.stringify(deduped), row.id);
+      } catch { /* malformed JSON — skip */ }
+    }
+
+    // Scan memory_nodes.links
+    const nodeRows = this.db.prepare(
+      "SELECT id, links FROM memory_nodes WHERE links IS NOT NULL AND links LIKE ?"
+    ).all(`%"${obsoleteId}"%`) as { id: string; links: string }[];
+
+    for (const row of nodeRows) {
+      try {
+        const arr: string[] = JSON.parse(row.links);
+        if (!arr.includes(obsoleteId)) continue;
+        const updated = arr.map(l => l === obsoleteId ? correctionId : l);
+        const deduped = [...new Set(updated)];
+        this.db.prepare("UPDATE memory_nodes SET links = ? WHERE id = ?")
+          .run(JSON.stringify(deduped), row.id);
+      } catch { /* malformed JSON — skip */ }
+    }
   }
 
   /** Fetch direct children of a node (root or compound), including their grandchild counts. */
