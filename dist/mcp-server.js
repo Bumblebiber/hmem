@@ -1341,8 +1341,8 @@ function renderEntryFormatted(lines, e, curator, expand = false) {
     if (e.children && e.children.length > 0) {
         const visibleChildren = e.children.filter(c => !c.irrelevant);
         const hiddenIrrelevant = e.children.length - visibleChildren.length;
-        if (expand) {
-            // Expand mode: full content + recursive children
+        if (expand || e.pinned) {
+            // Expand mode or pinned: full L2 content + recursive children
             renderChildrenExpanded(lines, visibleChildren, curator);
         }
         else if (e.expanded && !expand) {

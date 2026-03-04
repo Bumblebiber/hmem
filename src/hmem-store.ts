@@ -666,11 +666,17 @@ export class HmemStore {
       params.push(...tagRootIds);
     }
 
-    // Stale detection: entries not accessed in the last N days
+    // Stale detection: entries not accessed in the last N days.
+    // Entries with more sub-nodes than average are considered "actively developed"
+    // and excluded from stale results (they stay relevant regardless of last access).
     if (opts.staleDays && opts.staleDays > 0) {
       const cutoff = `-${opts.staleDays} days`;
       conditions.push("(last_accessed IS NULL OR last_accessed < datetime('now', ?))");
       params.push(cutoff);
+      conditions.push(
+        "(SELECT COUNT(*) FROM memory_nodes WHERE root_id = m.id)" +
+        " < (SELECT AVG(cnt) FROM (SELECT COUNT(*) AS cnt FROM memory_nodes GROUP BY root_id))"
+      );
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
