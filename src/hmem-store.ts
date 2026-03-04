@@ -230,6 +230,64 @@ CREATE TABLE IF NOT EXISTS schema_version (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE VIRTUAL TABLE IF NOT EXISTS hmem_fts USING fts5(
+    level_1,
+    node_content,
+    content='',
+    tokenize='unicode61'
+);
+CREATE TABLE IF NOT EXISTS hmem_fts_rowid_map (
+    fts_rowid INTEGER PRIMARY KEY,
+    root_id   TEXT NOT NULL,
+    node_id   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_fts_rm_root ON hmem_fts_rowid_map(root_id);
+CREATE INDEX IF NOT EXISTS idx_fts_rm_node ON hmem_fts_rowid_map(node_id);
+
+CREATE TRIGGER IF NOT EXISTS hmem_fts_mem_ai
+AFTER INSERT ON memories
+WHEN new.seq > 0
+BEGIN
+    INSERT INTO hmem_fts(level_1, node_content) VALUES (coalesce(new.level_1, ''), '');
+    INSERT INTO hmem_fts_rowid_map(fts_rowid, root_id, node_id)
+        VALUES (last_insert_rowid(), new.id, NULL);
+END;
+
+CREATE TRIGGER IF NOT EXISTS hmem_fts_node_ai
+AFTER INSERT ON memory_nodes
+BEGIN
+    INSERT INTO hmem_fts(level_1, node_content) VALUES ('', coalesce(new.content, ''));
+    INSERT INTO hmem_fts_rowid_map(fts_rowid, root_id, node_id)
+        VALUES (last_insert_rowid(), new.root_id, new.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS hmem_fts_mem_au
+AFTER UPDATE OF level_1 ON memories
+WHEN new.seq > 0
+BEGIN
+    INSERT INTO hmem_fts(hmem_fts, rowid, level_1, node_content)
+        VALUES ('delete', (SELECT fts_rowid FROM hmem_fts_rowid_map WHERE root_id = old.id AND node_id IS NULL), old.level_1, '');
+    INSERT INTO hmem_fts(level_1, node_content) VALUES (coalesce(new.level_1, ''), '');
+    UPDATE hmem_fts_rowid_map SET fts_rowid = last_insert_rowid()
+        WHERE root_id = new.id AND node_id IS NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS hmem_fts_mem_bd
+BEFORE DELETE ON memories
+BEGIN
+    INSERT INTO hmem_fts(hmem_fts, rowid, level_1, node_content)
+        VALUES ('delete', (SELECT fts_rowid FROM hmem_fts_rowid_map WHERE root_id = old.id AND node_id IS NULL), old.level_1, '');
+    DELETE FROM hmem_fts_rowid_map WHERE root_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS hmem_fts_node_bd
+BEFORE DELETE ON memory_nodes
+BEGIN
+    INSERT INTO hmem_fts(hmem_fts, rowid, level_1, node_content)
+        VALUES ('delete', (SELECT fts_rowid FROM hmem_fts_rowid_map WHERE node_id = old.id), '', old.content);
+    DELETE FROM hmem_fts_rowid_map WHERE node_id = old.id;
+END;
 `;
 
 // Migration: add columns to existing databases that lack them
@@ -301,6 +359,7 @@ export class HmemStore {
     this.migrateToTree();
     this.migrateHeaders();
     this.migrateObsoleteAccessCount();
+    this.migrateFts5();
   }
 
   /** Throw if the database is corrupted — prevents silent data loss on write operations. */
@@ -528,52 +587,42 @@ export class HmemStore {
       return rows.map(r => this.rowToEntry(r));
     }
 
-    // Full-text search across memories + memory_nodes
+    // Full-text search across memories + memory_nodes (FTS5)
     if (opts.search) {
-      const pattern = `%${opts.search}%`;
-      // Search in memories level_1 (exclude headers: seq > 0)
-      const searchCondition = "(level_1 LIKE ? AND seq > 0)";
-      const where = roleFilter.sql ? `WHERE ${searchCondition} AND ${roleFilter.sql}` : `WHERE ${searchCondition}`;
+      const searchTerm = opts.search.replace(/"/g, "").trim();
+      if (!searchTerm) return [];
 
-      // Also search memory_nodes content
-      const nodeLimitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
-      const nodeRows = this.db.prepare(
-        `SELECT DISTINCT root_id FROM memory_nodes WHERE content LIKE ?${nodeLimitClause}`
-      ).all(pattern) as any[];
-      const nodeRootIds = new Set(nodeRows.map(r => r.root_id));
+      // FTS5 phrase match — all words must appear in the text
+      const ftsMatch = `"${searchTerm}"`;
+      const ftsRootIds = new Set(
+        (this.db.prepare(
+          "SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)"
+        ).all(ftsMatch) as any[]).map(r => r.root_id)
+      );
 
       // Also search tags (e.g. search="#hmem" matches tag "#hmem")
+      const tagPattern = `%${opts.search}%`;
       const tagRows = this.db.prepare(
         "SELECT entry_id FROM memory_tags WHERE tag LIKE ?"
-      ).all(pattern) as any[];
+      ).all(tagPattern) as any[];
       for (const row of tagRows) {
         const eid = row.entry_id as string;
-        nodeRootIds.add(eid.includes(".") ? eid.split(".")[0] : eid);
+        ftsRootIds.add(eid.includes(".") ? eid.split(".")[0] : eid);
       }
 
-      const memLimitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
-      const memRows = this.db.prepare(
-        `SELECT * FROM memories ${where} ORDER BY created_at DESC${memLimitClause}`
-      ).all(pattern, ...roleFilter.params) as any[];
+      if (ftsRootIds.size === 0) return [];
 
-      // Merge: include any roots found in node search too
-      const allIds = new Set(memRows.map((r: any) => r.id));
-      const extraIds = [...nodeRootIds].filter(id => !allIds.has(id));
+      const idPlaceholders = [...ftsRootIds].map(() => "?").join(", ");
+      const baseWhere = `id IN (${idPlaceholders}) AND seq > 0`;
+      const where = roleFilter.sql ? `WHERE ${baseWhere} AND ${roleFilter.sql}` : `WHERE ${baseWhere}`;
+      const limitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
 
-      let extraRows: any[] = [];
-      if (extraIds.length > 0) {
-        const placeholders = extraIds.map(() => "?").join(", ");
-        const extraWhere = roleFilter.sql
-          ? `WHERE id IN (${placeholders}) AND seq > 0 AND ${roleFilter.sql}`
-          : `WHERE id IN (${placeholders}) AND seq > 0`;
-        extraRows = this.db.prepare(
-          `SELECT * FROM memories ${extraWhere} ORDER BY created_at DESC`
-        ).all(...extraIds, ...roleFilter.params) as any[];
-      }
+      const rows = this.db.prepare(
+        `SELECT * FROM memories ${where} ORDER BY created_at DESC${limitClause}`
+      ).all(...ftsRootIds, ...roleFilter.params) as any[];
 
-      const allRows = [...memRows, ...extraRows];
-      for (const row of allRows) this.bumpAccess(row.id);
-      return allRows.map(r => this.rowToEntry(r));
+      for (const row of rows) this.bumpAccess(row.id);
+      return rows.map(r => this.rowToEntry(r));
     }
 
     // Build filtered bulk query (exclude headers: seq > 0)
@@ -1401,8 +1450,9 @@ export class HmemStore {
     const trimmed = newContent.trim();
     if (id.includes(".")) {
       // Sub-node in memory_nodes — check char limit for its depth
-      const nodeRow = this.db.prepare("SELECT depth FROM memory_nodes WHERE id = ?").get(id) as any;
+      const nodeRow = this.db.prepare("SELECT depth, content FROM memory_nodes WHERE id = ?").get(id) as any;
       if (!nodeRow) return false;
+      const oldContent = nodeRow.content as string;
       const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(nodeRow.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
       if (trimmed.length > nodeLimit * HmemStore.CHAR_LIMIT_TOLERANCE) {
         throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
@@ -1427,8 +1477,26 @@ export class HmemStore {
       }
       params.push(id);
       const result = this.db.prepare(`UPDATE memory_nodes SET ${sets.join(", ")} WHERE id = ?`).run(...params);
-      if (result.changes > 0 && tags !== undefined) {
-        this.setTags(id, tags.length > 0 ? this.validateTags(tags) : []);
+      if (result.changes > 0) {
+        // Sync FTS5: delete old row, insert updated content
+        const mapRow = this.db.prepare(
+          "SELECT fts_rowid FROM hmem_fts_rowid_map WHERE node_id = ?"
+        ).get(id) as any;
+        if (mapRow) {
+          this.db.prepare(
+            "INSERT INTO hmem_fts(hmem_fts, rowid, level_1, node_content) VALUES ('delete', ?, '', ?)"
+          ).run(mapRow.fts_rowid, oldContent);
+          this.db.prepare(
+            "INSERT INTO hmem_fts(level_1, node_content) VALUES (?, ?)"
+          ).run('', trimmed);
+          const newRowId = (this.db.prepare("SELECT last_insert_rowid() as r").get() as any).r;
+          this.db.prepare(
+            "UPDATE hmem_fts_rowid_map SET fts_rowid = ? WHERE node_id = ?"
+          ).run(newRowId, id);
+        }
+        if (tags !== undefined) {
+          this.setTags(id, tags.length > 0 ? this.validateTags(tags) : []);
+        }
       }
       return result.changes > 0;
     } else {
@@ -1896,6 +1964,48 @@ export class HmemStore {
       // memory_nodes has no obsolete column — only root entries can be obsolete
       this.db.prepare(
         "INSERT INTO schema_version (key, value) VALUES ('obsolete_access_reset_v1', 'done')"
+      ).run();
+    })();
+  }
+
+  /**
+   * One-time migration: build FTS5 index from existing data.
+   * Idempotent — tracked via schema_version key 'fts5_v1'.
+   * For fresh DBs the triggers handle indexing; this migration covers pre-existing rows.
+   */
+  private migrateFts5(): void {
+    const done = this.db.prepare(
+      "SELECT value FROM schema_version WHERE key = 'fts5_v1'"
+    ).get();
+    if (done) return;
+
+    const insertFts = this.db.prepare(
+      "INSERT INTO hmem_fts(level_1, node_content) VALUES (?, ?)"
+    );
+    const insertMap = this.db.prepare(
+      "INSERT INTO hmem_fts_rowid_map(fts_rowid, root_id, node_id) VALUES (?, ?, ?)"
+    );
+    const lastId = this.db.prepare("SELECT last_insert_rowid() as r");
+
+    this.db.transaction(() => {
+      const memRows = this.db.prepare(
+        "SELECT id, level_1 FROM memories WHERE seq > 0"
+      ).all() as any[];
+      for (const row of memRows) {
+        insertFts.run(row.level_1 ?? '', '');
+        insertMap.run((lastId.get() as any).r, row.id, null);
+      }
+
+      const nodeRows = this.db.prepare(
+        "SELECT id, root_id, content FROM memory_nodes"
+      ).all() as any[];
+      for (const row of nodeRows) {
+        insertFts.run('', row.content ?? '');
+        insertMap.run((lastId.get() as any).r, row.root_id, row.id);
+      }
+
+      this.db.prepare(
+        "INSERT INTO schema_version (key, value) VALUES ('fts5_v1', 'done')"
       ).run();
     })();
   }
