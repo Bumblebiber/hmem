@@ -2758,6 +2758,146 @@ export class HmemStore {
     const result = this.db.prepare("DELETE FROM memory_tags WHERE tag = ?").run(old);
     return result.changes;
   }
+
+  /**
+   * Move a sub-node (and its entire subtree) to a different parent.
+   * sourceId must be a sub-node (e.g. "P0029.15"), not a root entry.
+   * targetParentId can be a root (e.g. "L0074") or a sub-node (e.g. "P0029.20").
+   * All IDs in links and [✓ID] content references are updated automatically.
+   */
+  moveNode(sourceId: string, targetParentId: string): { moved: number; newId: string; idMap: Record<string, string> } {
+    this.guardCorrupted();
+
+    if (!sourceId.includes(".")) {
+      throw new Error(`Cannot move root entry "${sourceId}" — only sub-nodes can be moved.`);
+    }
+
+    const sourceNode = this.db.prepare("SELECT * FROM memory_nodes WHERE id = ?").get(sourceId) as any;
+    if (!sourceNode) throw new Error(`Source node "${sourceId}" not found.`);
+
+    const targetIsRoot = !targetParentId.includes(".");
+    if (targetIsRoot) {
+      if (!this.db.prepare("SELECT id FROM memories WHERE id = ?").get(targetParentId)) {
+        throw new Error(`Target parent "${targetParentId}" not found.`);
+      }
+    } else {
+      if (!this.db.prepare("SELECT id FROM memory_nodes WHERE id = ?").get(targetParentId)) {
+        throw new Error(`Target parent "${targetParentId}" not found.`);
+      }
+    }
+
+    if (targetParentId === sourceId || targetParentId.startsWith(sourceId + ".")) {
+      throw new Error(`Cannot move "${sourceId}" into its own subtree.`);
+    }
+
+    // Collect subtree (source + all descendants), ordered by depth then seq
+    const subtree = this.db.prepare(
+      "SELECT * FROM memory_nodes WHERE id = ? OR id LIKE ? ORDER BY depth, seq"
+    ).all(sourceId, sourceId + ".%") as any[];
+
+    // Compute new root, seq, depth for the source node
+    const newRootId = targetIsRoot ? targetParentId : targetParentId.split(".")[0];
+    const maxSeqRow = this.db.prepare(
+      "SELECT MAX(seq) as maxSeq FROM memory_nodes WHERE parent_id = ?"
+    ).get(targetParentId) as any;
+    const newSeq = (maxSeqRow?.maxSeq ?? 0) + 1;
+    const targetDepth = targetIsRoot ? 1 : (targetParentId.match(/\./g)!.length + 1);
+    const newSourceDepth = targetDepth + 1;
+    const depthOffset = newSourceDepth - sourceNode.depth;
+    const newSourceId = `${targetParentId}.${newSeq}`;
+
+    // Build ID map: replace sourceId prefix with newSourceId for all nodes in subtree
+    const idMap = new Map<string, string>();
+    for (const node of subtree) {
+      idMap.set(node.id, newSourceId + node.id.substring(sourceId.length));
+    }
+
+    const remapLinks = (linksJson: string | null): string | null => {
+      if (!linksJson) return linksJson;
+      try {
+        const links: string[] = JSON.parse(linksJson);
+        return JSON.stringify(links.map(l => idMap.get(l) ?? l));
+      } catch { return linksJson; }
+    };
+
+    this.db.transaction(() => {
+      const insertNode = this.db.prepare(`
+        INSERT INTO memory_nodes
+          (id, parent_id, root_id, depth, seq, title, content, created_at,
+           access_count, last_accessed, favorite, secret, irrelevant, links, obsolete)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const node of subtree) {
+        const newId = idMap.get(node.id)!;
+        const newParentId = node.id === sourceId
+          ? targetParentId
+          : (idMap.get(node.parent_id) ?? node.parent_id);
+        const newDepth = node.depth + depthOffset;
+        const nodeSeq = node.id === sourceId ? newSeq : node.seq;
+
+        // Remap [✓ID] content references within the subtree
+        let newContent = node.content as string | null;
+        if (newContent) {
+          for (const [oldId, mappedId] of idMap) {
+            newContent = newContent.split(oldId).join(mappedId);
+          }
+        }
+
+        insertNode.run(
+          newId, newParentId, newRootId, newDepth, nodeSeq,
+          node.title, newContent, node.created_at,
+          node.access_count ?? 0, node.last_accessed,
+          node.favorite ?? 0, node.secret ?? 0, node.irrelevant ?? 0,
+          remapLinks(node.links), node.obsolete ?? 0,
+        );
+      }
+
+      // Delete old nodes
+      const oldIds = subtree.map(n => n.id);
+      const ph = oldIds.map(() => "?").join(",");
+      (this.db.prepare(`DELETE FROM memory_nodes WHERE id IN (${ph})`) as any).run(...oldIds);
+
+      // Update FTS rowid map
+      for (const [oldId, newId] of idMap) {
+        this.db.prepare(
+          "UPDATE hmem_fts_rowid_map SET node_id = ? WHERE node_id = ?"
+        ).run(newId, oldId);
+      }
+
+      // Update external references in other nodes (links JSON)
+      const extNodes = this.db.prepare(
+        "SELECT id, links FROM memory_nodes WHERE links IS NOT NULL"
+      ).all() as any[];
+      const updNodeLinks = this.db.prepare("UPDATE memory_nodes SET links = ? WHERE id = ?");
+      for (const ext of extNodes) {
+        const remapped = remapLinks(ext.links);
+        if (remapped !== ext.links) updNodeLinks.run(remapped, ext.id);
+      }
+
+      // Update external references in root entries (links JSON)
+      const extRoots = this.db.prepare(
+        "SELECT id, links FROM memories WHERE links IS NOT NULL AND seq > 0"
+      ).all() as any[];
+      const updRootLinks = this.db.prepare("UPDATE memories SET links = ? WHERE id = ?");
+      for (const ext of extRoots) {
+        const remapped = remapLinks(ext.links);
+        if (remapped !== ext.links) updRootLinks.run(remapped, ext.id);
+      }
+
+      // Update [✓ID] references in content of other nodes and roots
+      for (const [oldId, newId] of idMap) {
+        this.db.prepare(
+          "UPDATE memory_nodes SET content = REPLACE(content, ?, ?) WHERE content LIKE ?"
+        ).run(oldId, newId, `%${oldId}%`);
+        this.db.prepare(
+          "UPDATE memories SET level_1 = REPLACE(level_1, ?, ?) WHERE level_1 LIKE ?"
+        ).run(oldId, newId, `%${oldId}%`);
+      }
+    })();
+
+    return { moved: subtree.length, newId: newSourceId, idMap: Object.fromEntries(idMap) };
+  }
 }
 
 // ---- Convenience: resolve .hmem path for an agent ----

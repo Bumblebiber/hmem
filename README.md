@@ -303,6 +303,7 @@ done
 | `memory_health` | Audit report: broken links, orphaned entries, stale favorites, broken obsolete chains |
 | `tag_bulk` | Apply tag changes (add/remove) to all entries matching a filter |
 | `tag_rename` | Rename a hashtag across all entries and nodes |
+| `move_memory` | Move a sub-node (+ entire subtree) to a different parent — updates all IDs and references |
 
 ### Curator Tools (role: ceo)
 
@@ -313,6 +314,7 @@ done
 | `fix_agent_memory` | Correct a specific entry or sub-node in any agent's memory |
 | `append_agent_memory` | Add content to an existing entry in any agent's memory (for merging duplicates) |
 | `delete_agent_memory` | Delete a memory entry (prefer `fix_agent_memory(obsolete=true)` — deletion is permanent) |
+| `move_agent_memory` | Move a sub-node in any agent's memory to a different parent — updates all IDs and references |
 | `mark_audited` | Mark an agent as audited |
 
 ---

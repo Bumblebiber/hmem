@@ -149,6 +149,64 @@ write_memory(
 
 ---
 
+## Before Writing: Navigate the Tree First
+
+**Never write blindly.** Before creating a new entry or appending, navigate the existing tree top-down to find the correct insertion point. New information almost always belongs inside an existing entry — not as a new root.
+
+### Protocol
+
+**Step 1 — Check L1 summaries (already in context)**
+Scan the root entries visible in your context. Is there a matching root for this topic?
+
+- **No match** → `write_memory()` creates a new root
+- **Match found** → continue to Step 2
+
+**Step 2 — Read the matching root's children**
+```
+read_memory(id="P0029")   # shows root + all L2 titles
+```
+Do any L2 titles match the sub-topic?
+
+- **No match** → `append_memory(id="P0029", content="...")` adds a new L2
+- **Match found (e.g. .15)** → continue to Step 3
+
+**Step 3 — Drill into that L2**
+```
+read_memory(id="P0029.15")   # shows L2 node + all L3 titles
+```
+Does an L3 match even more specifically?
+
+- **No match** → `append_memory(id="P0029.15", content="...")` adds a new L3
+- **Match found** → continue drilling (Step 4: `read_memory(id="P0029.15.2")`, etc.)
+
+**Stop drilling when:** no child matches, or you've reached the level of granularity that fits.
+
+### Example
+
+New insight about MCP server restart behavior after TypeScript compile:
+
+```
+# Step 1: L1 summaries show L0074 "MCP server muss nach Kompilierung neugestartet werden"
+# Step 2: read_memory(id="L0074") → shows .1 "Fix: kill + auto-respawn", .2 "Context: Althing only"
+# No L2 matches the new sub-case → append at L2
+
+append_memory(id="L0074", content="Standalone hmem-mcp: npm restart required (no auto-respawn)")
+# → adds L0074.3 (L3 under the existing lesson)
+```
+
+Instead of: `write_memory(prefix="L", content="MCP restart needed after compile...")` — which would duplicate L0074.
+
+### When `write_memory` is correct
+
+Only use `write_memory` when:
+- No root entry exists for this topic at all
+- The topic is genuinely orthogonal (different error, different decision, different project)
+- You're creating an E/L/D entry for a new root cause, not an extension of an existing one
+
+**Rule:** If in doubt, drill one level deeper before deciding to create a new root.
+
+---
+
 ## When to save?
 
 **Mandatory before terminating.** Only save what is still valuable in 6 months.

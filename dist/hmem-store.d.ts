@@ -487,6 +487,17 @@ export declare class HmemStore {
      * Returns the number of rows updated.
      */
     tagRename(oldTag: string, newTag: string): number;
+    /**
+     * Move a sub-node (and its entire subtree) to a different parent.
+     * sourceId must be a sub-node (e.g. "P0029.15"), not a root entry.
+     * targetParentId can be a root (e.g. "L0074") or a sub-node (e.g. "P0029.20").
+     * All IDs in links and [✓ID] content references are updated automatically.
+     */
+    moveNode(sourceId: string, targetParentId: string): {
+        moved: number;
+        newId: string;
+        idMap: Record<string, string>;
+    };
 }
 export declare function resolveHmemPath(projectDir: string, templateName: string): string;
 /**

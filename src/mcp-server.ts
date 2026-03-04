@@ -973,6 +973,42 @@ server.tool(
   }
 );
 
+server.tool(
+  "move_memory",
+  "Move a sub-node (and its entire subtree) to a different parent, updating all ID references. " +
+    "source_id must be a sub-node (e.g. 'P0029.15'), not a root entry. " +
+    "target_parent_id is the new parent: a root entry (e.g. 'L0074') or a sub-node (e.g. 'P0029.20'). " +
+    "Use during curation to reorganize entries into the correct hierarchy.",
+  {
+    source_id: z.string().describe("Sub-node to move, e.g. 'P0029.15' (must not be a root entry ID)"),
+    target_parent_id: z.string().describe("New parent: root 'L0074' or sub-node 'P0029.20'"),
+    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
+  },
+  async ({ source_id, target_parent_id, store }) => {
+    try {
+      const hmemStore = store === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+      try {
+        const result = hmemStore.moveNode(source_id, target_parent_id);
+        const idLines = Object.entries(result.idMap)
+          .map(([old, nw]) => `  ${old} → ${nw}`)
+          .join("\n");
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Moved ${result.moved} node(s) to ${target_parent_id}.\nNew ID: ${result.newId}\n\nID mapping:\n${idLines}`,
+          }],
+        };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+    }
+  }
+);
+
 // ---- Curator Tools (ceo role only) ----
 
 const AUDIT_STATE_FILE = process.env.HMEM_AUDIT_STATE_PATH

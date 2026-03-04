@@ -95,6 +95,27 @@ Look for entries covering the same topic (common with P entries). Merge them:
 
 ---
 
+## Relocate Misplaced Nodes
+
+When a sub-node belongs under a different root or parent, use `move_memory` to cut and re-insert it. All IDs, links, and `[✓ID]` content references are updated automatically.
+
+```
+# Move P0029.15 to become a child of L0074
+move_memory(source_id="P0029.15", target_parent_id="L0074")
+# → P0029.15 (+ all children) become L0074.N (new seq under L0074)
+
+# Move within the same root: P0029.15 → under P0029.20
+move_memory(source_id="P0029.15", target_parent_id="P0029.20")
+# → becomes P0029.20.N with all children re-keyed
+```
+
+**Constraints:**
+- `source_id` must be a sub-node — cannot move root entries
+- Cannot move a node into its own subtree
+- Curator variant: `move_agent_memory(agent_name="THOR", source_id="...", target_parent_id="...")`
+
+---
+
 ## Favorite Audit
 
 Check `[♥]` markers in the output.
@@ -126,5 +147,6 @@ Check `[♥]` markers in the output.
 | `update_memory(id, content, irrelevant=true)` | Hide from bulk reads (noise) |
 | `update_memory(id, content, obsolete=true)` | Mark as wrong (needs [✓ID]) |
 | `append_memory(id, content)` | Merge info into keeper |
+| `move_memory(source_id, target_parent_id)` | Relocate misplaced sub-node (updates all refs) |
 | `delete_agent_memory(agent_name, entry_id)` | Delete true duplicates |
 | `read_memory(show_obsolete=true, prefix="X")` | Review already-obsolete entries |
