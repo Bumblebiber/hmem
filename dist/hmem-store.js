@@ -80,6 +80,64 @@ CREATE TABLE IF NOT EXISTS schema_version (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE VIRTUAL TABLE IF NOT EXISTS hmem_fts USING fts5(
+    level_1,
+    node_content,
+    content='',
+    tokenize='unicode61'
+);
+CREATE TABLE IF NOT EXISTS hmem_fts_rowid_map (
+    fts_rowid INTEGER PRIMARY KEY,
+    root_id   TEXT NOT NULL,
+    node_id   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_fts_rm_root ON hmem_fts_rowid_map(root_id);
+CREATE INDEX IF NOT EXISTS idx_fts_rm_node ON hmem_fts_rowid_map(node_id);
+
+CREATE TRIGGER IF NOT EXISTS hmem_fts_mem_ai
+AFTER INSERT ON memories
+WHEN new.seq > 0
+BEGIN
+    INSERT INTO hmem_fts(level_1, node_content) VALUES (coalesce(new.level_1, ''), '');
+    INSERT INTO hmem_fts_rowid_map(fts_rowid, root_id, node_id)
+        VALUES (last_insert_rowid(), new.id, NULL);
+END;
+
+CREATE TRIGGER IF NOT EXISTS hmem_fts_node_ai
+AFTER INSERT ON memory_nodes
+BEGIN
+    INSERT INTO hmem_fts(level_1, node_content) VALUES ('', coalesce(new.content, ''));
+    INSERT INTO hmem_fts_rowid_map(fts_rowid, root_id, node_id)
+        VALUES (last_insert_rowid(), new.root_id, new.id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS hmem_fts_mem_au
+AFTER UPDATE OF level_1 ON memories
+WHEN new.seq > 0
+BEGIN
+    INSERT INTO hmem_fts(hmem_fts, rowid, level_1, node_content)
+        VALUES ('delete', (SELECT fts_rowid FROM hmem_fts_rowid_map WHERE root_id = old.id AND node_id IS NULL), old.level_1, '');
+    INSERT INTO hmem_fts(level_1, node_content) VALUES (coalesce(new.level_1, ''), '');
+    UPDATE hmem_fts_rowid_map SET fts_rowid = last_insert_rowid()
+        WHERE root_id = new.id AND node_id IS NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS hmem_fts_mem_bd
+BEFORE DELETE ON memories
+BEGIN
+    INSERT INTO hmem_fts(hmem_fts, rowid, level_1, node_content)
+        VALUES ('delete', (SELECT fts_rowid FROM hmem_fts_rowid_map WHERE root_id = old.id AND node_id IS NULL), old.level_1, '');
+    DELETE FROM hmem_fts_rowid_map WHERE root_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS hmem_fts_node_bd
+BEFORE DELETE ON memory_nodes
+BEGIN
+    INSERT INTO hmem_fts(hmem_fts, rowid, level_1, node_content)
+        VALUES ('delete', (SELECT fts_rowid FROM hmem_fts_rowid_map WHERE node_id = old.id), '', old.content);
+    DELETE FROM hmem_fts_rowid_map WHERE node_id = old.id;
+END;
 `;
 // Migration: add columns to existing databases that lack them
 const MIGRATIONS = [
@@ -145,6 +203,7 @@ export class HmemStore {
         this.migrateToTree();
         this.migrateHeaders();
         this.migrateObsoleteAccessCount();
+        this.migrateFts5();
     }
     /** Throw if the database is corrupted — prevents silent data loss on write operations. */
     guardCorrupted() {
@@ -351,39 +410,31 @@ export class HmemStore {
             const rows = this.db.prepare(`SELECT * FROM memories ${where} ORDER BY created_at DESC`).all(...params);
             return rows.map(r => this.rowToEntry(r));
         }
-        // Full-text search across memories + memory_nodes
+        // Full-text search across memories + memory_nodes (FTS5)
         if (opts.search) {
-            const pattern = `%${opts.search}%`;
-            // Search in memories level_1 (exclude headers: seq > 0)
-            const searchCondition = "(level_1 LIKE ? AND seq > 0)";
-            const where = roleFilter.sql ? `WHERE ${searchCondition} AND ${roleFilter.sql}` : `WHERE ${searchCondition}`;
-            // Also search memory_nodes content
-            const nodeLimitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
-            const nodeRows = this.db.prepare(`SELECT DISTINCT root_id FROM memory_nodes WHERE content LIKE ?${nodeLimitClause}`).all(pattern);
-            const nodeRootIds = new Set(nodeRows.map(r => r.root_id));
+            const searchTerm = opts.search.replace(/"/g, "").trim();
+            if (!searchTerm)
+                return [];
+            // FTS5 phrase match — all words must appear in the text
+            const ftsMatch = `"${searchTerm}"`;
+            const ftsRootIds = new Set(this.db.prepare("SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)").all(ftsMatch).map(r => r.root_id));
             // Also search tags (e.g. search="#hmem" matches tag "#hmem")
-            const tagRows = this.db.prepare("SELECT entry_id FROM memory_tags WHERE tag LIKE ?").all(pattern);
+            const tagPattern = `%${opts.search}%`;
+            const tagRows = this.db.prepare("SELECT entry_id FROM memory_tags WHERE tag LIKE ?").all(tagPattern);
             for (const row of tagRows) {
                 const eid = row.entry_id;
-                nodeRootIds.add(eid.includes(".") ? eid.split(".")[0] : eid);
+                ftsRootIds.add(eid.includes(".") ? eid.split(".")[0] : eid);
             }
-            const memLimitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
-            const memRows = this.db.prepare(`SELECT * FROM memories ${where} ORDER BY created_at DESC${memLimitClause}`).all(pattern, ...roleFilter.params);
-            // Merge: include any roots found in node search too
-            const allIds = new Set(memRows.map((r) => r.id));
-            const extraIds = [...nodeRootIds].filter(id => !allIds.has(id));
-            let extraRows = [];
-            if (extraIds.length > 0) {
-                const placeholders = extraIds.map(() => "?").join(", ");
-                const extraWhere = roleFilter.sql
-                    ? `WHERE id IN (${placeholders}) AND seq > 0 AND ${roleFilter.sql}`
-                    : `WHERE id IN (${placeholders}) AND seq > 0`;
-                extraRows = this.db.prepare(`SELECT * FROM memories ${extraWhere} ORDER BY created_at DESC`).all(...extraIds, ...roleFilter.params);
-            }
-            const allRows = [...memRows, ...extraRows];
-            for (const row of allRows)
+            if (ftsRootIds.size === 0)
+                return [];
+            const idPlaceholders = [...ftsRootIds].map(() => "?").join(", ");
+            const baseWhere = `id IN (${idPlaceholders}) AND seq > 0`;
+            const where = roleFilter.sql ? `WHERE ${baseWhere} AND ${roleFilter.sql}` : `WHERE ${baseWhere}`;
+            const limitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
+            const rows = this.db.prepare(`SELECT * FROM memories ${where} ORDER BY created_at DESC${limitClause}`).all(...ftsRootIds, ...roleFilter.params);
+            for (const row of rows)
                 this.bumpAccess(row.id);
-            return allRows.map(r => this.rowToEntry(r));
+            return rows.map(r => this.rowToEntry(r));
         }
         // Build filtered bulk query (exclude headers: seq > 0)
         const conditions = ["seq > 0"];
@@ -421,9 +472,18 @@ export class HmemStore {
             conditions.push(`id IN (${placeholders})`);
             params.push(...tagRootIds);
         }
+        // Stale detection: entries not accessed in the last N days
+        if (opts.staleDays && opts.staleDays > 0) {
+            const cutoff = `-${opts.staleDays} days`;
+            conditions.push("(last_accessed IS NULL OR last_accessed < datetime('now', ?))");
+            params.push(cutoff);
+        }
         const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
         // Sort by effective_date: the most recent of root created_at OR latest child node created_at.
-        // This ensures entries with recently appended L2 nodes surface alongside genuinely new entries.
+        // For stale queries: sort by oldest access first (most stale first).
+        const staleSort = opts.staleDays
+            ? "COALESCE(m.last_accessed, m.created_at) ASC"
+            : "effective_date DESC";
         const limitClause = limit !== undefined ? `LIMIT ${limit}` : "";
         const rows = this.db.prepare(`
       SELECT m.*,
@@ -433,10 +493,10 @@ export class HmemStore {
         ) AS effective_date
       FROM memories m
       ${where}
-      ORDER BY effective_date DESC
+      ORDER BY ${staleSort}
       ${limitClause}
     `).all(...params);
-        if (opts.prefix || opts.after || opts.before) {
+        if (opts.prefix || opts.after || opts.before || opts.staleDays) {
             for (const row of rows)
                 this.bumpAccess(row.id);
         }
@@ -1126,9 +1186,10 @@ export class HmemStore {
         const trimmed = newContent.trim();
         if (id.includes(".")) {
             // Sub-node in memory_nodes — check char limit for its depth
-            const nodeRow = this.db.prepare("SELECT depth FROM memory_nodes WHERE id = ?").get(id);
+            const nodeRow = this.db.prepare("SELECT depth, content FROM memory_nodes WHERE id = ?").get(id);
             if (!nodeRow)
                 return false;
+            const oldContent = nodeRow.content;
             const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(nodeRow.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
             if (trimmed.length > nodeLimit * HmemStore.CHAR_LIMIT_TOLERANCE) {
                 throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
@@ -1153,8 +1214,18 @@ export class HmemStore {
             }
             params.push(id);
             const result = this.db.prepare(`UPDATE memory_nodes SET ${sets.join(", ")} WHERE id = ?`).run(...params);
-            if (result.changes > 0 && tags !== undefined) {
-                this.setTags(id, tags.length > 0 ? this.validateTags(tags) : []);
+            if (result.changes > 0) {
+                // Sync FTS5: delete old row, insert updated content
+                const mapRow = this.db.prepare("SELECT fts_rowid FROM hmem_fts_rowid_map WHERE node_id = ?").get(id);
+                if (mapRow) {
+                    this.db.prepare("INSERT INTO hmem_fts(hmem_fts, rowid, level_1, node_content) VALUES ('delete', ?, '', ?)").run(mapRow.fts_rowid, oldContent);
+                    this.db.prepare("INSERT INTO hmem_fts(level_1, node_content) VALUES (?, ?)").run('', trimmed);
+                    const newRowId = this.db.prepare("SELECT last_insert_rowid() as r").get().r;
+                    this.db.prepare("UPDATE hmem_fts_rowid_map SET fts_rowid = ? WHERE node_id = ?").run(newRowId, id);
+                }
+                if (tags !== undefined) {
+                    this.setTags(id, tags.length > 0 ? this.validateTags(tags) : []);
+                }
             }
             return result.changes > 0;
         }
@@ -1572,6 +1643,32 @@ export class HmemStore {
         })();
     }
     /**
+     * One-time migration: build FTS5 index from existing data.
+     * Idempotent — tracked via schema_version key 'fts5_v1'.
+     * For fresh DBs the triggers handle indexing; this migration covers pre-existing rows.
+     */
+    migrateFts5() {
+        const done = this.db.prepare("SELECT value FROM schema_version WHERE key = 'fts5_v1'").get();
+        if (done)
+            return;
+        const insertFts = this.db.prepare("INSERT INTO hmem_fts(level_1, node_content) VALUES (?, ?)");
+        const insertMap = this.db.prepare("INSERT INTO hmem_fts_rowid_map(fts_rowid, root_id, node_id) VALUES (?, ?, ?)");
+        const lastId = this.db.prepare("SELECT last_insert_rowid() as r");
+        this.db.transaction(() => {
+            const memRows = this.db.prepare("SELECT id, level_1 FROM memories WHERE seq > 0").all();
+            for (const row of memRows) {
+                insertFts.run(row.level_1 ?? '', '');
+                insertMap.run(lastId.get().r, row.id, null);
+            }
+            const nodeRows = this.db.prepare("SELECT id, root_id, content FROM memory_nodes").all();
+            for (const row of nodeRows) {
+                insertFts.run('', row.content ?? '');
+                insertMap.run(lastId.get().r, row.root_id, row.id);
+            }
+            this.db.prepare("INSERT INTO schema_version (key, value) VALUES ('fts5_v1', 'done')").run();
+        })();
+    }
+    /**
      * Add a link from sourceId to targetId (idempotent).
      * Only works for root entries (not nodes).
      */
@@ -1976,6 +2073,215 @@ export class HmemStore {
             nodes.push({ id: nodeId, parent_id: myParentId, depth: absDepth, seq, content: text });
         }
         return nodes;
+    }
+    // ---- Stats, Health, Similarity, Bulk-Tags ----
+    /** Return a statistical overview of the memory store. */
+    getStats() {
+        const totalEntries = this.db.prepare("SELECT COUNT(*) as cnt FROM memories WHERE seq > 0 AND irrelevant != 1").get().cnt;
+        const byPrefixRows = this.db.prepare("SELECT prefix, COUNT(*) as cnt FROM memories WHERE seq > 0 AND irrelevant != 1 GROUP BY prefix ORDER BY prefix").all();
+        const byPrefix = {};
+        for (const r of byPrefixRows)
+            byPrefix[r.prefix] = r.cnt;
+        const totalNodes = this.db.prepare("SELECT COUNT(*) as cnt FROM memory_nodes WHERE irrelevant != 1").get().cnt;
+        const favorites = this.db.prepare("SELECT COUNT(*) as cnt FROM memories WHERE seq > 0 AND favorite = 1 AND irrelevant != 1").get().cnt;
+        const pinned = this.db.prepare("SELECT COUNT(*) as cnt FROM memories WHERE seq > 0 AND pinned = 1 AND irrelevant != 1").get().cnt;
+        const mostAccessedRows = this.db.prepare("SELECT id, title, level_1, access_count FROM memories WHERE seq > 0 AND irrelevant != 1 ORDER BY access_count DESC LIMIT 5").all();
+        const oldestRow = this.db.prepare("SELECT id, title, level_1, created_at FROM memories WHERE seq > 0 AND irrelevant != 1 ORDER BY created_at ASC LIMIT 1").get();
+        const staleCount = this.db.prepare("SELECT COUNT(*) as cnt FROM memories WHERE seq > 0 AND irrelevant != 1 AND (last_accessed IS NULL OR last_accessed < datetime('now', '-30 days'))").get().cnt;
+        const uniqueTags = this.db.prepare("SELECT COUNT(DISTINCT tag) as cnt FROM memory_tags").get().cnt;
+        const avgDepth = totalEntries > 0 ? parseFloat((totalNodes / totalEntries).toFixed(1)) : 0;
+        return {
+            totalEntries,
+            byPrefix,
+            totalNodes,
+            favorites,
+            pinned,
+            mostAccessed: mostAccessedRows.map(r => ({
+                id: r.id,
+                title: r.title || this.autoExtractTitle(r.level_1),
+                access_count: r.access_count,
+            })),
+            oldestEntry: oldestRow ? {
+                id: oldestRow.id,
+                created_at: oldestRow.created_at.substring(0, 10),
+                title: oldestRow.title || this.autoExtractTitle(oldestRow.level_1),
+            } : null,
+            staleCount,
+            uniqueTags,
+            avgDepth,
+        };
+    }
+    /**
+     * Find entries similar to the given entry via FTS5 keyword matching.
+     * Extracts significant words from level_1, queries FTS5, returns up to `limit` results.
+     */
+    findRelatedByFts(entryId, limit = 5) {
+        const entry = this.db.prepare("SELECT level_1, title FROM memories WHERE id = ?").get(entryId);
+        if (!entry)
+            return [];
+        const STOPWORDS = new Set(["the", "a", "an", "is", "in", "on", "at", "to", "for", "of", "and", "or", "but", "with", "by", "from", "was", "are", "been", "be", "it", "this", "that", "as", "not", "have", "has", "via", "der", "die", "das", "den", "dem", "des", "ein", "eine", "und", "oder", "mit", "von", "zu", "bei", "auf", "aus", "nach", "über", "für", "ist", "hat", "wird", "wurde"]);
+        const words = (entry.level_1 || "")
+            .replace(/[^a-zA-Z0-9äöüÄÖÜß\s-]/g, " ")
+            .split(/\s+/)
+            .filter((w) => w.length > 3 && !STOPWORDS.has(w.toLowerCase()))
+            .slice(0, 6);
+        if (words.length === 0)
+            return [];
+        const ftsQuery = words.map((w) => `"${w.replace(/"/g, "")}"`).join(" OR ");
+        try {
+            const ftsRootIds = new Set(this.db.prepare("SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)").all(ftsQuery).map((r) => r.root_id));
+            ftsRootIds.delete(entryId);
+            if (ftsRootIds.size === 0)
+                return [];
+            const idPlaceholders = [...ftsRootIds].map(() => "?").join(", ");
+            const rows = this.db.prepare(`SELECT id, title, level_1, created_at FROM memories WHERE id IN (${idPlaceholders}) AND seq > 0 AND irrelevant != 1 AND obsolete != 1 LIMIT ?`).all(...ftsRootIds, limit);
+            return rows.map((r) => ({
+                id: r.id,
+                title: r.title || this.autoExtractTitle(r.level_1),
+                created_at: r.created_at.substring(0, 10),
+                tags: this.fetchTags(r.id),
+            }));
+        }
+        catch {
+            return [];
+        }
+    }
+    /** Audit report: broken links, orphaned entries, stale favorites, broken obsolete chains, tag orphans. */
+    healthCheck() {
+        const result = {
+            brokenLinks: [],
+            orphanedEntries: [],
+            staleFavorites: [],
+            brokenObsoleteChains: [],
+            tagOrphans: 0,
+        };
+        // 1. Broken links
+        const entriesWithLinks = this.db.prepare("SELECT id, title, level_1, links FROM memories WHERE links IS NOT NULL AND links != '[]' AND seq > 0").all();
+        for (const entry of entriesWithLinks) {
+            let links;
+            try {
+                links = JSON.parse(entry.links) || [];
+            }
+            catch {
+                links = [];
+            }
+            const broken = links.filter((lid) => !this.db.prepare("SELECT 1 FROM memories WHERE id = ?").get(lid));
+            if (broken.length > 0) {
+                result.brokenLinks.push({
+                    id: entry.id,
+                    title: entry.title || this.autoExtractTitle(entry.level_1),
+                    brokenIds: broken,
+                });
+            }
+        }
+        // 2. Orphaned entries (no sub-nodes, not a header)
+        const noChildRows = this.db.prepare(`
+      SELECT m.id, m.title, m.level_1, m.created_at
+      FROM memories m
+      LEFT JOIN memory_nodes mn ON mn.root_id = m.id
+      WHERE m.seq > 0 AND m.irrelevant != 1 AND mn.id IS NULL
+      ORDER BY m.created_at ASC
+      LIMIT 20
+    `).all();
+        result.orphanedEntries = noChildRows.map((r) => ({
+            id: r.id,
+            title: r.title || this.autoExtractTitle(r.level_1),
+            created_at: r.created_at.substring(0, 10),
+        }));
+        // 3. Stale favorites/pinned (not accessed in 60 days)
+        const staleFavRows = this.db.prepare("SELECT id, title, level_1, last_accessed FROM memories WHERE seq > 0 AND (favorite = 1 OR pinned = 1) AND (last_accessed IS NULL OR last_accessed < datetime('now', '-60 days')) AND irrelevant != 1").all();
+        result.staleFavorites = staleFavRows.map((r) => ({
+            id: r.id,
+            title: r.title || this.autoExtractTitle(r.level_1),
+            lastAccessed: r.last_accessed ? r.last_accessed.substring(0, 10) : null,
+        }));
+        // 4. Broken obsolete chains: [✓ID] pointing to non-existent entry
+        const obsoleteRows = this.db.prepare("SELECT id, title, level_1 FROM memories WHERE obsolete = 1").all();
+        for (const entry of obsoleteRows) {
+            const match = (entry.level_1 || "").match(/\[✓([A-Z]\d+)\]/);
+            if (match) {
+                const targetId = match[1];
+                if (!this.db.prepare("SELECT 1 FROM memories WHERE id = ?").get(targetId)) {
+                    result.brokenObsoleteChains.push({
+                        id: entry.id,
+                        title: entry.title || this.autoExtractTitle(entry.level_1),
+                        badRef: targetId,
+                    });
+                }
+            }
+        }
+        // 5. Tag orphans: memory_tags rows pointing to deleted entries/nodes
+        result.tagOrphans = this.db.prepare(`
+      SELECT COUNT(*) as cnt FROM memory_tags mt
+      WHERE NOT EXISTS (SELECT 1 FROM memories WHERE id = mt.entry_id)
+      AND NOT EXISTS (SELECT 1 FROM memory_nodes WHERE id = mt.entry_id)
+    `).get().cnt;
+        return result;
+    }
+    /**
+     * Apply tag changes (add/remove) to all entries matching a filter.
+     * Returns the number of entries modified.
+     */
+    tagBulk(filter, addTags, removeTags) {
+        if (!addTags?.length && !removeTags?.length)
+            return 0;
+        let entryIds = [];
+        if (filter.tag) {
+            entryIds = [...this.getRootIdsByTag(filter.tag.toLowerCase())];
+        }
+        else {
+            const conditions = ["seq > 0", "irrelevant != 1"];
+            const params = [];
+            if (filter.prefix) {
+                conditions.push("prefix = ?");
+                params.push(filter.prefix.toUpperCase());
+            }
+            if (filter.search) {
+                const searchTerm = filter.search.replace(/"/g, "").trim();
+                try {
+                    const ftsRootIds = new Set(this.db.prepare("SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)").all(`"${searchTerm}"`).map((r) => r.root_id));
+                    if (ftsRootIds.size === 0)
+                        return 0;
+                    conditions.push(`id IN (${[...ftsRootIds].map(() => "?").join(",")})`);
+                    params.push(...ftsRootIds);
+                }
+                catch {
+                    return 0;
+                }
+            }
+            const rows = this.db.prepare(`SELECT id FROM memories WHERE ${conditions.join(" AND ")}`).all(...params);
+            entryIds = rows.map((r) => r.id);
+        }
+        if (entryIds.length === 0)
+            return 0;
+        const insertStmt = this.db.prepare("INSERT OR IGNORE INTO memory_tags(entry_id, tag) VALUES (?, ?)");
+        const deleteStmt = this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ? AND tag = ?");
+        const applyAll = this.db.transaction((ids) => {
+            for (const id of ids) {
+                if (addTags)
+                    for (const tag of addTags)
+                        insertStmt.run(id, tag.toLowerCase());
+                if (removeTags)
+                    for (const tag of removeTags)
+                        deleteStmt.run(id, tag.toLowerCase());
+            }
+        });
+        applyAll(entryIds);
+        return entryIds.length;
+    }
+    /**
+     * Rename a tag across all entries and nodes.
+     * Returns the number of rows updated.
+     */
+    tagRename(oldTag, newTag) {
+        const old = oldTag.toLowerCase();
+        const nw = newTag.toLowerCase();
+        if (old === nw)
+            return 0;
+        // Copy rows with new tag name, then delete the old ones
+        this.db.prepare("INSERT OR IGNORE INTO memory_tags(entry_id, tag) SELECT entry_id, ? FROM memory_tags WHERE tag = ?").run(nw, old);
+        const result = this.db.prepare("DELETE FROM memory_tags WHERE tag = ?").run(old);
+        return result.changes;
     }
 }
 // ---- Convenience: resolve .hmem path for an agent ----

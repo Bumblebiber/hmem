@@ -151,6 +151,8 @@ export interface ReadOptions {
     showAll?: boolean;
     /** Filter by tag, e.g. "#hmem". Only entries/nodes with this tag are included. */
     tag?: string;
+    /** Show entries not accessed in the last N days (stale detection). Sorted oldest-access first. */
+    staleDays?: number;
 }
 export interface WriteResult {
     id: string;
@@ -324,6 +326,12 @@ export declare class HmemStore {
      */
     private migrateObsoleteAccessCount;
     /**
+     * One-time migration: build FTS5 index from existing data.
+     * Idempotent — tracked via schema_version key 'fts5_v1'.
+     * For fresh DBs the triggers handle indexing; this migration covers pre-existing rows.
+     */
+    private migrateFts5;
+    /**
      * Add a link from sourceId to targetId (idempotent).
      * Only works for root entries (not nodes).
      */
@@ -410,6 +418,75 @@ export declare class HmemStore {
      * startSeq: the first seq number to assign to direct children (continuing after existing siblings).
      */
     private parseRelativeTree;
+    /** Return a statistical overview of the memory store. */
+    getStats(): {
+        totalEntries: number;
+        byPrefix: Record<string, number>;
+        totalNodes: number;
+        favorites: number;
+        pinned: number;
+        mostAccessed: {
+            id: string;
+            title: string;
+            access_count: number;
+        }[];
+        oldestEntry: {
+            id: string;
+            created_at: string;
+            title: string;
+        } | null;
+        staleCount: number;
+        uniqueTags: number;
+        avgDepth: number;
+    };
+    /**
+     * Find entries similar to the given entry via FTS5 keyword matching.
+     * Extracts significant words from level_1, queries FTS5, returns up to `limit` results.
+     */
+    findRelatedByFts(entryId: string, limit?: number): {
+        id: string;
+        title: string;
+        created_at: string;
+        tags: string[];
+    }[];
+    /** Audit report: broken links, orphaned entries, stale favorites, broken obsolete chains, tag orphans. */
+    healthCheck(): {
+        brokenLinks: {
+            id: string;
+            title: string;
+            brokenIds: string[];
+        }[];
+        orphanedEntries: {
+            id: string;
+            title: string;
+            created_at: string;
+        }[];
+        staleFavorites: {
+            id: string;
+            title: string;
+            lastAccessed: string | null;
+        }[];
+        brokenObsoleteChains: {
+            id: string;
+            title: string;
+            badRef: string;
+        }[];
+        tagOrphans: number;
+    };
+    /**
+     * Apply tag changes (add/remove) to all entries matching a filter.
+     * Returns the number of entries modified.
+     */
+    tagBulk(filter: {
+        prefix?: string;
+        search?: string;
+        tag?: string;
+    }, addTags?: string[], removeTags?: string[]): number;
+    /**
+     * Rename a tag across all entries and nodes.
+     * Returns the number of rows updated.
+     */
+    tagRename(oldTag: string, newTag: string): number;
 }
 export declare function resolveHmemPath(projectDir: string, templateName: string): string;
 /**

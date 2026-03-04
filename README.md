@@ -298,6 +298,11 @@ done
 | `import_memory` | Import entries from a `.hmem` file with deduplication and ID remapping |
 | `reset_memory_cache` | Clear session cache so all entries are treated as unseen |
 | `search_memory` | Full-text search across all agent `.hmem` databases |
+| `memory_stats` | Overview: total entries by prefix, nodes, favorites, pinned, stale count, most-accessed |
+| `find_related` | FTS5-based similarity search — find entries with overlapping keywords |
+| `memory_health` | Audit report: broken links, orphaned entries, stale favorites, broken obsolete chains |
+| `tag_bulk` | Apply tag changes (add/remove) to all entries matching a filter |
+| `tag_rename` | Rename a hashtag across all entries and nodes |
 
 ### Curator Tools (role: ceo)
 
@@ -430,9 +435,20 @@ Tag entries for cross-cutting search across prefix categories:
 write_memory(prefix="L", content="...", tags=["#security", "#hmem"])
 read_memory(tag="#security")      # filter bulk reads by tag
 read_memory(id="L0042")          # shows related entries (2+ shared tags)
+tag_bulk(filter={prefix: "E"}, add_tags=["#bugfix"])    # batch-tag all E-entries
+tag_rename(old_tag="#old", new_tag="#new")               # rename everywhere
 ```
 
 Tags are lowercase, must start with `#`, max 10 per entry. They work on root entries and sub-nodes.
+
+### Stale Detection and Memory Health
+
+```
+read_memory(stale_days=30)        # entries not accessed in 30 days, sorted oldest-first
+memory_stats()                    # count by prefix, stale count, favorites, most-accessed
+memory_health()                   # audit: broken links, orphans, stale favorites
+find_related(id="P0029")         # FTS5 keyword similarity — find thematically related entries
+```
 
 ### Access-count auto-promotion (`accessCountTopN`)
 

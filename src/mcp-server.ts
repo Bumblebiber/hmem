@@ -500,8 +500,12 @@ server.tool(
       "Filter by hashtag, e.g. '#hmem'. Only entries with this tag are shown in bulk reads. " +
       "Also works with search to find tagged entries."
     ),
+    stale_days: z.number().optional().describe(
+      "Show entries not accessed in the last N days. Sorted oldest-access first. " +
+      "Useful for finding what to curate or review. Example: stale_days=30"
+    ),
   },
-  async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator, show_all, tag }) => {
+  async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator, show_all, tag, stale_days }) => {
     if (AGENT_ID === "UNKNOWN") {
       return {
         content: [{ type: "text" as const, text: "ERROR: Agent-ID unknown. read_memory is only available for spawned agents." }],
@@ -548,6 +552,7 @@ server.tool(
           showAll: show_all,
           mode: isBulkListing ? effectiveMode : undefined,
           tag,
+          staleDays: stale_days,
         });
 
         if (entries.length === 0) {
@@ -739,6 +744,231 @@ server.tool(
         content: [{ type: "text" as const, text: `ERROR: ${e}` }],
         isError: true,
       };
+    }
+  }
+);
+
+server.tool(
+  "memory_stats",
+  "Shows budget status of your memory: total entries by prefix, nodes, favorites, pinned, most-accessed, oldest entry, stale count (not accessed in 30 days), unique hashtags, and avg nodes per entry.",
+  {
+    store: z.enum(["personal", "company"]).default("personal").describe(
+      "Target store: 'personal' (your own memory) or 'company' (shared company store)"
+    ),
+  },
+  async ({ store: storeName }) => {
+    try {
+      const hmemStore = storeName === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+      try {
+        const s = hmemStore.getStats();
+        const lines: string[] = [];
+        lines.push(`Memory stats (${storeName}):`);
+        lines.push(`  Total entries: ${s.totalEntries}`);
+        const prefixLine = Object.entries(s.byPrefix).map(([p, c]) => `${p}:${c}`).join(", ");
+        if (prefixLine) lines.push(`  By prefix: ${prefixLine}`);
+        lines.push(`  Total nodes: ${s.totalNodes}  (avg ${s.avgDepth} nodes/entry)`);
+        lines.push(`  Favorites [♥]: ${s.favorites}  Pinned [P]: ${s.pinned}`);
+        lines.push(`  Unique hashtags: ${s.uniqueTags}`);
+        lines.push(`  Stale (>30d not accessed): ${s.staleCount}`);
+        if (s.oldestEntry) {
+          lines.push(`  Oldest entry: ${s.oldestEntry.id} (${s.oldestEntry.created_at}) — ${s.oldestEntry.title}`);
+        }
+        if (s.mostAccessed.length > 0) {
+          lines.push(`  Most accessed:`);
+          for (const e of s.mostAccessed) {
+            lines.push(`    ${e.id} (${e.access_count}×) — ${e.title}`);
+          }
+        }
+        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "find_related",
+  "Find entries similar to the given entry via FTS5 keyword matching. " +
+    "Extracts significant words from the entry's level_1, queries the FTS5 index, " +
+    "and returns entries with overlapping content. " +
+    "Use to discover non-obvious connections or spot potential duplicates.",
+  {
+    id: z.string().describe("Root entry ID to find related entries for, e.g. 'P0001'"),
+    limit: z.number().min(1).max(20).default(5).describe("Max results to return (default: 5)"),
+    store: z.enum(["personal", "company"]).default("personal"),
+  },
+  async ({ id, limit, store: storeName }) => {
+    try {
+      const hmemStore = storeName === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+      try {
+        const results = hmemStore.findRelatedByFts(id, limit);
+        if (results.length === 0) {
+          return { content: [{ type: "text" as const, text: `No FTS-related entries found for ${id}.` }] };
+        }
+        const lines = [`Related to ${id} (FTS5 keyword match):`];
+        for (const r of results) {
+          const tagSuffix = r.tags.length > 0 ? "  " + r.tags.join(" ") : "";
+          lines.push(`  ${r.id} ${r.created_at}  ${r.title}${tagSuffix}`);
+        }
+        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "memory_health",
+  "Audit report for your memory: broken links (links pointing to deleted entries), " +
+    "orphaned entries (no sub-nodes), stale favorites/pinned (not accessed in 60 days), " +
+    "broken obsolete chains ([✓ID] pointing to non-existent entries), " +
+    "and tag orphans (tags with no matching entry). " +
+    "Run before/after a curation session.",
+  {
+    store: z.enum(["personal", "company"]).default("personal"),
+  },
+  async ({ store: storeName }) => {
+    try {
+      const hmemStore = storeName === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+      try {
+        const h = hmemStore.healthCheck();
+        const lines: string[] = [`Memory health report (${storeName}):`];
+        const ok = (label: string) => lines.push(`  ✓ ${label}`);
+        const warn = (label: string) => lines.push(`  ⚠ ${label}`);
+
+        if (h.brokenLinks.length === 0) {
+          ok("No broken links");
+        } else {
+          warn(`${h.brokenLinks.length} entries with broken links:`);
+          for (const e of h.brokenLinks) {
+            lines.push(`    ${e.id} — ${e.title} → broken: ${e.brokenIds.join(", ")}`);
+          }
+        }
+
+        if (h.orphanedEntries.length === 0) {
+          ok("No orphaned entries (all have sub-nodes)");
+        } else {
+          warn(`${h.orphanedEntries.length} entries with no sub-nodes:`);
+          for (const e of h.orphanedEntries) {
+            lines.push(`    ${e.id} (${e.created_at}) — ${e.title}`);
+          }
+        }
+
+        if (h.staleFavorites.length === 0) {
+          ok("No stale favorites/pinned");
+        } else {
+          warn(`${h.staleFavorites.length} stale favorites/pinned (>60d not accessed):`);
+          for (const e of h.staleFavorites) {
+            lines.push(`    ${e.id} — ${e.title} [last: ${e.lastAccessed ?? "never"}]`);
+          }
+        }
+
+        if (h.brokenObsoleteChains.length === 0) {
+          ok("No broken obsolete chains");
+        } else {
+          warn(`${h.brokenObsoleteChains.length} broken [✓ID] references:`);
+          for (const e of h.brokenObsoleteChains) {
+            lines.push(`    ${e.id} — ${e.title} → [✓${e.badRef}] not found`);
+          }
+        }
+
+        if (h.tagOrphans === 0) {
+          ok("No tag orphans");
+        } else {
+          warn(`${h.tagOrphans} tag rows pointing to deleted entries`);
+        }
+
+        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "tag_bulk",
+  "Apply tag changes (add and/or remove) to all entries matching a filter. " +
+    "Filter by prefix, full-text search, or existing tag. " +
+    "Returns the number of entries modified. " +
+    "Also use tag_rename to rename a tag across all entries.",
+  {
+    filter: z.object({
+      prefix: z.string().optional().describe("Only entries with this prefix, e.g. 'L'"),
+      search: z.string().optional().describe("FTS5 search term — only matching entries"),
+      tag: z.string().optional().describe("Only entries that already have this tag"),
+    }).describe("At least one filter field required"),
+    add_tags: z.array(z.string()).optional().describe("Tags to add, e.g. ['#hmem', '#bugfix']"),
+    remove_tags: z.array(z.string()).optional().describe("Tags to remove"),
+    store: z.enum(["personal", "company"]).default("personal"),
+  },
+  async ({ filter, add_tags, remove_tags, store: storeName }) => {
+    try {
+      const hmemStore = storeName === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+      try {
+        const count = hmemStore.tagBulk(filter, add_tags, remove_tags);
+        const added = add_tags?.length ? `+[${add_tags.join(", ")}]` : "";
+        const removed = remove_tags?.length ? `-[${remove_tags.join(", ")}]` : "";
+        return {
+          content: [{
+            type: "text" as const,
+            text: `tag_bulk: modified ${count} entries. ${added} ${removed}`.trim(),
+          }],
+        };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "tag_rename",
+  "Rename a hashtag across all entries and nodes. " +
+    "Example: tag_rename(old_tag='#sqlite', new_tag='#db') renames every occurrence.",
+  {
+    old_tag: z.string().describe("Existing tag to rename, e.g. '#old-tag'"),
+    new_tag: z.string().describe("New tag name, e.g. '#new-tag'"),
+    store: z.enum(["personal", "company"]).default("personal"),
+  },
+  async ({ old_tag, new_tag, store: storeName }) => {
+    try {
+      const hmemStore = storeName === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+      try {
+        const count = hmemStore.tagRename(old_tag, new_tag);
+        return {
+          content: [{
+            type: "text" as const,
+            text: count > 0
+              ? `Renamed ${old_tag} → ${new_tag} on ${count} entries/nodes.`
+              : `Tag ${old_tag} not found — nothing renamed.`,
+          }],
+        };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
     }
   }
 );

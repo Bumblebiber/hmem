@@ -157,6 +157,8 @@ export interface ReadOptions {
   showAll?: boolean;
   /** Filter by tag, e.g. "#hmem". Only entries/nodes with this tag are included. */
   tag?: string;
+  /** Show entries not accessed in the last N days (stale detection). Sorted oldest-access first. */
+  staleDays?: number;
 }
 
 export interface WriteResult {
@@ -664,9 +666,19 @@ export class HmemStore {
       params.push(...tagRootIds);
     }
 
+    // Stale detection: entries not accessed in the last N days
+    if (opts.staleDays && opts.staleDays > 0) {
+      const cutoff = `-${opts.staleDays} days`;
+      conditions.push("(last_accessed IS NULL OR last_accessed < datetime('now', ?))");
+      params.push(cutoff);
+    }
+
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     // Sort by effective_date: the most recent of root created_at OR latest child node created_at.
-    // This ensures entries with recently appended L2 nodes surface alongside genuinely new entries.
+    // For stale queries: sort by oldest access first (most stale first).
+    const staleSort = opts.staleDays
+      ? "COALESCE(m.last_accessed, m.created_at) ASC"
+      : "effective_date DESC";
     const limitClause = limit !== undefined ? `LIMIT ${limit}` : "";
     const rows = this.db.prepare(`
       SELECT m.*,
@@ -676,11 +688,11 @@ export class HmemStore {
         ) AS effective_date
       FROM memories m
       ${where}
-      ORDER BY effective_date DESC
+      ORDER BY ${staleSort}
       ${limitClause}
     `).all(...params) as any[];
 
-    if (opts.prefix || opts.after || opts.before) {
+    if (opts.prefix || opts.after || opts.before || opts.staleDays) {
       for (const row of rows) this.bumpAccess(row.id);
     }
 
@@ -2462,6 +2474,289 @@ export class HmemStore {
     }
 
     return nodes;
+  }
+
+  // ---- Stats, Health, Similarity, Bulk-Tags ----
+
+  /** Return a statistical overview of the memory store. */
+  getStats(): {
+    totalEntries: number;
+    byPrefix: Record<string, number>;
+    totalNodes: number;
+    favorites: number;
+    pinned: number;
+    mostAccessed: { id: string; title: string; access_count: number }[];
+    oldestEntry: { id: string; created_at: string; title: string } | null;
+    staleCount: number;
+    uniqueTags: number;
+    avgDepth: number;
+  } {
+    const totalEntries = (this.db.prepare(
+      "SELECT COUNT(*) as cnt FROM memories WHERE seq > 0 AND irrelevant != 1"
+    ).get() as any).cnt;
+
+    const byPrefixRows = this.db.prepare(
+      "SELECT prefix, COUNT(*) as cnt FROM memories WHERE seq > 0 AND irrelevant != 1 GROUP BY prefix ORDER BY prefix"
+    ).all() as any[];
+    const byPrefix: Record<string, number> = {};
+    for (const r of byPrefixRows) byPrefix[r.prefix] = r.cnt;
+
+    const totalNodes = (this.db.prepare(
+      "SELECT COUNT(*) as cnt FROM memory_nodes WHERE irrelevant != 1"
+    ).get() as any).cnt;
+
+    const favorites = (this.db.prepare(
+      "SELECT COUNT(*) as cnt FROM memories WHERE seq > 0 AND favorite = 1 AND irrelevant != 1"
+    ).get() as any).cnt;
+
+    const pinned = (this.db.prepare(
+      "SELECT COUNT(*) as cnt FROM memories WHERE seq > 0 AND pinned = 1 AND irrelevant != 1"
+    ).get() as any).cnt;
+
+    const mostAccessedRows = this.db.prepare(
+      "SELECT id, title, level_1, access_count FROM memories WHERE seq > 0 AND irrelevant != 1 ORDER BY access_count DESC LIMIT 5"
+    ).all() as any[];
+
+    const oldestRow = this.db.prepare(
+      "SELECT id, title, level_1, created_at FROM memories WHERE seq > 0 AND irrelevant != 1 ORDER BY created_at ASC LIMIT 1"
+    ).get() as any;
+
+    const staleCount = (this.db.prepare(
+      "SELECT COUNT(*) as cnt FROM memories WHERE seq > 0 AND irrelevant != 1 AND (last_accessed IS NULL OR last_accessed < datetime('now', '-30 days'))"
+    ).get() as any).cnt;
+
+    const uniqueTags = (this.db.prepare(
+      "SELECT COUNT(DISTINCT tag) as cnt FROM memory_tags"
+    ).get() as any).cnt;
+
+    const avgDepth = totalEntries > 0 ? parseFloat((totalNodes / totalEntries).toFixed(1)) : 0;
+
+    return {
+      totalEntries,
+      byPrefix,
+      totalNodes,
+      favorites,
+      pinned,
+      mostAccessed: mostAccessedRows.map(r => ({
+        id: r.id,
+        title: r.title || this.autoExtractTitle(r.level_1),
+        access_count: r.access_count,
+      })),
+      oldestEntry: oldestRow ? {
+        id: oldestRow.id,
+        created_at: oldestRow.created_at.substring(0, 10),
+        title: oldestRow.title || this.autoExtractTitle(oldestRow.level_1),
+      } : null,
+      staleCount,
+      uniqueTags,
+      avgDepth,
+    };
+  }
+
+  /**
+   * Find entries similar to the given entry via FTS5 keyword matching.
+   * Extracts significant words from level_1, queries FTS5, returns up to `limit` results.
+   */
+  findRelatedByFts(entryId: string, limit: number = 5): { id: string; title: string; created_at: string; tags: string[] }[] {
+    const entry = this.db.prepare("SELECT level_1, title FROM memories WHERE id = ?").get(entryId) as any;
+    if (!entry) return [];
+
+    const STOPWORDS = new Set(["the", "a", "an", "is", "in", "on", "at", "to", "for", "of", "and", "or", "but", "with", "by", "from", "was", "are", "been", "be", "it", "this", "that", "as", "not", "have", "has", "via", "der", "die", "das", "den", "dem", "des", "ein", "eine", "und", "oder", "mit", "von", "zu", "bei", "auf", "aus", "nach", "über", "für", "ist", "hat", "wird", "wurde"]);
+
+    const words = (entry.level_1 || "")
+      .replace(/[^a-zA-Z0-9äöüÄÖÜß\s-]/g, " ")
+      .split(/\s+/)
+      .filter((w: string) => w.length > 3 && !STOPWORDS.has(w.toLowerCase()))
+      .slice(0, 6);
+
+    if (words.length === 0) return [];
+
+    const ftsQuery = words.map((w: string) => `"${w.replace(/"/g, "")}"`).join(" OR ");
+
+    try {
+      const ftsRootIds = new Set(
+        (this.db.prepare(
+          "SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)"
+        ).all(ftsQuery) as any[]).map((r: any) => r.root_id)
+      );
+      ftsRootIds.delete(entryId);
+      if (ftsRootIds.size === 0) return [];
+
+      const idPlaceholders = [...ftsRootIds].map(() => "?").join(", ");
+      const rows = this.db.prepare(
+        `SELECT id, title, level_1, created_at FROM memories WHERE id IN (${idPlaceholders}) AND seq > 0 AND irrelevant != 1 AND obsolete != 1 LIMIT ?`
+      ).all(...ftsRootIds, limit) as any[];
+
+      return rows.map((r: any) => ({
+        id: r.id,
+        title: r.title || this.autoExtractTitle(r.level_1),
+        created_at: r.created_at.substring(0, 10),
+        tags: this.fetchTags(r.id),
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Audit report: broken links, orphaned entries, stale favorites, broken obsolete chains, tag orphans. */
+  healthCheck(): {
+    brokenLinks: { id: string; title: string; brokenIds: string[] }[];
+    orphanedEntries: { id: string; title: string; created_at: string }[];
+    staleFavorites: { id: string; title: string; lastAccessed: string | null }[];
+    brokenObsoleteChains: { id: string; title: string; badRef: string }[];
+    tagOrphans: number;
+  } {
+    const result = {
+      brokenLinks: [] as { id: string; title: string; brokenIds: string[] }[],
+      orphanedEntries: [] as { id: string; title: string; created_at: string }[],
+      staleFavorites: [] as { id: string; title: string; lastAccessed: string | null }[],
+      brokenObsoleteChains: [] as { id: string; title: string; badRef: string }[],
+      tagOrphans: 0,
+    };
+
+    // 1. Broken links
+    const entriesWithLinks = this.db.prepare(
+      "SELECT id, title, level_1, links FROM memories WHERE links IS NOT NULL AND links != '[]' AND seq > 0"
+    ).all() as any[];
+    for (const entry of entriesWithLinks) {
+      let links: string[];
+      try { links = JSON.parse(entry.links) || []; } catch { links = []; }
+      const broken = links.filter((lid: string) => !this.db.prepare("SELECT 1 FROM memories WHERE id = ?").get(lid));
+      if (broken.length > 0) {
+        result.brokenLinks.push({
+          id: entry.id,
+          title: entry.title || this.autoExtractTitle(entry.level_1),
+          brokenIds: broken,
+        });
+      }
+    }
+
+    // 2. Orphaned entries (no sub-nodes, not a header)
+    const noChildRows = this.db.prepare(`
+      SELECT m.id, m.title, m.level_1, m.created_at
+      FROM memories m
+      LEFT JOIN memory_nodes mn ON mn.root_id = m.id
+      WHERE m.seq > 0 AND m.irrelevant != 1 AND mn.id IS NULL
+      ORDER BY m.created_at ASC
+      LIMIT 20
+    `).all() as any[];
+    result.orphanedEntries = noChildRows.map((r: any) => ({
+      id: r.id,
+      title: r.title || this.autoExtractTitle(r.level_1),
+      created_at: r.created_at.substring(0, 10),
+    }));
+
+    // 3. Stale favorites/pinned (not accessed in 60 days)
+    const staleFavRows = this.db.prepare(
+      "SELECT id, title, level_1, last_accessed FROM memories WHERE seq > 0 AND (favorite = 1 OR pinned = 1) AND (last_accessed IS NULL OR last_accessed < datetime('now', '-60 days')) AND irrelevant != 1"
+    ).all() as any[];
+    result.staleFavorites = staleFavRows.map((r: any) => ({
+      id: r.id,
+      title: r.title || this.autoExtractTitle(r.level_1),
+      lastAccessed: r.last_accessed ? r.last_accessed.substring(0, 10) : null,
+    }));
+
+    // 4. Broken obsolete chains: [✓ID] pointing to non-existent entry
+    const obsoleteRows = this.db.prepare(
+      "SELECT id, title, level_1 FROM memories WHERE obsolete = 1"
+    ).all() as any[];
+    for (const entry of obsoleteRows) {
+      const match = (entry.level_1 || "").match(/\[✓([A-Z]\d+)\]/);
+      if (match) {
+        const targetId = match[1];
+        if (!this.db.prepare("SELECT 1 FROM memories WHERE id = ?").get(targetId)) {
+          result.brokenObsoleteChains.push({
+            id: entry.id,
+            title: entry.title || this.autoExtractTitle(entry.level_1),
+            badRef: targetId,
+          });
+        }
+      }
+    }
+
+    // 5. Tag orphans: memory_tags rows pointing to deleted entries/nodes
+    result.tagOrphans = (this.db.prepare(`
+      SELECT COUNT(*) as cnt FROM memory_tags mt
+      WHERE NOT EXISTS (SELECT 1 FROM memories WHERE id = mt.entry_id)
+      AND NOT EXISTS (SELECT 1 FROM memory_nodes WHERE id = mt.entry_id)
+    `).get() as any).cnt;
+
+    return result;
+  }
+
+  /**
+   * Apply tag changes (add/remove) to all entries matching a filter.
+   * Returns the number of entries modified.
+   */
+  tagBulk(
+    filter: { prefix?: string; search?: string; tag?: string },
+    addTags?: string[],
+    removeTags?: string[]
+  ): number {
+    if (!addTags?.length && !removeTags?.length) return 0;
+
+    let entryIds: string[] = [];
+
+    if (filter.tag) {
+      entryIds = [...this.getRootIdsByTag(filter.tag.toLowerCase())];
+    } else {
+      const conditions = ["seq > 0", "irrelevant != 1"];
+      const params: any[] = [];
+      if (filter.prefix) {
+        conditions.push("prefix = ?");
+        params.push(filter.prefix.toUpperCase());
+      }
+      if (filter.search) {
+        const searchTerm = filter.search.replace(/"/g, "").trim();
+        try {
+          const ftsRootIds = new Set(
+            (this.db.prepare(
+              "SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)"
+            ).all(`"${searchTerm}"`) as any[]).map((r: any) => r.root_id)
+          );
+          if (ftsRootIds.size === 0) return 0;
+          conditions.push(`id IN (${[...ftsRootIds].map(() => "?").join(",")})`);
+          params.push(...ftsRootIds);
+        } catch {
+          return 0;
+        }
+      }
+      const rows = this.db.prepare(
+        `SELECT id FROM memories WHERE ${conditions.join(" AND ")}`
+      ).all(...params) as any[];
+      entryIds = rows.map((r: any) => r.id);
+    }
+
+    if (entryIds.length === 0) return 0;
+
+    const insertStmt = this.db.prepare("INSERT OR IGNORE INTO memory_tags(entry_id, tag) VALUES (?, ?)");
+    const deleteStmt = this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ? AND tag = ?");
+
+    const applyAll = this.db.transaction((ids: string[]) => {
+      for (const id of ids) {
+        if (addTags) for (const tag of addTags) insertStmt.run(id, tag.toLowerCase());
+        if (removeTags) for (const tag of removeTags) deleteStmt.run(id, tag.toLowerCase());
+      }
+    });
+    applyAll(entryIds);
+
+    return entryIds.length;
+  }
+
+  /**
+   * Rename a tag across all entries and nodes.
+   * Returns the number of rows updated.
+   */
+  tagRename(oldTag: string, newTag: string): number {
+    const old = oldTag.toLowerCase();
+    const nw = newTag.toLowerCase();
+    if (old === nw) return 0;
+    // Copy rows with new tag name, then delete the old ones
+    this.db.prepare(
+      "INSERT OR IGNORE INTO memory_tags(entry_id, tag) SELECT entry_id, ? FROM memory_tags WHERE tag = ?"
+    ).run(nw, old);
+    const result = this.db.prepare("DELETE FROM memory_tags WHERE tag = ?").run(old);
+    return result.changes;
   }
 }
 

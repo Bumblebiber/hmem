@@ -219,6 +219,31 @@ Access counts are managed automatically — every `read_memory` and `append_memo
 
 ---
 
+## Bulk Tag Operations
+
+Apply tags to multiple entries at once, or rename a tag everywhere:
+
+```
+# Add #bugfix to all E-prefix entries
+tag_bulk(filter={prefix: "E"}, add_tags=["#bugfix"])
+
+# Add tag to entries matching a search term
+tag_bulk(filter={search: "FTS5"}, add_tags=["#search", "#sqlite"])
+
+# Remove #old from all entries that have it
+tag_bulk(filter={tag: "#old"}, remove_tags=["#old"])
+
+# Add and remove simultaneously
+tag_bulk(filter={prefix: "L", tag: "#draft"}, add_tags=["#stable"], remove_tags=["#draft"])
+
+# Rename a tag everywhere
+tag_rename(old_tag="#hmem-store", new_tag="#hmem")
+```
+
+Use `tag_bulk` when adding a new systematic tag to an existing category, or cleaning up after a tagging convention change. `tag_rename` handles typos or renames across the entire memory.
+
+---
+
 ## Anti-Patterns
 
 | Wrong | Right |

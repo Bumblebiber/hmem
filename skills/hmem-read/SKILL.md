@@ -23,28 +23,27 @@ If the tool `read_memory` is not available, tell the user:
 
 ---
 
-## After loading — clean up what you see
+## After loading — proactive cleanup
 
-**You MUST scan the L1 summaries and act immediately** when you spot stale entries.
-Do not defer this — marking entries takes seconds and keeps your memory useful.
+Scan the L1 summaries and flag entries as you go:
 
-**Mark irrelevant** — entries that are noise, not wrong, just no longer useful:
-```
-update_memory(id="T0005", irrelevant=true)
-```
-
-**Mark obsolete** — entries that are factually wrong or superseded:
+**Mark obsolete** (entries that are clearly wrong today):
 ```
 # Step 1: Write the correction first
 write_memory(prefix="E", content="Correct approach is XYZ\n\tDetails...")  # → E0076
 
-# Step 2: Mark old entry obsolete with [✓ID] tag (content optional)
-update_memory(id="E0023", content="Wrong — see [✓E0076]", obsolete=true)
+# Step 2: Mark the old entry obsolete with [✓ID] tag
+update_memory(id="E0023", content="Wrong approach — see [✓E0076]", obsolete=true)
 ```
 
-**Mark favorites** — reference entries you need every session:
+**Mark irrelevant** (entries that are just noise — not wrong, but no longer useful):
 ```
-update_memory(id="S0001", favorite=true)
+update_memory(id="T0005", content="...", irrelevant=true)
+```
+
+**Mark favorites** (reference entries you need every session):
+```
+update_memory(id="S0001", content="...", favorite=true)
 ```
 
 For a thorough review, use the `/hmem-self-curate` skill.
@@ -125,6 +124,64 @@ By default, bulk reads hide most obsolete entries (top 3 by access count shown).
 ```
 read_memory(show_obsolete=true)
 ```
+
+---
+
+## Stale Detection
+
+Find entries you haven't accessed in a while — useful for curation:
+
+```
+# Entries not accessed in 30 days (sorted oldest-access first)
+read_memory(stale_days=30)
+
+# Filter: only stale lessons
+read_memory(stale_days=60, prefix="L")
+```
+
+---
+
+## Memory Stats
+
+Quick overview of your memory health:
+
+```
+memory_stats()                   # personal store
+memory_stats(store="company")    # company store
+```
+
+Output includes: total entries by prefix, total nodes, favorites count, pinned count, unique hashtags, stale count (>30d), oldest entry, and top 5 most-accessed entries.
+
+---
+
+## Find Related
+
+Find entries similar to a given entry via FTS5 keyword matching — useful to spot potential duplicates or discover thematic connections:
+
+```
+find_related(id="P0029")          # up to 5 similar entries
+find_related(id="L0042", limit=10)
+```
+
+Returns title-only list of entries with overlapping keywords (different from `relatedEntries` in ID reads which uses shared tags).
+
+---
+
+## Memory Health Audit
+
+Check your memory for structural issues before/after curation:
+
+```
+memory_health()                   # personal store
+memory_health(store="company")
+```
+
+Checks:
+- **Broken links** — links pointing to deleted entries
+- **Orphaned entries** — root entries with no sub-nodes (never expanded)
+- **Stale favorites/pinned** — not accessed in >60 days
+- **Broken obsolete chains** — `[✓ID]` pointing to non-existent entries
+- **Tag orphans** — `memory_tags` rows with no matching entry/node
 
 ---
 
