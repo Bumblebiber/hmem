@@ -442,12 +442,16 @@ export class HmemStore {
       for (const node of nodes) {
         insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.title, node.content, timestamp, timestamp);
       }
-      if (validatedTags.length > 0 && nodes.length > 0) {
-        // Tags go on first child node — L1 is always visible in bulk reads,
-        // so root-level tags add no discovery value. Sub-node tags power findRelated.
-        this.setTags(nodes[0].id, validatedTags);
+      if (validatedTags.length > 0) {
+        if (nodes.length > 0) {
+          // Tags go on first child node — L1 is always visible in bulk reads,
+          // so root-level tags add no discovery value. Sub-node tags power findRelated.
+          this.setTags(nodes[0].id, validatedTags);
+        } else {
+          // Leaf entry (no children): tags go on root — only place available.
+          this.setTags(rootId, validatedTags);
+        }
       }
-      // If no children: tags silently discarded (leaf entries don't need tags)
     })();
 
     return { id: rootId, timestamp };
@@ -2649,6 +2653,66 @@ export class HmemStore {
    * Find entries similar to the given entry via FTS5 keyword matching.
    * Extracts significant words from level_1, queries FTS5, returns up to `limit` results.
    */
+  findRelatedCombined(entryId: string, limit: number = 5): { id: string; title: string; created_at: string; tags: string[]; matchType: "tags" | "fts" }[] {
+    const results: { id: string; title: string; created_at: string; tags: string[]; matchType: "tags" | "fts" }[] = [];
+    const seen = new Set<string>([entryId]);
+
+    // Phase 1: tag-based matches — aggregate tags from root + all sub-nodes
+    const allNodeIds = [entryId, ...(
+      this.db.prepare("SELECT id FROM memory_nodes WHERE root_id = ?").all(entryId) as any[]
+    ).map((r: any) => r.id)];
+    const tagMap = this.fetchTagsBulk(allNodeIds);
+    const aggregatedTags = new Set<string>();
+    for (const id of allNodeIds) {
+      const t = tagMap.get(id);
+      if (t) t.forEach(tag => aggregatedTags.add(tag));
+    }
+
+    if (aggregatedTags.size >= 2) {
+      const tags = [...aggregatedTags];
+      const placeholders = tags.map(() => "?").join(", ");
+      const tagRows = this.db.prepare(`
+        SELECT entry_id, COUNT(*) as shared
+        FROM memory_tags
+        WHERE tag IN (${placeholders}) AND entry_id != ?
+        GROUP BY entry_id
+        HAVING COUNT(*) >= 2
+        ORDER BY shared DESC
+        LIMIT ?
+      `).all(...tags, entryId, limit * 3) as any[];
+
+      for (const row of tagRows) {
+        if (results.length >= limit) break;
+        const eid = row.entry_id as string;
+        const rootId = eid.includes(".") ? eid.split(".")[0] : eid;
+        if (seen.has(rootId)) continue;
+        seen.add(rootId);
+        const rootRow = this.db.prepare("SELECT title, level_1, created_at, irrelevant, obsolete FROM memories WHERE id = ?").get(rootId) as any;
+        if (!rootRow || rootRow.irrelevant === 1 || rootRow.obsolete === 1) continue;
+        results.push({
+          id: rootId,
+          title: rootRow.title || this.autoExtractTitle(rootRow.level_1),
+          created_at: rootRow.created_at.substring(0, 10),
+          tags: this.fetchTags(rootId),
+          matchType: "tags",
+        });
+      }
+    }
+
+    // Phase 2: FTS5 supplement — fill remaining slots
+    if (results.length < limit) {
+      const ftsResults = this.findRelatedByFts(entryId, (limit - results.length) * 2);
+      for (const r of ftsResults) {
+        if (results.length >= limit) break;
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        results.push({ ...r, matchType: "fts" });
+      }
+    }
+
+    return results;
+  }
+
   findRelatedByFts(entryId: string, limit: number = 5): { id: string; title: string; created_at: string; tags: string[] }[] {
     const entry = this.db.prepare("SELECT level_1, title FROM memories WHERE id = ?").get(entryId) as any;
     if (!entry) return [];

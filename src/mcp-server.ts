@@ -793,10 +793,10 @@ server.tool(
 
 server.tool(
   "find_related",
-  "Find entries similar to the given entry via FTS5 keyword matching. " +
-    "Extracts significant words from the entry's level_1, queries the FTS5 index, " +
-    "and returns entries with overlapping content. " +
-    "Use to discover non-obvious connections or spot potential duplicates.",
+  "Find entries related to the given entry. " +
+    "Uses tag overlap first (intentional connections, marked [T]), " +
+    "then FTS5 keyword matching as supplement (marked [~]). " +
+    "Use to discover connections or spot potential duplicates.",
   {
     id: z.string().describe("Root entry ID to find related entries for, e.g. 'P0001'"),
     limit: z.number().min(1).max(20).default(5).describe("Max results to return (default: 5)"),
@@ -808,14 +808,15 @@ server.tool(
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
         : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
       try {
-        const results = hmemStore.findRelatedByFts(id, limit);
+        const results = hmemStore.findRelatedCombined(id, limit);
         if (results.length === 0) {
-          return { content: [{ type: "text" as const, text: `No FTS-related entries found for ${id}.` }] };
+          return { content: [{ type: "text" as const, text: `No related entries found for ${id}.` }] };
         }
-        const lines = [`Related to ${id} (FTS5 keyword match):`];
+        const lines = [`Related to ${id}:`];
         for (const r of results) {
+          const marker = r.matchType === "tags" ? "[T]" : "[~]";
           const tagSuffix = r.tags.length > 0 ? "  " + r.tags.join(" ") : "";
-          lines.push(`  ${r.id} ${r.created_at}  ${r.title}${tagSuffix}`);
+          lines.push(`  ${marker} ${r.id} ${r.created_at}  ${r.title}${tagSuffix}`);
         }
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       } finally {
