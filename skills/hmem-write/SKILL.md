@@ -49,7 +49,7 @@ append_memory(id="P0029", content="...", tags=["#hmem", "#sync", "#cli"])
 - Lowercase, starts with `#`, only letters/digits/hyphen/underscore: `#hmem-sync`, `#api_key`
 - Max 10 tags per entry. **Aim for 3–5 per entry** — more connections = better discoverability
 - `append_memory` tags are **additive** — they do not replace existing tags
-- Tags on a node (`id="P0001.3"`) are stored **on that node** and **also propagated to the root** (P0001) for searchability
+- Tags on a node (`id="P0001.3"`) are stored **only on that node** — no upward propagation (roots would accumulate all child tags)
 - Every node at any depth can have its own tags — use this to make sub-topics discoverable
 - Missing tags → the tool returns a `⚠` warning — take it seriously and add tags!
 
