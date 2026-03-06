@@ -64,6 +64,8 @@ export interface HmemConfig {
         topNewestCount: number;
         /** Number of obsolete entries to keep visible (default: 3) */
         topObsoleteCount: number;
+        /** Number of entries with the most sub-nodes to always expand (default: 3) */
+        topSubnodeCount: number;
         /** Percentage-based selection (overrides fixed counts when set) */
         newestPercent?: number;
         newestMin?: number;

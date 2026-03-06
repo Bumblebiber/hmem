@@ -453,7 +453,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             // Update session cache after bulk read
             if (useCache) {
                 const allIds = entries.filter(e => !e.obsolete).map(e => e.id);
-                const promotedIds = new Set(entries.filter(e => e.promoted === "favorite" || e.promoted === "access").map(e => e.id));
+                const promotedIds = new Set(entries.filter(e => e.promoted === "favorite" || e.promoted === "access" || e.promoted === "subnode").map(e => e.id));
                 sessionCache.registerDelivered(allIds, promotedIds);
             }
             // Format output
@@ -1314,7 +1314,7 @@ function renderEntryFormatted(lines, e, curator, expand = false) {
     }
     else {
         if (curator) {
-            const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
+            const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : e.promoted === "subnode" ? " [≡]" : "";
             const pinnedTag = e.pinned ? " [P]" : "";
             const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
             const irrelevantTag = e.irrelevant ? " [- IRRELEVANT]" : "";
@@ -1325,7 +1325,7 @@ function renderEntryFormatted(lines, e, curator, expand = false) {
             lines.push(`  ${e.title}${tagStr}`);
         }
         else {
-            const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : "";
+            const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : e.promoted === "subnode" ? " [≡]" : "";
             const pinnedTag = e.pinned ? " [P]" : "";
             const obsoleteTag = e.obsolete ? " [!]" : "";
             const irrelevantTag = e.irrelevant ? " [-]" : "";

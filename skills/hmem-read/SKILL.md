@@ -50,6 +50,27 @@ For a thorough review, use the `/hmem-self-curate` skill.
 
 ---
 
+## Bulk Read Design Intent
+
+`read_memory()` shows **current context** — newest entries, most-accessed favorites, open tasks. It is not a full dump. Older entries with low access_count are intentionally omitted.
+
+**For older or broader knowledge:**
+
+```
+# All lesson titles as table of contents (one line per entry)
+read_memory(titles_only=true, prefix="L")
+
+# Semantic search
+read_memory(search="SQLite corruption")
+
+# Hashtag filter
+read_memory(tag="#sqlite")
+```
+
+Repeated bulk reads without a goal yield little new information after 3–4 iterations — use targeted search or a prefix overview instead.
+
+---
+
 ## Lazy Loading Protocol (for subsequent reads)
 
 After the initial `read_memory()`, use these patterns to drill deeper:
@@ -194,3 +215,4 @@ Checks:
 | Read .hmem file directly | Always use MCP tools — it's a SQLite binary |
 | Just display this skill text | **Call read_memory() immediately** |
 | `update_memory(id="X", obsolete=true)` without `[✓ID]` | Write correction first, then mark obsolete with `[✓ID]` tag |
+| Repeated `read_memory()` to find old entries | `read_memory(titles_only=true, prefix="L")` or `read_memory(search="...")` |

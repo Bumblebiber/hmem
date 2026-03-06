@@ -40,6 +40,7 @@ Read the file and show the user a clear table of current values vs. defaults:
 | `bulkReadV2.topAccessCount` | … | 3 | Number of top-accessed entries to expand in V2 bulk reads. |
 | `bulkReadV2.topNewestCount` | … | 5 | Number of newest entries to expand in V2 bulk reads. |
 | `bulkReadV2.topObsoleteCount` | … | 3 | Number of obsolete entries to keep visible ("biggest mistakes"). |
+| `bulkReadV2.topSubnodeCount` | … | 3 | Number of entries with the most sub-nodes to always expand. Shown with `[≡]` marker. |
 
 ### Bulk-Read Algorithm (V2.1)
 
@@ -64,7 +65,8 @@ Tune via `bulkReadV2`:
   "bulkReadV2": {
     "topAccessCount": 3,
     "topNewestCount": 5,
-    "topObsoleteCount": 3
+    "topObsoleteCount": 3,
+    "topSubnodeCount": 3
   }
 }
 ```
@@ -114,6 +116,7 @@ Ask the user which parameter(s) they want to adjust. For each one:
 | `bulkReadV2.topAccessCount` | 0 | 20 | How many most-accessed entries (by time-weighted score) get full expansion. |
 | `bulkReadV2.topNewestCount` | 0 | 20 | How many newest entries get full expansion. |
 | `bulkReadV2.topObsoleteCount` | 0 | 20 | How many obsolete entries stay visible in bulk reads. |
+| `bulkReadV2.topSubnodeCount` | 0 | 20 | How many entries with the most sub-nodes always get expanded. 0 = disabled. |
 
 **For custom prefixes:** Ask for a single letter + label (e.g. `R = Research`). Remind the user that custom prefixes are added on top of the defaults — they don't replace them.
 

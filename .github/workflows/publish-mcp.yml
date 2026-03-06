@@ -1,22 +1,72 @@
-name: Publish to npm + MCP Registry
+name: Build Prebuilts + Publish
 
 on:
   push:
     tags: ["v*"]
 
 jobs:
+  prebuild:
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+          - os: macos-13        # Intel
+            platform: darwin
+            arch: x64
+          - os: macos-latest    # M1/M2
+            platform: darwin
+            arch: arm64
+          - os: windows-latest
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Install dependencies (builds better-sqlite3)
+        run: npm ci
+
+      - name: Locate and copy native binary
+        shell: bash
+        run: |
+          # better-sqlite3 may land in prebuilds/ (if prebuild-install succeeded)
+          # or build/Release/ (if node-gyp compiled it)
+          BINARY=$(find node_modules/better-sqlite3 -name "*.node" 2>/dev/null | head -1)
+          if [ -z "$BINARY" ]; then
+            echo "ERROR: better_sqlite3.node not found after npm ci"
+            exit 1
+          fi
+          echo "Found binary at: $BINARY"
+          mkdir -p "prebuilds/${{ matrix.platform }}-${{ matrix.arch }}"
+          cp "$BINARY" "prebuilds/${{ matrix.platform }}-${{ matrix.arch }}/better_sqlite3.node"
+          echo "Binary size: $(wc -c < "prebuilds/${{ matrix.platform }}-${{ matrix.arch }}/better_sqlite3.node") bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prebuild-${{ matrix.platform }}-${{ matrix.arch }}
+          path: prebuilds/${{ matrix.platform }}-${{ matrix.arch }}/better_sqlite3.node
+          if-no-files-found: error
+
   publish:
+    name: Publish to npm + MCP Registry
+    needs: prebuild
     runs-on: ubuntu-latest
     permissions:
-      id-token: write # Required for OIDC authentication with MCP Registry
+      id-token: write  # Required for OIDC with MCP Registry
       contents: read
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v5
+      - uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
           registry-url: "https://registry.npmjs.org"
@@ -24,22 +74,37 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build package
+      - name: Build TypeScript
         run: npm run build
 
-      # Sync version from git tag into package.json + server.json
       - name: Set version from tag
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           jq --arg v "$VERSION" '.version = $v' package.json > package.tmp && mv package.tmp package.json
           jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.tmp && mv server.tmp server.json
 
-      - name: Publish package to npm
+      - name: Download prebuilt artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: prebuild-*
+          path: prebuilds-raw
+          merge-multiple: false
+
+      - name: Reorganize prebuilts into package structure
+        run: |
+          for dir in prebuilds-raw/prebuild-*/; do
+            name=$(basename "$dir" | sed 's/^prebuild-//')
+            mkdir -p "prebuilds/$name"
+            cp "$dir"better_sqlite3.node "prebuilds/$name/"
+          done
+          echo "Bundled prebuilts:"
+          ls -lh prebuilds/*/
+
+      - name: Publish to npm
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      # MCP Registry publication
       - name: Install mcp-publisher
         run: |
           curl -sL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
@@ -47,5 +112,5 @@ jobs:
       - name: Authenticate to MCP Registry
         run: ./mcp-publisher login github-oidc
 
-      - name: Publish server to MCP Registry
+      - name: Publish to MCP Registry
         run: ./mcp-publisher publish

@@ -31,6 +31,8 @@
   "files": [
     "dist",
     "skills",
+    "scripts",
+    "prebuilds",
     "server.json",
     "README.md",
     "LICENSE",
@@ -41,7 +43,8 @@
     "build": "tsc",
     "start": "node dist/mcp-server.js",
     "dev": "tsc --watch",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "postinstall": "node scripts/use-prebuild.cjs"
   },
   "type": "module",
   "engines": {
@@ -69,7 +72,9 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "better-sqlite3": "^12.6.2",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.6.2"
   }
 }

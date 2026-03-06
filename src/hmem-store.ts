@@ -64,7 +64,7 @@ export interface MemoryEntry {
    * 'favorite' = favorite flag set, 'access' = top-N by access_count.
    * Rendered as [♥] or [★] in output.
    */
-  promoted?: "access" | "favorite";
+  promoted?: "access" | "favorite" | "subnode";
   /**
    * In bulk reads: number of direct children NOT shown (only the latest child is included).
    * undefined = ID-based read (all direct children shown as usual).
@@ -307,6 +307,9 @@ const MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS idx_tags_tag ON memory_tags(tag)",
   // Pinned: super-favorites that show full L2 content in bulk reads
   "ALTER TABLE memories ADD COLUMN pinned INTEGER DEFAULT 0",
+  // Sync support: track last content modification (separate from last_accessed)
+  "ALTER TABLE memories ADD COLUMN updated_at TEXT",
+  "ALTER TABLE memory_nodes ADD COLUMN updated_at TEXT",
 ];
 
 // ---- HmemStore class ----
@@ -414,13 +417,13 @@ export class HmemStore {
     }
 
     const insertRoot = this.db.prepare(`
-      INSERT INTO memories (id, prefix, seq, created_at, title, level_1, level_2, level_3, level_4, level_5, links, min_role, favorite, pinned)
-      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?)
+      INSERT INTO memories (id, prefix, seq, created_at, updated_at, title, level_1, level_2, level_3, level_4, level_5, links, min_role, favorite, pinned)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, ?, ?)
     `);
 
     const insertNode = this.db.prepare(`
-      INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     // Validate tags before transaction
@@ -429,7 +432,7 @@ export class HmemStore {
     // Run in a transaction
     this.db.transaction(() => {
       insertRoot.run(
-        rootId, prefix, seq, timestamp,
+        rootId, prefix, seq, timestamp, timestamp,
         title, level1,
         links ? JSON.stringify(links) : null,
         minRole,
@@ -437,7 +440,7 @@ export class HmemStore {
         pinned ? 1 : 0
       );
       for (const node of nodes) {
-        insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.title, node.content, timestamp);
+        insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.title, node.content, timestamp, timestamp);
       }
       if (validatedTags.length > 0) {
         this.setTags(rootId, validatedTags);
@@ -833,6 +836,21 @@ export class HmemStore {
       }
     }
 
+    // Top-subnode: entries with the most sub-nodes (by count) always expanded
+    const topSubnodeCount = v2.topSubnodeCount ?? 3;
+    const topSubnodeIds = new Set<string>();
+    if (topSubnodeCount > 0) {
+      const nodeCounts = this.db.prepare(
+        "SELECT root_id, COUNT(*) as cnt FROM memory_nodes GROUP BY root_id ORDER BY cnt DESC LIMIT ?"
+      ).all(topSubnodeCount) as { root_id: string; cnt: number }[];
+      for (const row of nodeCounts) {
+        if (!hidden.has(row.root_id)) {
+          expandedIds.add(row.root_id);
+          topSubnodeIds.add(row.root_id);
+        }
+      }
+    }
+
     // topAccess reference for promoted marker (time-weighted, min 2 accesses)
     const { accessCount: globalAccessSlots } = this.calcV2Slots(nonObsoleteRows.length);
     const topAccess = [...nonObsoleteRows]
@@ -895,6 +913,7 @@ export class HmemStore {
         const entry = this.rowToEntry(r, children);
         if (r.favorite === 1) entry.promoted = "favorite";
         else if (topAccess.some(t => t.id === r.id)) entry.promoted = "access";
+        else if (topSubnodeIds.has(r.id)) entry.promoted = "subnode";
         if (isExpanded) entry.expanded = true;
         if (hiddenCount !== undefined && hiddenCount > 0) entry.hiddenChildrenCount = hiddenCount;
         return entry;
@@ -905,9 +924,10 @@ export class HmemStore {
 
     const entries = visibleRows.map(r => {
       const isExpanded = expandedIds.has(r.id);
-      let promoted: "access" | "favorite" | undefined;
+      let promoted: "access" | "favorite" | "subnode" | undefined;
       if (r.favorite === 1) promoted = "favorite";
       else if (topAccess.some(t => t.id === r.id)) promoted = "access";
+      else if (topSubnodeIds.has(r.id)) promoted = "subnode";
 
       let children: MemoryNode[] | undefined;
       let linkedEntries: MemoryEntry[] | undefined;
@@ -1436,6 +1456,8 @@ export class HmemStore {
     }
     if (sets.length === 0) return false;
 
+    sets.push("updated_at = ?");
+    params.push(new Date().toISOString());
     params.push(id);
     const result = this.db.prepare(
       `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`
@@ -1493,6 +1515,9 @@ export class HmemStore {
         }
         return false;
       }
+      const nodeUpdateTs = new Date().toISOString();
+      sets.push("updated_at = ?");
+      params.push(nodeUpdateTs);
       params.push(id);
       const result = this.db.prepare(`UPDATE memory_nodes SET ${sets.join(", ")} WHERE id = ?`).run(...params);
       if (result.changes > 0) {
@@ -1515,6 +1540,9 @@ export class HmemStore {
         if (tags !== undefined) {
           this.setTags(id, tags.length > 0 ? this.validateTags(tags) : []);
         }
+        // Bubble updated_at to root entry so sync can detect any change
+        const rootId = id.split(".")[0];
+        this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(nodeUpdateTs, rootId);
       }
       return result.changes > 0;
     } else {
@@ -1591,6 +1619,8 @@ export class HmemStore {
         }
         return false;
       }
+      sets.push("updated_at = ?");
+      params.push(new Date().toISOString());
       params.push(id);
       const result = this.db.prepare(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`).run(...params);
       if (result.changes > 0 && tags !== undefined) {
@@ -1649,18 +1679,21 @@ export class HmemStore {
 
     const timestamp = new Date().toISOString();
     const insertNode = this.db.prepare(`
-      INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const topLevelIds: string[] = [];
 
     this.db.transaction(() => {
       for (const node of nodes) {
-        insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, this.autoExtractTitle(node.content), node.content, timestamp);
+        insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, this.autoExtractTitle(node.content), node.content, timestamp, timestamp);
         if (node.parent_id === parentId) topLevelIds.push(node.id);
       }
     })();
+
+    // Mark root entry as updated (content changed)
+    this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, rootId);
 
     // Bubble-up: bump access on the direct parent and root entry
     if (parentId.includes(".")) {

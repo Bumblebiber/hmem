@@ -33,6 +33,38 @@ write_memory(
 
 ---
 
+## Hashtags — strongly recommended on every write_memory and append_memory call
+
+Hashtags connect entries **across all prefixes and hierarchy levels**. They are the only way to find
+all `#hmem`-related entries at once — regardless of whether they are P, E, L, or T.
+Without tags, entries become isolated islands that are hard to discover later.
+
+**Add tags to every write_memory and append_memory call.** Aim for 3 minimum, 5+ is better:
+```
+write_memory(prefix="E", content="...", tags=["#hmem", "#sqlite", "#bug", "#migration", "#windows"])
+append_memory(id="P0029", content="...", tags=["#hmem", "#sync", "#cli"])
+```
+
+**Rules:**
+- Lowercase, starts with `#`, only letters/digits/hyphen/underscore: `#hmem-sync`, `#api_key`
+- Max 10 tags per entry. **Aim for 3–5 per entry** — more connections = better discoverability
+- `append_memory` tags are **additive** — they do not replace existing tags
+- Tags on a node (`id="P0001.3"`) are stored **on that node** and **also propagated to the root** (P0001) for searchability
+- Every node at any depth can have its own tags — use this to make sub-topics discoverable
+- Missing tags → the tool returns a `⚠` warning — take it seriously and add tags!
+
+**Good tags:** `#hmem`, `#sync`, `#sqlite`, `#windows`, `#release`, `#bug`, `#security`, `#althing`, `#cli`, `#migration`
+**Bad tags:** `#fix` (too generic), `#important` (no context), `#2026` (not a topic)
+
+**Bulk-tagging** for existing entries:
+```
+tag_bulk(filter={prefix: "E"}, add_tags=["#bug"])           # all E-entries
+tag_bulk(filter={search: "hmem-sync"}, add_tags=["#sync"])  # by full-text search
+tag_rename(old_tag="#hmem-store", new_tag="#hmem")           # rename a tag everywhere
+```
+
+---
+
 ## Prefixes
 
 | Prefix | Category | When to use |

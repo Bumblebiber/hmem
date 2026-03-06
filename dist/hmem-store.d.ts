@@ -55,7 +55,7 @@ export interface MemoryEntry {
      * 'favorite' = favorite flag set, 'access' = top-N by access_count.
      * Rendered as [♥] or [★] in output.
      */
-    promoted?: "access" | "favorite";
+    promoted?: "access" | "favorite" | "subnode";
     /**
      * In bulk reads: number of direct children NOT shown (only the latest child is included).
      * undefined = ID-based read (all direct children shown as usual).

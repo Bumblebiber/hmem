@@ -68,6 +68,8 @@ export interface HmemConfig {
     topNewestCount: number;
     /** Number of obsolete entries to keep visible (default: 3) */
     topObsoleteCount: number;
+    /** Number of entries with the most sub-nodes to always expand (default: 3) */
+    topSubnodeCount: number;
     /** Percentage-based selection (overrides fixed counts when set) */
     newestPercent?: number;
     newestMin?: number;
@@ -121,6 +123,7 @@ export const DEFAULT_CONFIG: HmemConfig = {
     topAccessCount: 3,
     topNewestCount: 5,
     topObsoleteCount: 3,
+    topSubnodeCount: 3,
     newestPercent: 20,
     newestMin: 5,
     newestMax: 15,
@@ -203,6 +206,7 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
       if (typeof v2.topAccessCount === "number" && v2.topAccessCount >= 0) cfg.bulkReadV2.topAccessCount = v2.topAccessCount;
       if (typeof v2.topNewestCount === "number" && v2.topNewestCount >= 0) cfg.bulkReadV2.topNewestCount = v2.topNewestCount;
       if (typeof v2.topObsoleteCount === "number" && v2.topObsoleteCount >= 0) cfg.bulkReadV2.topObsoleteCount = v2.topObsoleteCount;
+      if (typeof v2.topSubnodeCount === "number" && v2.topSubnodeCount >= 0) cfg.bulkReadV2.topSubnodeCount = v2.topSubnodeCount;
       // Percentage-based selection
       if (typeof v2.newestPercent === "number" && v2.newestPercent > 0) cfg.bulkReadV2.newestPercent = v2.newestPercent;
       if (typeof v2.newestMin === "number" && v2.newestMin >= 0) cfg.bulkReadV2.newestMin = v2.newestMin;

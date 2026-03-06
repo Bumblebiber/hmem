@@ -41,6 +41,7 @@ export const DEFAULT_CONFIG = {
         topAccessCount: 3,
         topNewestCount: 5,
         topObsoleteCount: 3,
+        topSubnodeCount: 3,
         newestPercent: 20,
         newestMin: 5,
         newestMax: 15,
@@ -121,6 +122,8 @@ export function loadHmemConfig(projectDir) {
                 cfg.bulkReadV2.topNewestCount = v2.topNewestCount;
             if (typeof v2.topObsoleteCount === "number" && v2.topObsoleteCount >= 0)
                 cfg.bulkReadV2.topObsoleteCount = v2.topObsoleteCount;
+            if (typeof v2.topSubnodeCount === "number" && v2.topSubnodeCount >= 0)
+                cfg.bulkReadV2.topSubnodeCount = v2.topSubnodeCount;
             // Percentage-based selection
             if (typeof v2.newestPercent === "number" && v2.newestPercent > 0)
                 cfg.bulkReadV2.newestPercent = v2.newestPercent;
