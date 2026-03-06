@@ -554,10 +554,16 @@ export class HmemStore {
             }
           }
         }
-        // Related entries: find other entries sharing 2+ tags
-        const entryTags = entry.tags ?? [];
-        if (entryTags.length >= 2) {
-          entry.relatedEntries = this.findRelated(opts.id, entryTags, 5);
+        // Related entries: aggregate tags from root + all loaded child nodes,
+        // so sub-node tags (set by agents on specific sessions/features) also
+        // contribute to related-entry discovery — not just the sparse root tags.
+        const aggregatedTags = new Set<string>(entry.tags ?? []);
+        for (const id of allIds) {
+          const t = tagMap.get(id);
+          if (t) t.forEach(tag => aggregatedTags.add(tag));
+        }
+        if (aggregatedTags.size >= 2) {
+          entry.relatedEntries = this.findRelated(opts.id, [...aggregatedTags], 5);
         }
 
         return [entry];
