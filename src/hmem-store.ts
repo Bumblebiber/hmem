@@ -2657,29 +2657,39 @@ export class HmemStore {
     const results: { id: string; title: string; created_at: string; tags: string[]; matchType: "tags" | "fts" }[] = [];
     const seen = new Set<string>([entryId]);
 
-    // Phase 1: tag-based matches — aggregate tags from root + all sub-nodes
+    // Phase 1: tag-based matches.
+    // Aggregate tags by intra-entry frequency: tags appearing on more sub-nodes of this
+    // entry are more representative. Take top 8 to avoid hub entries with 16+ tags.
     const allNodeIds = [entryId, ...(
       this.db.prepare("SELECT id FROM memory_nodes WHERE root_id = ?").all(entryId) as any[]
     ).map((r: any) => r.id)];
-    const tagMap = this.fetchTagsBulk(allNodeIds);
-    const aggregatedTags = new Set<string>();
-    for (const id of allNodeIds) {
-      const t = tagMap.get(id);
-      if (t) t.forEach(tag => aggregatedTags.add(tag));
-    }
+    const placeholdersNodes = allNodeIds.map(() => "?").join(", ");
+    const intraTags = (this.db.prepare(`
+      SELECT tag FROM memory_tags
+      WHERE entry_id IN (${placeholdersNodes})
+      GROUP BY tag ORDER BY COUNT(*) DESC LIMIT 8
+    `).all(...allNodeIds) as any[]).map((r: any) => r.tag as string);
+    const aggregatedTags = new Set<string>(intraTags);
 
-    if (aggregatedTags.size >= 2) {
+    if (aggregatedTags.size >= 1) {
       const tags = [...aggregatedTags];
       const placeholders = tags.map(() => "?").join(", ");
+      // Scoring tiers:
+      //   ≥2 shared tags → score 1000 + shared_count (always wins over rare singles)
+      //   1 shared rare tag (freq ≤5) → score 100 (fills remaining slots)
+      //   1 shared common tag → excluded
       const tagRows = this.db.prepare(`
-        SELECT entry_id, COUNT(*) as shared
-        FROM memory_tags
-        WHERE tag IN (${placeholders}) AND entry_id != ?
-        GROUP BY entry_id
-        HAVING COUNT(*) >= 2
-        ORDER BY shared DESC
+        SELECT mt.entry_id, COUNT(*) as shared,
+          MAX(CASE WHEN tf.freq <= 5 THEN 1 ELSE 0 END) as has_rare
+        FROM memory_tags mt
+        JOIN (SELECT tag, COUNT(DISTINCT entry_id) as freq FROM memory_tags GROUP BY tag) tf
+          ON tf.tag = mt.tag
+        WHERE mt.tag IN (${placeholders}) AND mt.entry_id != ? AND mt.entry_id NOT LIKE ? || '.%'
+        GROUP BY mt.entry_id
+        HAVING COUNT(*) >= 2 OR MAX(CASE WHEN tf.freq <= 5 THEN 1 ELSE 0 END) = 1
+        ORDER BY (CASE WHEN COUNT(*) >= 2 THEN 1000 + COUNT(*) ELSE 100 END) DESC
         LIMIT ?
-      `).all(...tags, entryId, limit * 3) as any[];
+      `).all(...tags, entryId, entryId, limit * 4) as any[];
 
       for (const row of tagRows) {
         if (results.length >= limit) break;
@@ -2727,14 +2737,19 @@ export class HmemStore {
 
     if (words.length === 0) return [];
 
-    const ftsQuery = words.map((w: string) => `"${w.replace(/"/g, "")}"`).join(" OR ");
+    // AND-first: top 3 words must all match → precise. OR fallback if no results.
+    const andQuery = words.slice(0, 3).map((w: string) => `"${w.replace(/"/g, "")}"`).join(" ");
+    const orQuery  = words.map((w: string) => `"${w.replace(/"/g, "")}"`).join(" OR ");
+
+    const runFts = (query: string) => new Set(
+      (this.db.prepare(
+        "SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)"
+      ).all(query) as any[]).map((r: any) => r.root_id)
+    );
 
     try {
-      const ftsRootIds = new Set(
-        (this.db.prepare(
-          "SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)"
-        ).all(ftsQuery) as any[]).map((r: any) => r.root_id)
-      );
+      let ftsRootIds = words.length >= 2 ? runFts(andQuery) : runFts(orQuery);
+      if (ftsRootIds.size === 0 && words.length >= 2) ftsRootIds = runFts(orQuery); // OR fallback
       ftsRootIds.delete(entryId);
       if (ftsRootIds.size === 0) return [];
 
