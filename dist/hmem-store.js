@@ -266,9 +266,12 @@ export class HmemStore {
             for (const node of nodes) {
                 insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.title, node.content, timestamp, timestamp);
             }
-            if (validatedTags.length > 0) {
-                this.setTags(rootId, validatedTags);
+            if (validatedTags.length > 0 && nodes.length > 0) {
+                // Tags go on first child node — L1 is always visible in bulk reads,
+                // so root-level tags add no discovery value. Sub-node tags power findRelated.
+                this.setTags(nodes[0].id, validatedTags);
             }
+            // If no children: tags silently discarded (leaf entries don't need tags)
         })();
         return { id: rootId, timestamp };
     }
