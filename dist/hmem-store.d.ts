@@ -449,6 +449,13 @@ export declare class HmemStore {
      * Find entries similar to the given entry via FTS5 keyword matching.
      * Extracts significant words from level_1, queries FTS5, returns up to `limit` results.
      */
+    findRelatedCombined(entryId: string, limit?: number): {
+        id: string;
+        title: string;
+        created_at: string;
+        tags: string[];
+        matchType: "tags" | "fts";
+    }[];
     findRelatedByFts(entryId: string, limit?: number): {
         id: string;
         title: string;

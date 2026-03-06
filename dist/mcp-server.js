@@ -19,6 +19,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync, spawn } from "node:child_process";
 import { searchMemory } from "./memory-search.js";
 import { openAgentMemory, openCompanyMemory, resolveHmemPath, HmemStore } from "./hmem-store.js";
 import { loadHmemConfig, formatPrefixList } from "./hmem-config.js";
@@ -50,6 +51,53 @@ catch {
 }
 function log(msg) {
     console.error(`[hmem:${AGENT_ID || "default"}] ${msg}`);
+}
+// ---- hmem-sync integration ----
+let lastPullAt = 0;
+const PULL_COOLDOWN_MS = 30_000;
+function hmemSyncEnabled(hmemPath) {
+    const passphrase = process.env["HMEM_SYNC_PASSPHRASE"];
+    const cfg = path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
+    return !!passphrase && fs.existsSync(cfg);
+}
+function hmemSyncConfig(hmemPath) {
+    return path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
+}
+function syncPull(hmemPath) {
+    if (!hmemSyncEnabled(hmemPath))
+        return;
+    const now = Date.now();
+    if (now - lastPullAt < PULL_COOLDOWN_MS)
+        return;
+    lastPullAt = now;
+    const result = spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
+        env: { ...process.env },
+        encoding: "utf8",
+        shell: process.platform === "win32",
+    });
+    if (result.error)
+        process.stderr.write(`hmem-sync pull error: ${result.error.message}\n`);
+}
+function syncPullThenPush(hmemPath) {
+    if (!hmemSyncEnabled(hmemPath))
+        return;
+    spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
+        env: { ...process.env },
+        encoding: "utf8",
+        shell: process.platform === "win32",
+    });
+    lastPullAt = Date.now();
+}
+function syncPush(hmemPath) {
+    if (!hmemSyncEnabled(hmemPath))
+        return;
+    const child = spawn("hmem-sync", ["push", "--config", hmemSyncConfig(hmemPath)], {
+        env: { ...process.env },
+        shell: process.platform === "win32",
+        stdio: "ignore",
+        detached: true,
+    });
+    child.unref();
 }
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
@@ -171,10 +219,14 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
                 };
             }
             const effectiveMinRole = storeName === "company" ? minRole : "worker";
+            const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+            if (storeName === "personal")
+                syncPullThenPush(hmemPath);
             const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite, tags, pinned);
             const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
             log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix}, min_role=${effectiveMinRole})`);
-            const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+            if (storeName === "personal")
+                syncPush(hmemPath);
             const firstTimeNote = isFirstTime
                 ? `\nMemory store created: ${hmemPath}\nTo use a custom name, set HMEM_AGENT_ID in your .mcp.json.`
                 : "";
@@ -249,6 +301,9 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                     isError: true,
                 };
             }
+            const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+            if (storeName === "personal")
+                syncPullThenPush(hmemPath);
             const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant, tags, pinned);
             const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
             log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${irrelevant ? " (marked irrelevant)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}`);
@@ -277,6 +332,8 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                 parts.push("pinned flag cleared");
             if (tags !== undefined)
                 parts.push(tags.length > 0 ? `tags: ${tags.join(" ")}` : "tags cleared");
+            if (storeName === "personal")
+                syncPush(hmemPath);
             return { content: [{ type: "text", text: parts.join(" | ") }] };
         }
         finally {
@@ -328,6 +385,9 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
                     isError: true,
                 };
             }
+            const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+            if (storeName === "personal")
+                syncPullThenPush(hmemPath);
             const result = hmemStore.appendChildren(id, content);
             const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
             log(`append_memory [${storeLabel}]: ${id} + ${result.count} nodes → [${result.ids.join(", ")}]`);
@@ -336,6 +396,8 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
                     content: [{ type: "text", text: "No nodes appended — content was empty or contained no valid lines." }],
                 };
             }
+            if (storeName === "personal")
+                syncPush(hmemPath);
             return {
                 content: [{
                         type: "text",
@@ -409,6 +471,9 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
     }
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker");
+    // Pull before read to get latest from server (30s cooldown)
+    if (storeName === "personal")
+        syncPull(resolveHmemPath(PROJECT_DIR, templateName));
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
@@ -632,10 +697,10 @@ server.tool("memory_stats", "Shows budget status of your memory: total entries b
         return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
     }
 });
-server.tool("find_related", "Find entries similar to the given entry via FTS5 keyword matching. " +
-    "Extracts significant words from the entry's level_1, queries the FTS5 index, " +
-    "and returns entries with overlapping content. " +
-    "Use to discover non-obvious connections or spot potential duplicates.", {
+server.tool("find_related", "Find entries related to the given entry. " +
+    "Uses tag overlap first (intentional connections, marked [T]), " +
+    "then FTS5 keyword matching as supplement (marked [~]). " +
+    "Use to discover connections or spot potential duplicates.", {
     id: z.string().describe("Root entry ID to find related entries for, e.g. 'P0001'"),
     limit: z.number().min(1).max(20).default(5).describe("Max results to return (default: 5)"),
     store: z.enum(["personal", "company"]).default("personal"),
@@ -645,14 +710,15 @@ server.tool("find_related", "Find entries similar to the given entry via FTS5 ke
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
             : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
         try {
-            const results = hmemStore.findRelatedByFts(id, limit);
+            const results = hmemStore.findRelatedCombined(id, limit);
             if (results.length === 0) {
-                return { content: [{ type: "text", text: `No FTS-related entries found for ${id}.` }] };
+                return { content: [{ type: "text", text: `No related entries found for ${id}.` }] };
             }
-            const lines = [`Related to ${id} (FTS5 keyword match):`];
+            const lines = [`Related to ${id}:`];
             for (const r of results) {
+                const marker = r.matchType === "tags" ? "[T]" : "[~]";
                 const tagSuffix = r.tags.length > 0 ? "  " + r.tags.join(" ") : "";
-                lines.push(`  ${r.id} ${r.created_at}  ${r.title}${tagSuffix}`);
+                lines.push(`  ${marker} ${r.id} ${r.created_at}  ${r.title}${tagSuffix}`);
             }
             return { content: [{ type: "text", text: lines.join("\n") }] };
         }

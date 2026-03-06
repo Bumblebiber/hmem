@@ -266,12 +266,17 @@ export class HmemStore {
             for (const node of nodes) {
                 insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.title, node.content, timestamp, timestamp);
             }
-            if (validatedTags.length > 0 && nodes.length > 0) {
-                // Tags go on first child node — L1 is always visible in bulk reads,
-                // so root-level tags add no discovery value. Sub-node tags power findRelated.
-                this.setTags(nodes[0].id, validatedTags);
+            if (validatedTags.length > 0) {
+                if (nodes.length > 0) {
+                    // Tags go on first child node — L1 is always visible in bulk reads,
+                    // so root-level tags add no discovery value. Sub-node tags power findRelated.
+                    this.setTags(nodes[0].id, validatedTags);
+                }
+                else {
+                    // Leaf entry (no children): tags go on root — only place available.
+                    this.setTags(rootId, validatedTags);
+                }
             }
-            // If no children: tags silently discarded (leaf entries don't need tags)
         })();
         return { id: rootId, timestamp };
     }
@@ -2200,6 +2205,73 @@ export class HmemStore {
      * Find entries similar to the given entry via FTS5 keyword matching.
      * Extracts significant words from level_1, queries FTS5, returns up to `limit` results.
      */
+    findRelatedCombined(entryId, limit = 5) {
+        const results = [];
+        const seen = new Set([entryId]);
+        // Phase 1: tag-based matches.
+        // Aggregate tags by intra-entry frequency: tags appearing on more sub-nodes of this
+        // entry are more representative. Take top 8 to avoid hub entries with 16+ tags.
+        const allNodeIds = [entryId, ...this.db.prepare("SELECT id FROM memory_nodes WHERE root_id = ?").all(entryId).map((r) => r.id)];
+        const placeholdersNodes = allNodeIds.map(() => "?").join(", ");
+        const intraTags = this.db.prepare(`
+      SELECT tag FROM memory_tags
+      WHERE entry_id IN (${placeholdersNodes})
+      GROUP BY tag ORDER BY COUNT(*) DESC LIMIT 8
+    `).all(...allNodeIds).map((r) => r.tag);
+        const aggregatedTags = new Set(intraTags);
+        if (aggregatedTags.size >= 1) {
+            const tags = [...aggregatedTags];
+            const placeholders = tags.map(() => "?").join(", ");
+            // Scoring tiers:
+            //   ≥2 shared tags → score 1000 + shared_count (always wins over rare singles)
+            //   1 shared rare tag (freq ≤5) → score 100 (fills remaining slots)
+            //   1 shared common tag → excluded
+            const tagRows = this.db.prepare(`
+        SELECT mt.entry_id, COUNT(*) as shared,
+          MAX(CASE WHEN tf.freq <= 5 THEN 1 ELSE 0 END) as has_rare
+        FROM memory_tags mt
+        JOIN (SELECT tag, COUNT(DISTINCT entry_id) as freq FROM memory_tags GROUP BY tag) tf
+          ON tf.tag = mt.tag
+        WHERE mt.tag IN (${placeholders}) AND mt.entry_id != ? AND mt.entry_id NOT LIKE ? || '.%'
+        GROUP BY mt.entry_id
+        HAVING COUNT(*) >= 2 OR MAX(CASE WHEN tf.freq <= 5 THEN 1 ELSE 0 END) = 1
+        ORDER BY (CASE WHEN COUNT(*) >= 2 THEN 1000 + COUNT(*) ELSE 100 END) DESC
+        LIMIT ?
+      `).all(...tags, entryId, entryId, limit * 4);
+            for (const row of tagRows) {
+                if (results.length >= limit)
+                    break;
+                const eid = row.entry_id;
+                const rootId = eid.includes(".") ? eid.split(".")[0] : eid;
+                if (seen.has(rootId))
+                    continue;
+                seen.add(rootId);
+                const rootRow = this.db.prepare("SELECT title, level_1, created_at, irrelevant, obsolete FROM memories WHERE id = ?").get(rootId);
+                if (!rootRow || rootRow.irrelevant === 1 || rootRow.obsolete === 1)
+                    continue;
+                results.push({
+                    id: rootId,
+                    title: rootRow.title || this.autoExtractTitle(rootRow.level_1),
+                    created_at: rootRow.created_at.substring(0, 10),
+                    tags: this.fetchTags(rootId),
+                    matchType: "tags",
+                });
+            }
+        }
+        // Phase 2: FTS5 supplement — fill remaining slots
+        if (results.length < limit) {
+            const ftsResults = this.findRelatedByFts(entryId, (limit - results.length) * 2);
+            for (const r of ftsResults) {
+                if (results.length >= limit)
+                    break;
+                if (seen.has(r.id))
+                    continue;
+                seen.add(r.id);
+                results.push({ ...r, matchType: "fts" });
+            }
+        }
+        return results;
+    }
     findRelatedByFts(entryId, limit = 5) {
         const entry = this.db.prepare("SELECT level_1, title FROM memories WHERE id = ?").get(entryId);
         if (!entry)
@@ -2212,9 +2284,14 @@ export class HmemStore {
             .slice(0, 6);
         if (words.length === 0)
             return [];
-        const ftsQuery = words.map((w) => `"${w.replace(/"/g, "")}"`).join(" OR ");
+        // AND-first: top 3 words must all match → precise. OR fallback if no results.
+        const andQuery = words.slice(0, 3).map((w) => `"${w.replace(/"/g, "")}"`).join(" ");
+        const orQuery = words.map((w) => `"${w.replace(/"/g, "")}"`).join(" OR ");
+        const runFts = (query) => new Set(this.db.prepare("SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)").all(query).map((r) => r.root_id));
         try {
-            const ftsRootIds = new Set(this.db.prepare("SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)").all(ftsQuery).map((r) => r.root_id));
+            let ftsRootIds = words.length >= 2 ? runFts(andQuery) : runFts(orQuery);
+            if (ftsRootIds.size === 0 && words.length >= 2)
+                ftsRootIds = runFts(orQuery); // OR fallback
             ftsRootIds.delete(entryId);
             if (ftsRootIds.size === 0)
                 return [];

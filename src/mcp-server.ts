@@ -20,6 +20,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync, spawn } from "node:child_process";
 import { searchMemory } from "./memory-search.js";
 import { openAgentMemory, openCompanyMemory, resolveHmemPath, HmemStore } from "./hmem-store.js";
 import type { AgentRole, MemoryEntry, MemoryNode } from "./hmem-store.js";
@@ -57,6 +58,55 @@ try {
 
 function log(msg: string) {
   console.error(`[hmem:${AGENT_ID || "default"}] ${msg}`);
+}
+
+// ---- hmem-sync integration ----
+
+let lastPullAt = 0;
+const PULL_COOLDOWN_MS = 30_000;
+
+function hmemSyncEnabled(hmemPath: string): boolean {
+  const passphrase = process.env["HMEM_SYNC_PASSPHRASE"];
+  const cfg = path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
+  return !!passphrase && fs.existsSync(cfg);
+}
+
+function hmemSyncConfig(hmemPath: string): string {
+  return path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
+}
+
+function syncPull(hmemPath: string): void {
+  if (!hmemSyncEnabled(hmemPath)) return;
+  const now = Date.now();
+  if (now - lastPullAt < PULL_COOLDOWN_MS) return;
+  lastPullAt = now;
+  const result = spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
+    env: { ...process.env },
+    encoding: "utf8",
+    shell: process.platform === "win32",
+  });
+  if (result.error) process.stderr.write(`hmem-sync pull error: ${result.error.message}\n`);
+}
+
+function syncPullThenPush(hmemPath: string): void {
+  if (!hmemSyncEnabled(hmemPath)) return;
+  spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
+    env: { ...process.env },
+    encoding: "utf8",
+    shell: process.platform === "win32",
+  });
+  lastPullAt = Date.now();
+}
+
+function syncPush(hmemPath: string): void {
+  if (!hmemSyncEnabled(hmemPath)) return;
+  const child = spawn("hmem-sync", ["push", "--config", hmemSyncConfig(hmemPath)], {
+    env: { ...process.env },
+    shell: process.platform === "win32",
+    stdio: "ignore",
+    detached: true,
+  });
+  child.unref();
 }
 
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
@@ -223,11 +273,12 @@ server.tool(
         }
 
         const effectiveMinRole = storeName === "company" ? (minRole as AgentRole) : ("worker" as AgentRole);
+        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+        if (storeName === "personal") syncPullThenPush(hmemPath);
         const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite, tags, pinned);
         const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
         log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix}, min_role=${effectiveMinRole})`);
-
-        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+        if (storeName === "personal") syncPush(hmemPath);
         const firstTimeNote = isFirstTime
           ? `\nMemory store created: ${hmemPath}\nTo use a custom name, set HMEM_AGENT_ID in your .mcp.json.`
           : "";
@@ -324,6 +375,8 @@ server.tool(
           };
         }
 
+        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+        if (storeName === "personal") syncPullThenPush(hmemPath);
         const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant, tags, pinned);
         const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
         log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${irrelevant ? " (marked irrelevant)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}`);
@@ -345,6 +398,7 @@ server.tool(
         if (pinned === true) parts.push("marked as [P] pinned");
         if (pinned === false) parts.push("pinned flag cleared");
         if (tags !== undefined) parts.push(tags.length > 0 ? `tags: ${tags.join(" ")}` : "tags cleared");
+        if (storeName === "personal") syncPush(hmemPath);
         return { content: [{ type: "text" as const, text: parts.join(" | ") }] };
       } finally {
         hmemStore.close();
@@ -409,6 +463,8 @@ server.tool(
           };
         }
 
+        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+        if (storeName === "personal") syncPullThenPush(hmemPath);
         const result = hmemStore.appendChildren(id, content);
         const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
         log(`append_memory [${storeLabel}]: ${id} + ${result.count} nodes → [${result.ids.join(", ")}]`);
@@ -419,6 +475,7 @@ server.tool(
           };
         }
 
+        if (storeName === "personal") syncPush(hmemPath);
         return {
           content: [{
             type: "text" as const,
@@ -515,6 +572,9 @@ server.tool(
 
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker") as AgentRole;
+
+    // Pull before read to get latest from server (30s cooldown)
+    if (storeName === "personal") syncPull(resolveHmemPath(PROJECT_DIR, templateName));
 
     try {
       const hmemStore = storeName === "company"
