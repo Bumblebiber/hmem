@@ -20,6 +20,7 @@ import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync, spawn } from "node:child_process";
+import Database from "better-sqlite3";
 import { searchMemory } from "./memory-search.js";
 import { openAgentMemory, openCompanyMemory, resolveHmemPath, HmemStore } from "./hmem-store.js";
 import { loadHmemConfig, formatPrefixList } from "./hmem-config.js";
@@ -63,13 +64,24 @@ function hmemSyncEnabled(hmemPath) {
 function hmemSyncConfig(hmemPath) {
     return path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
 }
+/** Blocking pull — waits for completion. Skips if called within cooldown window.
+ *  Returns newly synced root-level entries (empty array if skipped or none). */
 function syncPull(hmemPath) {
     if (!hmemSyncEnabled(hmemPath))
-        return;
+        return [];
     const now = Date.now();
     if (now - lastPullAt < PULL_COOLDOWN_MS)
-        return;
+        return [];
     lastPullAt = now;
+    // Snapshot existing root IDs before pull
+    let prevIds = new Set();
+    try {
+        const db = new Database(hmemPath, { readonly: true });
+        const rows = db.prepare("SELECT id FROM memory_nodes WHERE seq=0").all();
+        prevIds = new Set(rows.map(r => r.id));
+        db.close();
+    }
+    catch { /* db may not exist yet */ }
     const result = spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
         env: { ...process.env },
         encoding: "utf8",
@@ -77,6 +89,22 @@ function syncPull(hmemPath) {
     });
     if (result.error)
         process.stderr.write(`hmem-sync pull error: ${result.error.message}\n`);
+    // Find new entries introduced by this pull
+    try {
+        const db = new Database(hmemPath, { readonly: true });
+        const rows = db.prepare("SELECT id, content, created_at FROM memory_nodes WHERE seq=0").all();
+        db.close();
+        return rows
+            .filter(r => !prevIds.has(r.id))
+            .map(r => ({
+            id: r.id,
+            title: r.content.split("\n")[0].trim().slice(0, 60),
+            created_at: r.created_at.slice(0, 10),
+        }));
+    }
+    catch {
+        return [];
+    }
 }
 function syncPullThenPush(hmemPath) {
     if (!hmemSyncEnabled(hmemPath))
@@ -472,8 +500,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker");
     // Pull before read to get latest from server (30s cooldown)
-    if (storeName === "personal")
-        syncPull(resolveHmemPath(PROJECT_DIR, templateName));
+    const newEntries = storeName === "personal" ? syncPull(resolveHmemPath(PROJECT_DIR, templateName)) : [];
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
@@ -546,10 +573,15 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
                 `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}${modeInfo}${cacheInfo}${tokenInfo}\n`;
             log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole}${cacheInfo})`);
+            const pulledSection = newEntries.length > 0
+                ? `## 🔄 Newly synced (${newEntries.length}): ${newEntries.map(e => e.id).join(", ")}\n` +
+                    newEntries.map(e => `  ${e.id} ${e.created_at} — ${e.title}`).join("\n") +
+                    "\n\n"
+                : "";
             return {
                 content: [{
                         type: "text",
-                        text: corruptionWarning + header + "\n" + output + REMINDER_HINT,
+                        text: corruptionWarning + pulledSection + header + "\n" + output + REMINDER_HINT,
                     }],
             };
         }

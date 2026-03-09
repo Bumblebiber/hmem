@@ -21,6 +21,7 @@ import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync, spawn } from "node:child_process";
+import Database from "better-sqlite3";
 import { searchMemory } from "./memory-search.js";
 import { openAgentMemory, openCompanyMemory, resolveHmemPath, HmemStore } from "./hmem-store.js";
 import type { AgentRole, MemoryEntry, MemoryNode } from "./hmem-store.js";
@@ -75,17 +76,45 @@ function hmemSyncConfig(hmemPath: string): string {
   return path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
 }
 
-function syncPull(hmemPath: string): void {
-  if (!hmemSyncEnabled(hmemPath)) return;
+/** Blocking pull — waits for completion. Skips if called within cooldown window.
+ *  Returns newly synced root-level entries (empty array if skipped or none). */
+function syncPull(hmemPath: string): Array<{id: string, title: string, created_at: string}> {
+  if (!hmemSyncEnabled(hmemPath)) return [];
   const now = Date.now();
-  if (now - lastPullAt < PULL_COOLDOWN_MS) return;
+  if (now - lastPullAt < PULL_COOLDOWN_MS) return [];
   lastPullAt = now;
+
+  // Snapshot existing root IDs before pull
+  let prevIds = new Set<string>();
+  try {
+    const db = new Database(hmemPath, { readonly: true });
+    const rows = db.prepare("SELECT id FROM memory_nodes WHERE seq=0").all() as {id: string}[];
+    prevIds = new Set(rows.map(r => r.id));
+    db.close();
+  } catch { /* db may not exist yet */ }
+
   const result = spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
     env: { ...process.env },
     encoding: "utf8",
     shell: process.platform === "win32",
   });
   if (result.error) process.stderr.write(`hmem-sync pull error: ${result.error.message}\n`);
+
+  // Find new entries introduced by this pull
+  try {
+    const db = new Database(hmemPath, { readonly: true });
+    const rows = db.prepare(
+      "SELECT id, content, created_at FROM memory_nodes WHERE seq=0"
+    ).all() as {id: string, content: string, created_at: string}[];
+    db.close();
+    return rows
+      .filter(r => !prevIds.has(r.id))
+      .map(r => ({
+        id: r.id,
+        title: r.content.split("\n")[0].trim().slice(0, 60),
+        created_at: r.created_at.slice(0, 10),
+      }));
+  } catch { return []; }
 }
 
 function syncPullThenPush(hmemPath: string): void {
@@ -574,7 +603,7 @@ server.tool(
     const agentRole = (ROLE || "worker") as AgentRole;
 
     // Pull before read to get latest from server (30s cooldown)
-    if (storeName === "personal") syncPull(resolveHmemPath(PROJECT_DIR, templateName));
+    const newEntries = storeName === "personal" ? syncPull(resolveHmemPath(PROJECT_DIR, templateName)) : [];
 
     try {
       const hmemStore = storeName === "company"
@@ -664,10 +693,16 @@ server.tool(
 
         log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole}${cacheInfo})`);
 
+        const pulledSection = newEntries.length > 0
+          ? `## 🔄 Newly synced (${newEntries.length}): ${newEntries.map(e => e.id).join(", ")}\n` +
+            newEntries.map(e => `  ${e.id} ${e.created_at} — ${e.title}`).join("\n") +
+            "\n\n"
+          : "";
+
         return {
           content: [{
             type: "text" as const,
-            text: corruptionWarning + header + "\n" + output + REMINDER_HINT,
+            text: corruptionWarning + pulledSection + header + "\n" + output + REMINDER_HINT,
           }],
         };
       } finally {
