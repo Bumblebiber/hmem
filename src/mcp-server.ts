@@ -77,19 +77,22 @@ function hmemSyncConfig(hmemPath: string): string {
 }
 
 /** Blocking pull — waits for completion. Skips if called within cooldown window.
- *  Returns newly synced root-level entries (empty array if skipped or none). */
-function syncPull(hmemPath: string): Array<{id: string, title: string, created_at: string}> {
+ *  Returns newly synced entries AND entries that received new nodes (empty array if skipped or none). */
+function syncPull(hmemPath: string): Array<{id: string, title: string, created_at: string, modified?: boolean}> {
   if (!hmemSyncEnabled(hmemPath)) return [];
   const now = Date.now();
   if (now - lastPullAt < PULL_COOLDOWN_MS) return [];
   lastPullAt = now;
 
-  // Snapshot existing root IDs before pull
+  // Snapshot existing root IDs + node counts before pull
   let prevIds = new Set<string>();
+  const prevNodeCounts = new Map<string, number>();
   try {
     const db = new Database(hmemPath, { readonly: true });
     const rows = db.prepare("SELECT id FROM memory_nodes WHERE seq=0").all() as {id: string}[];
     prevIds = new Set(rows.map(r => r.id));
+    const countRows = db.prepare("SELECT root_id, COUNT(*) as cnt FROM memory_nodes GROUP BY root_id").all() as {root_id: string, cnt: number}[];
+    for (const r of countRows) prevNodeCounts.set(r.root_id, r.cnt);
     db.close();
   } catch { /* db may not exist yet */ }
 
@@ -100,20 +103,43 @@ function syncPull(hmemPath: string): Array<{id: string, title: string, created_a
   });
   if (result.error) process.stderr.write(`hmem-sync pull error: ${result.error.message}\n`);
 
-  // Find new entries introduced by this pull
+  // Find new entries AND entries with new nodes introduced by this pull
   try {
     const db = new Database(hmemPath, { readonly: true });
     const rows = db.prepare(
       "SELECT id, content, created_at FROM memory_nodes WHERE seq=0"
     ).all() as {id: string, content: string, created_at: string}[];
+
+    // Detect entries that received new nodes (existing roots with more nodes than before)
+    const newCountRows = db.prepare("SELECT root_id, COUNT(*) as cnt FROM memory_nodes GROUP BY root_id").all() as {root_id: string, cnt: number}[];
+    const modifiedRoots = new Set<string>();
+    for (const r of newCountRows) {
+      const prev = prevNodeCounts.get(r.root_id) ?? 0;
+      if (r.cnt > prev && prevIds.has(r.root_id)) {
+        modifiedRoots.add(r.root_id);
+      }
+    }
+
     db.close();
-    return rows
+
+    const newEntries = rows
       .filter(r => !prevIds.has(r.id))
       .map(r => ({
         id: r.id,
         title: r.content.split("\n")[0].trim().slice(0, 60),
         created_at: r.created_at.slice(0, 10),
       }));
+
+    const modifiedEntries = rows
+      .filter(r => modifiedRoots.has(r.id) && prevIds.has(r.id))
+      .map(r => ({
+        id: r.id,
+        title: r.content.split("\n")[0].trim().slice(0, 60),
+        created_at: r.created_at.slice(0, 10),
+        modified: true as const,
+      }));
+
+    return [...newEntries, ...modifiedEntries];
   } catch { return []; }
 }
 
@@ -253,9 +279,9 @@ server.tool(
       "Mark this entry as a favorite — shown with [♥] in bulk reads and always inlined with L2 detail. " +
       "Use for reference info you need to see every session, regardless of category."
     ),
-    tags: z.array(z.string()).optional().describe(
-      "Optional hashtags for cross-cutting search, e.g. ['#hmem', '#curation']. " +
-      "Max 10, lowercase, must start with #. Shown after title in reads."
+    tags: z.array(z.string()).min(1).describe(
+      "Required hashtags for cross-cutting search (min 1, recommend 3+). " +
+      "E.g. ['#hmem', '#curation']. Max 10, lowercase, must start with #. Shown after title in reads."
     ),
     pinned: z.boolean().optional().describe(
       "Mark this entry as pinned [P] (super-favorite). Pinned entries show full L2 content in bulk reads. " +
@@ -374,11 +400,16 @@ server.tool(
       "Set or clear the [P] pinned flag (root entries only). " +
       "Pinned entries show full L2 content in bulk reads (super-favorite)."
     ),
+    active: z.boolean().optional().describe(
+      "Mark this root entry as actively relevant [*] (root entries only). " +
+      "When any entry in a prefix has active=true, only active entries of that prefix are shown with children in bulk reads. " +
+      "Non-active entries in the same prefix are shown as title-only (no children)."
+    ),
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Target store: 'personal' or 'company'"
     ),
   },
-  async ({ id, content, links, obsolete, favorite, irrelevant, tags, pinned, store: storeName }) => {
+  async ({ id, content, links, obsolete, favorite, irrelevant, tags, pinned, active, store: storeName }) => {
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker") as AgentRole;
 
@@ -406,9 +437,9 @@ server.tool(
 
         const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
         if (storeName === "personal") syncPullThenPush(hmemPath);
-        const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant, tags, pinned);
+        const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant, tags, pinned, active);
         const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
-        log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${irrelevant ? " (marked irrelevant)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}`);
+        log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${irrelevant ? " (marked irrelevant)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}${active !== undefined ? ` (active=${active})` : ""}`);
 
         if (!ok) {
           return {
@@ -426,6 +457,8 @@ server.tool(
         if (favorite === false) parts.push("favorite flag cleared");
         if (pinned === true) parts.push("marked as [P] pinned");
         if (pinned === false) parts.push("pinned flag cleared");
+        if (active === true) parts.push("marked as [*] active");
+        if (active === false) parts.push("active flag cleared");
         if (tags !== undefined) parts.push(tags.length > 0 ? `tags: ${tags.join(" ")}` : "tags cleared");
         if (storeName === "personal") syncPush(hmemPath);
         return { content: [{ type: "text" as const, text: parts.join(" | ") }] };
@@ -693,11 +726,18 @@ server.tool(
 
         log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole}${cacheInfo})`);
 
-        const pulledSection = newEntries.length > 0
-          ? `## 🔄 Newly synced (${newEntries.length}): ${newEntries.map(e => e.id).join(", ")}\n` +
-            newEntries.map(e => `  ${e.id} ${e.created_at} — ${e.title}`).join("\n") +
-            "\n\n"
-          : "";
+        const newRoots = newEntries.filter(e => !e.modified);
+        const modifiedRoots = newEntries.filter(e => e.modified);
+        const pulledParts: string[] = [];
+        if (newRoots.length > 0) {
+          pulledParts.push(`## 🔄 Newly synced (${newRoots.length}): ${newRoots.map(e => e.id).join(", ")}`);
+          pulledParts.push(...newRoots.map(e => `  ${e.id} ${e.created_at} — ${e.title}`));
+        }
+        if (modifiedRoots.length > 0) {
+          pulledParts.push(`## 📝 Modified by sync (${modifiedRoots.length}): ${modifiedRoots.map(e => e.id).join(", ")}`);
+          pulledParts.push(...modifiedRoots.map(e => `  ${e.id} ${e.created_at} — ${e.title} (new nodes added)`));
+        }
+        const pulledSection = pulledParts.length > 0 ? pulledParts.join("\n") + "\n\n" : "";
 
         return {
           content: [{
@@ -1541,6 +1581,7 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig): string {
     for (const e of prefixEntries) {
       const mmdd = e.created_at.substring(5, 10);
       const fav = e.favorite ? " [♥]" : "";
+      const act = e.active ? " [*]" : "";
       const obs = e.obsolete ? " [!]" : "";
       const irr = e.irrelevant ? " [-]" : "";
 
@@ -1548,7 +1589,7 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig): string {
         const visibleChildren = (e.children as MemoryNode[]).filter(c => !c.irrelevant);
         const hiddenIrr = e.children.length - visibleChildren.length;
         // Expanded entry (favorite/top-accessed): show with L2 children
-        lines.push(`${e.id} ${mmdd}${fav}${obs}  ${e.title}${formatTagSuffix(e.tags)}`);
+        lines.push(`${e.id} ${mmdd}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags)}`);
         for (const child of visibleChildren) {
           const short = child.title || (child.content.length > CHILD_TITLE_LEN
             ? child.content.substring(0, CHILD_TITLE_LEN)
@@ -1566,7 +1607,7 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig): string {
       } else {
         // Non-expanded: compact line with child count
         const childHint = (e.hiddenChildrenCount ?? 0) > 0 ? ` (${e.hiddenChildrenCount})` : "";
-        lines.push(`${e.id} ${mmdd}${fav}${obs}  ${e.title}${formatTagSuffix(e.tags)}${childHint}`);
+        lines.push(`${e.id} ${mmdd}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags)}${childHint}`);
       }
     }
     lines.push("");
@@ -1667,21 +1708,23 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
   } else {
     if (curator) {
       const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : e.promoted === "subnode" ? " [≡]" : "";
+      const activeTag = e.active ? " [*]" : "";
       const pinnedTag = e.pinned ? " [P]" : "";
       const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
       const irrelevantTag = e.irrelevant ? " [- IRRELEVANT]" : "";
       const date = e.created_at.substring(0, 10);
       const accessed = e.access_count > 0 ? ` (${e.access_count}x accessed)` : "";
       const roleTag = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
-      lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${pinnedTag}${obsoleteTag}${irrelevantTag}${accessed}`);
+      lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}${accessed}`);
       lines.push(`  ${e.title}${tagStr}`);
     } else {
       const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : e.promoted === "subnode" ? " [≡]" : "";
+      const activeTag = e.active ? " [*]" : "";
       const pinnedTag = e.pinned ? " [P]" : "";
       const obsoleteTag = e.obsolete ? " [!]" : "";
       const irrelevantTag = e.irrelevant ? " [-]" : "";
       const mmdd = e.created_at.substring(5, 10);
-      lines.push(`${e.id} ${mmdd}${promotedTag}${pinnedTag}${obsoleteTag}${irrelevantTag}  ${e.title}${tagStr}`);
+      lines.push(`${e.id} ${mmdd}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}  ${e.title}${tagStr}`);
     }
     // Show full level_1 content below title when entry is expanded/drilled
     if (hasDetail && e.level_1 !== e.title) {
@@ -1837,11 +1880,59 @@ function renderChildrenExpanded(lines: string[], children: MemoryNode[], curator
   }
 }
 
+// ---- Update check ----
+
+const CURRENT_VERSION = "2.5.3";
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 1 day
+const updateCheckFile = path.join(path.dirname(PROJECT_DIR), ".hmem", ".update-check.json");
+
+/** Fire-and-forget update check. Runs max once per day. Logs to stderr if outdated. */
+function checkForUpdates(): void {
+  try {
+    // Rate-limit: once per day per package
+    let state: Record<string, string> = {};
+    try { state = JSON.parse(fs.readFileSync(updateCheckFile, "utf8")); } catch {}
+    const lastCheck = state["hmem-mcp"] ? new Date(state["hmem-mcp"]).getTime() : 0;
+    if (Date.now() - lastCheck < UPDATE_CHECK_INTERVAL_MS) return;
+
+    const child = spawn("npm", ["show", "hmem-mcp", "version"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      detached: true,
+      shell: process.platform === "win32",
+    });
+    child.unref();
+    let out = "";
+    child.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    child.on("close", () => {
+      const latest = out.trim();
+      if (!latest) return;
+      // Save check timestamp
+      state["hmem-mcp"] = new Date().toISOString();
+      try {
+        fs.mkdirSync(path.dirname(updateCheckFile), { recursive: true });
+        fs.writeFileSync(updateCheckFile, JSON.stringify(state, null, 2), "utf8");
+      } catch {}
+      // Warn if outdated
+      if (latest !== CURRENT_VERSION) {
+        const [ci, cj, ck] = CURRENT_VERSION.split(".").map(Number);
+        const [li, lj, lk] = latest.split(".").map(Number);
+        const isNewer = li > ci || (li === ci && lj > cj) || (li === ci && lj === cj && lk > ck);
+        if (isNewer) {
+          log(`⚠ hmem-mcp update available: ${CURRENT_VERSION} → ${latest}. Run: npm install -g hmem-mcp@latest`);
+        }
+      }
+    });
+  } catch {
+    // Update check is best-effort — never crash the server
+  }
+}
+
 // ---- Start ----
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log("MCP Server running on stdio");
+  checkForUpdates();
 }
 
 main().catch((error) => {

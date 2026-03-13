@@ -48,6 +48,8 @@ export interface MemoryEntry {
     favorite?: boolean;
     /** True if the agent marked this entry as irrelevant. Hidden from bulk reads, no correction needed. */
     irrelevant?: boolean;
+    /** True if this entry is actively relevant (root-only). When any entry in a prefix has active=1, only active entries of that prefix are expanded in bulk reads. */
+    active?: boolean;
     /** True if this entry was already delivered in a previous bulk read (session cache). */
     suppressed?: boolean;
     /**
@@ -245,7 +247,7 @@ export declare class HmemStore {
     /**
      * Update specific fields of an existing root entry (curator use only).
      */
-    update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite" | "irrelevant">>): boolean;
+    update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite" | "irrelevant" | "active">>): boolean;
     /**
      * Delete an entry by ID (curator use only).
      * Also deletes all associated memory_nodes.
@@ -257,7 +259,7 @@ export declare class HmemStore {
      * For sub-nodes: updates node content only.
      * Does NOT modify children — use appendChildren to extend the tree.
      */
-    updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean, tags?: string[], pinned?: boolean): boolean;
+    updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean, tags?: string[], pinned?: boolean, active?: boolean): boolean;
     /**
      * Append new child nodes under an existing entry (root or node).
      * Content is tab-indented relative to the parent:

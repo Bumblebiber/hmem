@@ -57,6 +57,8 @@ export interface MemoryEntry {
   favorite?: boolean;
   /** True if the agent marked this entry as irrelevant. Hidden from bulk reads, no correction needed. */
   irrelevant?: boolean;
+  /** True if this entry is actively relevant (root-only). When any entry in a prefix has active=1, only active entries of that prefix are expanded in bulk reads. */
+  active?: boolean;
   /** True if this entry was already delivered in a previous bulk read (session cache). */
   suppressed?: boolean;
   /**
@@ -310,6 +312,8 @@ const MIGRATIONS = [
   // Sync support: track last content modification (separate from last_accessed)
   "ALTER TABLE memories ADD COLUMN updated_at TEXT",
   "ALTER TABLE memory_nodes ADD COLUMN updated_at TEXT",
+  // Active flag: marks entries as currently relevant — non-active entries in same prefix shown title-only
+  "ALTER TABLE memories ADD COLUMN active INTEGER DEFAULT 0",
 ];
 
 // ---- HmemStore class ----
@@ -426,8 +430,11 @@ export class HmemStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    // Validate tags before transaction
-    const validatedTags = tags && tags.length > 0 ? this.validateTags(tags) : [];
+    // Tags are mandatory — at least 1 required for discoverability
+    if (!tags || tags.length === 0) {
+      throw new Error("Tags are required. Provide at least 1 tag (3+ recommended) for discoverability. Example: tags=['#hmem', '#sqlite', '#bug']");
+    }
+    const validatedTags = this.validateTags(tags);
 
     // Run in a transaction
     this.db.transaction(() => {
@@ -767,6 +774,82 @@ export class HmemStore {
     const irrelevantCount = rows.filter(r => r.irrelevant === 1).length;
     const activeRows = rows.filter(r => r.irrelevant !== 1);
 
+    // Step 0.5: Detect active-prefixes — prefixes where at least one entry has active=1.
+    // Non-active entries in these prefixes are still shown (as compact titles) but don't get expansion slots.
+    const activePrefixes = new Set<string>();
+    for (const r of activeRows) {
+      if (r.active === 1) activePrefixes.add(r.prefix);
+    }
+
+    // Step 0.6: Cascading related-suppression — entries in OTHER prefixes that are thematically
+    // related ONLY to suppressed (non-active) entries get demoted to title-only too.
+    // Logic: collect tags from non-active entries, subtract tags from active entries,
+    // then find entries in other prefixes that share ONLY the remaining "suppressed" tags.
+    const relatedSuppressed = new Set<string>();
+    if (activePrefixes.size > 0) {
+      const activeEntryIds: string[] = [];
+      const nonActiveEntryIds: string[] = [];
+      for (const r of activeRows) {
+        if (activePrefixes.has(r.prefix)) {
+          if (r.active === 1) activeEntryIds.push(r.id);
+          else nonActiveEntryIds.push(r.id);
+        }
+      }
+      if (nonActiveEntryIds.length > 0 && activeEntryIds.length > 0) {
+        // Fetch tags for active and non-active entries (root-level tags + child tags)
+        const activeTagRows = activeEntryIds.length > 0
+          ? this.db.prepare(
+              `SELECT DISTINCT tag FROM memory_tags WHERE ${activeEntryIds.map(() => "entry_id = ? OR entry_id LIKE ?").join(" OR ")}`
+            ).all(...activeEntryIds.flatMap(id => [id, `${id}.%`])) as { tag: string }[]
+          : [];
+        const activeTags = new Set(activeTagRows.map(r => r.tag));
+
+        const nonActiveTagRows = this.db.prepare(
+          `SELECT DISTINCT tag FROM memory_tags WHERE ${nonActiveEntryIds.map(() => "entry_id = ? OR entry_id LIKE ?").join(" OR ")}`
+        ).all(...nonActiveEntryIds.flatMap(id => [id, `${id}.%`])) as { tag: string }[];
+        // Suppressed tags = tags that appear in non-active entries but NOT in active entries
+        const suppressedTags = nonActiveTagRows.map(r => r.tag).filter(t => !activeTags.has(t));
+
+        if (suppressedTags.length > 0) {
+          // Find root entries in OTHER prefixes that have ONLY suppressed tags (no active tags)
+          const prefixList = [...activePrefixes];
+          const otherEntries = activeRows.filter(r => !activePrefixes.has(r.prefix) && r.obsolete !== 1);
+          if (otherEntries.length > 0) {
+            const otherIds = otherEntries.map(r => r.id);
+            const otherTagMap = this.fetchTagsBulk(otherIds);
+            // Also fetch child tags for better coverage
+            const otherChildIds = otherIds.flatMap(id => {
+              const children = this.db.prepare(
+                "SELECT id FROM memory_nodes WHERE root_id = ?"
+              ).all(id) as { id: string }[];
+              return children.map(c => c.id);
+            });
+            const childTagMap = otherChildIds.length > 0 ? this.fetchTagsBulk(otherChildIds) : new Map<string, string[]>();
+            // Merge child tags into parent
+            for (const e of otherEntries) {
+              const rootTags = otherTagMap.get(e.id) ?? [];
+              const childNodes = this.db.prepare(
+                "SELECT id FROM memory_nodes WHERE root_id = ?"
+              ).all(e.id) as { id: string }[];
+              const allTags = new Set(rootTags);
+              for (const cn of childNodes) {
+                const ct = childTagMap.get(cn.id);
+                if (ct) ct.forEach(t => allTags.add(t));
+              }
+              if (allTags.size === 0) continue;
+              // Check: does this entry have ANY active tags?
+              const hasActiveTags = [...allTags].some(t => activeTags.has(t));
+              const hasSuppressedTags = [...allTags].some(t => suppressedTags.includes(t));
+              // Only suppress if entry shares suppressed tags but NO active tags
+              if (hasSuppressedTags && !hasActiveTags) {
+                relatedSuppressed.add(e.id);
+              }
+            }
+          }
+        }
+      }
+    }
+
     // Step 1: Separate obsolete from non-obsolete FIRST
     const obsoleteRows = activeRows.filter(r => r.obsolete === 1);
     const nonObsoleteRows = activeRows.filter(r => r.obsolete !== 1);
@@ -824,11 +907,17 @@ export class HmemStore {
     const isEssentials = opts.mode === "essentials";
 
     // Per prefix: top N newest + top M most-accessed — slot counts scale with prefix size
-    for (const [, prefixRows] of byPrefix) {
-      const { newestCount, accessCount } = this.calcV2Slots(prefixRows.length, isEssentials, fraction);
+    for (const [prefix, prefixRows] of byPrefix) {
+      // In active-prefixes, only active entries compete for expansion slots.
+      // Related-suppressed entries in OTHER prefixes also don't compete.
+      const candidateRows = activePrefixes.has(prefix)
+        ? prefixRows.filter(r => r.active === 1)
+        : prefixRows.filter(r => !relatedSuppressed.has(r.id));
+
+      const { newestCount, accessCount } = this.calcV2Slots(candidateRows.length, isEssentials, fraction);
 
       // Newest: skip cached AND hidden entries, fill from fresh entries only
-      const uncachedRows = prefixRows.filter(r => !cached.has(r.id) && !hidden.has(r.id));
+      const uncachedRows = candidateRows.filter(r => !cached.has(r.id) && !hidden.has(r.id));
       for (const r of uncachedRows.slice(0, newestCount)) {
         expandedIds.add(r.id);
       }
@@ -842,9 +931,18 @@ export class HmemStore {
       for (const r of mostAccessed) expandedIds.add(r.id);
     }
 
-    // Global: all uncached+unhidden favorites
+    // Global: uncached+unhidden favorites/pinned + all active entries
     for (const r of nonObsoleteRows) {
       if ((r.favorite === 1 || r.pinned === 1) && !cached.has(r.id) && !hidden.has(r.id)) {
+        // In active-prefixes, only active entries get expansion even if favorite/pinned
+        if (!activePrefixes.has(r.prefix) || r.active === 1) {
+          // Related-suppressed entries don't get expansion even if favorite/pinned
+          if (!relatedSuppressed.has(r.id)) {
+            expandedIds.add(r.id);
+          }
+        }
+      }
+      if (r.active === 1) {
         expandedIds.add(r.id);
       }
     }
@@ -858,6 +956,11 @@ export class HmemStore {
       ).all(topSubnodeCount) as { root_id: string; cnt: number }[];
       for (const row of nodeCounts) {
         if (!hidden.has(row.root_id)) {
+          // In active-prefixes, don't expand non-active entries even if they have many sub-nodes
+          const entryRow = nonObsoleteRows.find(r => r.id === row.root_id);
+          if (entryRow && activePrefixes.has(entryRow.prefix) && entryRow.active !== 1) continue;
+          // Related-suppressed entries don't get topSubnode expansion either
+          if (relatedSuppressed.has(row.root_id)) continue;
           expandedIds.add(row.root_id);
           topSubnodeIds.add(row.root_id);
         }
@@ -877,9 +980,17 @@ export class HmemStore {
     // Step 4: Build visible rows (hidden entries completely excluded)
     // - Expanded entries: full content with children
     // - Cached entries: title-only (no expansion, no children)
+    // - Non-active in active-prefixes: title-only
+    // - Related-suppressed in other prefixes: title-only
     const expandedNonObsolete = nonObsoleteRows.filter(r => expandedIds.has(r.id));
     const cachedVisible = nonObsoleteRows.filter(r => cached.has(r.id) && !expandedIds.has(r.id) && !hidden.has(r.id));
-    const visibleRows = [...expandedNonObsolete, ...cachedVisible, ...visibleObsolete];
+    const nonActiveVisible = activePrefixes.size > 0
+      ? nonObsoleteRows.filter(r => activePrefixes.has(r.prefix) && r.active !== 1 && !expandedIds.has(r.id) && !cached.has(r.id) && !hidden.has(r.id))
+      : [];
+    const relatedSuppressedVisible = relatedSuppressed.size > 0
+      ? nonObsoleteRows.filter(r => relatedSuppressed.has(r.id) && !expandedIds.has(r.id) && !cached.has(r.id) && !hidden.has(r.id))
+      : [];
+    const visibleRows = [...expandedNonObsolete, ...cachedVisible, ...nonActiveVisible, ...relatedSuppressedVisible, ...visibleObsolete];
     const visibleIds = new Set(visibleRows.map(r => r.id));
 
     // titles_only: V2 selection applies, but skip link resolution
@@ -1452,7 +1563,7 @@ export class HmemStore {
   /**
    * Update specific fields of an existing root entry (curator use only).
    */
-  update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite" | "irrelevant">>): boolean {
+  update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite" | "irrelevant" | "active">>): boolean {
     this.guardCorrupted();
     const sets: string[] = [];
     const params: any[] = [];
@@ -1461,7 +1572,7 @@ export class HmemStore {
       sets.push(`${key} = ?`);
       if (key === "links" && Array.isArray(val)) {
         params.push(JSON.stringify(val));
-      } else if (key === "obsolete" || key === "favorite" || key === "irrelevant") {
+      } else if (key === "obsolete" || key === "favorite" || key === "irrelevant" || key === "active") {
         params.push(val ? 1 : 0);
       } else {
         params.push(val);
@@ -1498,7 +1609,7 @@ export class HmemStore {
    * For sub-nodes: updates node content only.
    * Does NOT modify children — use appendChildren to extend the tree.
    */
-  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean, tags?: string[], pinned?: boolean): boolean {
+  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean, tags?: string[], pinned?: boolean, active?: boolean): boolean {
     this.guardCorrupted();
     const trimmed = newContent.trim();
     if (id.includes(".")) {
@@ -1623,6 +1734,10 @@ export class HmemStore {
       if (pinned !== undefined) {
         sets.push("pinned = ?");
         params.push(pinned ? 1 : 0);
+      }
+      if (active !== undefined) {
+        sets.push("active = ?");
+        params.push(active ? 1 : 0);
       }
       if (sets.length === 0) {
         // Only tags to update — no SQL UPDATE needed
@@ -2377,6 +2492,7 @@ export class HmemStore {
       obsolete: row.obsolete === 1,
       favorite: row.favorite === 1,
       irrelevant: row.irrelevant === 1,
+      active: row.active === 1,
       pinned: row.pinned === 1,
       children,
     };
