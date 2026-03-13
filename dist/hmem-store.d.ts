@@ -155,6 +155,10 @@ export interface ReadOptions {
     tag?: string;
     /** Show entries not accessed in the last N days (stale detection). Sorted oldest-access first. */
     staleDays?: number;
+    /** Find all entries related to a given entry via per-node tag scoring + direct links. */
+    contextFor?: string;
+    /** Minimum weighted tag score for context_for matches. Default: 4. Tier weights: rare(<=5)=3, medium(6-20)=2, common(>20)=1. */
+    minTagScore?: number;
 }
 export interface WriteResult {
     id: string;
@@ -303,7 +307,7 @@ export declare class HmemStore {
         tags: string[];
     }[];
     /** Bulk-assign tags to entries + their children from a single fetchTagsBulk call. */
-    private assignBulkTags;
+    assignBulkTags(entries: MemoryEntry[]): void;
     /** Recursively collect all node IDs from a tree of MemoryNodes. */
     private collectNodeIds;
     /** Get root IDs that have a specific tag (for bulk-read filtering). */
@@ -464,6 +468,24 @@ export declare class HmemStore {
         created_at: string;
         tags: string[];
     }[];
+    /**
+     * Find all entries contextually related to a given entry.
+     * Uses per-node weighted tag scoring: for each node of the source entry,
+     * compute weighted overlap with each candidate entry's full tag set.
+     * Tier weights: rare (<=5 entries) = 3, medium (6-20) = 2, common (>20) = 1.
+     * A candidate matches if ANY source node scores >= minTagScore against it.
+     * Bidirectional direct links are always included.
+     */
+    findContext(entryId: string, minTagScore?: number, limit?: number): {
+        linked: MemoryEntry[];
+        tagRelated: {
+            entry: MemoryEntry;
+            score: number;
+            matchNode: string;
+        }[];
+    };
+    /** Resolve bidirectional direct links for an entry, filtering obsolete/irrelevant. */
+    private resolveDirectLinks;
     /** Audit report: broken links, orphaned entries, stale favorites, broken obsolete chains, tag orphans. */
     healthCheck(): {
         brokenLinks: {

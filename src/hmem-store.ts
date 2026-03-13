@@ -161,6 +161,10 @@ export interface ReadOptions {
   tag?: string;
   /** Show entries not accessed in the last N days (stale detection). Sorted oldest-access first. */
   staleDays?: number;
+  /** Find all entries related to a given entry via per-node tag scoring + direct links. */
+  contextFor?: string;
+  /** Minimum weighted tag score for context_for matches. Default: 4. Tier weights: rare(<=5)=3, medium(6-20)=2, common(>20)=1. */
+  minTagScore?: number;
 }
 
 export interface WriteResult {
@@ -1984,7 +1988,7 @@ export class HmemStore {
   }
 
   /** Bulk-assign tags to entries + their children from a single fetchTagsBulk call. */
-  private assignBulkTags(entries: MemoryEntry[]): void {
+  assignBulkTags(entries: MemoryEntry[]): void {
     const allIds: string[] = [];
     for (const e of entries) {
       allIds.push(e.id);
@@ -2883,6 +2887,157 @@ export class HmemStore {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Find all entries contextually related to a given entry.
+   * Uses per-node weighted tag scoring: for each node of the source entry,
+   * compute weighted overlap with each candidate entry's full tag set.
+   * Tier weights: rare (<=5 entries) = 3, medium (6-20) = 2, common (>20) = 1.
+   * A candidate matches if ANY source node scores >= minTagScore against it.
+   * Bidirectional direct links are always included.
+   */
+  findContext(
+    entryId: string,
+    minTagScore: number = 4,
+    limit: number = 30
+  ): { linked: MemoryEntry[]; tagRelated: { entry: MemoryEntry; score: number; matchNode: string }[] } {
+    this.guardCorrupted();
+
+    // 1. Source node IDs
+    const childRows = this.db.prepare(
+      "SELECT id FROM memory_nodes WHERE root_id = ?"
+    ).all(entryId) as { id: string }[];
+    const nodeIds = [entryId, ...childRows.map(r => r.id)];
+
+    // 2. Tags per source node
+    const nodeTagMap = this.fetchTagsBulk(nodeIds);
+
+    // 3. All unique source tags
+    const allSourceTags = new Set<string>();
+    for (const tags of nodeTagMap.values()) {
+      if (tags) tags.forEach(t => allSourceTags.add(t));
+    }
+    if (allSourceTags.size === 0) {
+      return { linked: this.resolveDirectLinks(entryId), tagRelated: [] };
+    }
+
+    // 4. Global tag frequencies (count distinct root entries per tag)
+    const freqRows = this.db.prepare(`
+      SELECT tag, COUNT(DISTINCT
+        CASE WHEN entry_id LIKE '%.%'
+        THEN SUBSTR(entry_id, 1, INSTR(entry_id, '.') - 1)
+        ELSE entry_id END
+      ) as freq
+      FROM memory_tags GROUP BY tag
+    `).all() as { tag: string; freq: number }[];
+    const tagFreq = new Map<string, number>();
+    for (const r of freqRows) tagFreq.set(r.tag, r.freq);
+
+    // 5. Find candidate entries sharing any source tag
+    const srcTagArr = [...allSourceTags];
+    const placeholders = srcTagArr.map(() => "?").join(", ");
+    const candidateRows = this.db.prepare(`
+      SELECT
+        CASE WHEN entry_id LIKE '%.%'
+        THEN SUBSTR(entry_id, 1, INSTR(entry_id, '.') - 1)
+        ELSE entry_id END as root_id,
+        tag
+      FROM memory_tags
+      WHERE tag IN (${placeholders})
+    `).all(...srcTagArr) as { root_id: string; tag: string }[];
+
+    // 6. Group candidate tags by root_id (skip self)
+    const candidateTagMap = new Map<string, Set<string>>();
+    for (const r of candidateRows) {
+      if (r.root_id === entryId) continue;
+      let set = candidateTagMap.get(r.root_id);
+      if (!set) { set = new Set(); candidateTagMap.set(r.root_id, set); }
+      set.add(r.tag);
+    }
+
+    // 7. Score each candidate per source node
+    const scored: { id: string; score: number; matchNode: string }[] = [];
+    for (const [candidateId, candidateTags] of candidateTagMap) {
+      let bestScore = 0;
+      let bestNode = "";
+      for (const [nodeId, nodeTags] of nodeTagMap) {
+        if (!nodeTags) continue;
+        let score = 0;
+        for (const tag of nodeTags) {
+          if (candidateTags.has(tag)) {
+            const freq = tagFreq.get(tag) ?? 999;
+            if (freq <= 5) score += 3;
+            else if (freq <= 20) score += 2;
+            else score += 1;
+          }
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          bestNode = nodeId;
+        }
+      }
+      if (bestScore >= minTagScore) {
+        scored.push({ id: candidateId, score: bestScore, matchNode: bestNode });
+      }
+    }
+
+    // Sort by score DESC
+    scored.sort((a, b) => b.score - a.score);
+    const topScored = scored.slice(0, limit);
+
+    // 8. Fetch full entries, filter obsolete + irrelevant
+    const tagRelated: { entry: MemoryEntry; score: number; matchNode: string }[] = [];
+    for (const s of topScored) {
+      const row = this.db.prepare(
+        "SELECT * FROM memories WHERE id = ? AND obsolete != 1 AND irrelevant != 1"
+      ).get(s.id) as any;
+      if (!row) continue;
+      const children = this.fetchChildren(row.id);
+      const entry = this.rowToEntry(row, children);
+      entry.tags = this.fetchTags(row.id);
+      tagRelated.push({ entry, score: s.score, matchNode: s.matchNode });
+    }
+
+    // 9. Direct links (bidirectional)
+    const linked = this.resolveDirectLinks(entryId);
+
+    return { linked, tagRelated };
+  }
+
+  /** Resolve bidirectional direct links for an entry, filtering obsolete/irrelevant. */
+  private resolveDirectLinks(entryId: string): MemoryEntry[] {
+    const linkIds = new Set<string>();
+
+    // Forward links
+    const row = this.db.prepare("SELECT links FROM memories WHERE id = ?").get(entryId) as any;
+    if (row?.links) {
+      try { JSON.parse(row.links).forEach((id: string) => linkIds.add(id)); } catch {}
+    }
+
+    // Reverse links: entries whose links field contains this ID
+    const reverseRows = this.db.prepare(
+      "SELECT id, links FROM memories WHERE links LIKE ? AND id != ?"
+    ).all(`%${entryId}%`, entryId) as { id: string; links: string }[];
+    for (const r of reverseRows) {
+      try {
+        if (JSON.parse(r.links).includes(entryId)) linkIds.add(r.id);
+      } catch {}
+    }
+
+    // Fetch entries
+    const results: MemoryEntry[] = [];
+    for (const lid of linkIds) {
+      const lr = this.db.prepare(
+        "SELECT * FROM memories WHERE id = ? AND obsolete != 1 AND irrelevant != 1"
+      ).get(lid) as any;
+      if (!lr) continue;
+      const children = this.fetchChildren(lr.id);
+      const entry = this.rowToEntry(lr, children);
+      entry.tags = this.fetchTags(lr.id);
+      results.push(entry);
+    }
+    return results;
   }
 
   /** Audit report: broken links, orphaned entries, stale favorites, broken obsolete chains, tag orphans. */

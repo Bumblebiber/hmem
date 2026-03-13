@@ -519,7 +519,13 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
         "Also works with search to find tagged entries."),
     stale_days: z.number().optional().describe("Show entries not accessed in the last N days. Sorted oldest-access first. " +
         "Useful for finding what to curate or review. Example: stale_days=30"),
-}, async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator, show_all, tag, stale_days }) => {
+    context_for: z.string().optional().describe("Load full context for an entry: the entry itself (expanded) + all related entries. " +
+        "Related = directly linked OR sharing weighted tag overlap with any node of the source. " +
+        "Tag weights: rare(<=5 uses)=3, medium(6-20)=2, common(>20)=1. " +
+        "Example: read_memory({ context_for: 'P0029' }) — loads P0029 + all contextually related entries."),
+    min_tag_score: z.number().optional().describe("Minimum weighted tag score for context_for matches (default: 4). " +
+        "Score 4 = e.g. 2 medium tags, or 1 rare + 1 common. Lower = more results, higher = stricter."),
+}, async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator, show_all, tag, stale_days, context_for, min_tag_score }) => {
     if (AGENT_ID === "UNKNOWN") {
         return {
             content: [{ type: "text", text: "ERROR: Agent-ID unknown. read_memory is only available for spawned agents." }],
@@ -538,6 +544,57 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             const corruptionWarning = hmemStore.corrupted
                 ? "⚠ WARNING: Memory database is corrupted! Reads may be incomplete. A backup (.corrupt) was saved.\n\n"
                 : "";
+            // Context-for: load source entry expanded + all related entries
+            if (context_for) {
+                const effectiveRole = storeName === "company" ? agentRole : undefined;
+                const sourceEntries = hmemStore.read({
+                    id: context_for,
+                    expand: true,
+                    agentRole: effectiveRole,
+                });
+                if (sourceEntries.length === 0) {
+                    return {
+                        content: [{ type: "text", text: `Entry not found: ${context_for}` }],
+                        isError: true,
+                    };
+                }
+                const source = sourceEntries[0];
+                hmemStore.assignBulkTags([source]);
+                const { linked, tagRelated } = hmemStore.findContext(context_for, min_tag_score ?? 4, maxResults ?? 30);
+                // Deduplicate: remove linked entries from tagRelated
+                const linkedIds = new Set(linked.map(e => e.id));
+                const dedupedTagRelated = tagRelated.filter(r => !linkedIds.has(r.entry.id));
+                const isCurator = curator ?? false;
+                const totalRelated = linked.length + dedupedTagRelated.length;
+                const lines = [];
+                lines.push(`## Context for ${context_for}: ${source.title} (${totalRelated} related entries)\n`);
+                // Source entry (expanded)
+                lines.push("### Source entry\n");
+                renderEntryFormatted(lines, source, isCurator, true);
+                // Direct links
+                if (linked.length > 0) {
+                    lines.push(`### Directly linked (${linked.length})\n`);
+                    for (const e of linked) {
+                        renderEntryFormatted(lines, e, isCurator);
+                    }
+                }
+                // Tag-related
+                if (dedupedTagRelated.length > 0) {
+                    lines.push(`### Tag-related (${dedupedTagRelated.length} entries, score >= ${min_tag_score ?? 4})\n`);
+                    for (const { entry, score, matchNode } of dedupedTagRelated) {
+                        renderEntryFormatted(lines, entry, isCurator);
+                        if (isCurator) {
+                            lines.push(`  [score=${score} via ${matchNode}]`);
+                        }
+                    }
+                }
+                const storeLabel = storeName === "company" ? "company" : templateName;
+                const output = lines.join("\n");
+                log(`read_memory [${storeLabel}]: context_for=${context_for}, ${totalRelated} related (${linked.length} linked, ${dedupedTagRelated.length} tag-related)`);
+                return {
+                    content: [{ type: "text", text: corruptionWarning + output }],
+                };
+            }
             const effectiveDepth = depth || (id ? 2 : 1);
             // Session cache: cached entries shown as titles in subsequent bulk reads
             const isBulkListing = !id && !search && !time_around;
@@ -579,7 +636,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             }
             // Format output
             const output = titles_only
-                ? formatTitlesOnly(entries, hmemConfig)
+                ? formatTitlesOnly(entries, hmemConfig, curator ?? false)
                 : isBulkListing
                     ? formatGroupedOutput(hmemStore, entries, curator ?? false, hmemConfig)
                     : formatFlatOutput(entries, curator ?? false, expand ?? false);
@@ -1315,13 +1372,13 @@ server.tool("mark_audited", "CURATOR ONLY (ceo role). Mark an agent as audited (
  * V2 selection applies. Favorites/top-accessed show L2 children titles.
  * Non-expanded entries show (N) child count indicator.
  */
-/** Format tags as a compact suffix: "  #hmem #curation" or "" if no tags. */
-function formatTagSuffix(tags) {
-    if (!tags || tags.length === 0)
+/** Format tags as a compact suffix: "  #hmem #curation" or "" if no tags. Only shown in curator mode. */
+function formatTagSuffix(tags, curator = false) {
+    if (!curator || !tags || tags.length === 0)
         return "";
-    return "  " + tags.join(" ");
+    return "  " + [...new Set(tags)].join(" ");
 }
-function formatTitlesOnly(entries, config) {
+function formatTitlesOnly(entries, config, curator = false) {
     const CHILD_TITLE_LEN = 50;
     const lines = [];
     const byPrefix = new Map();
@@ -1345,7 +1402,7 @@ function formatTitlesOnly(entries, config) {
                 const visibleChildren = e.children.filter(c => !c.irrelevant);
                 const hiddenIrr = e.children.length - visibleChildren.length;
                 // Expanded entry (favorite/top-accessed): show with L2 children
-                lines.push(`${e.id} ${mmdd}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags)}`);
+                lines.push(`${e.id} ${mmdd}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags, curator)}`);
                 for (const child of visibleChildren) {
                     const short = child.title || (child.content.length > CHILD_TITLE_LEN
                         ? child.content.substring(0, CHILD_TITLE_LEN)
@@ -1364,7 +1421,7 @@ function formatTitlesOnly(entries, config) {
             else {
                 // Non-expanded: compact line with child count
                 const childHint = (e.hiddenChildrenCount ?? 0) > 0 ? ` (${e.hiddenChildrenCount})` : "";
-                lines.push(`${e.id} ${mmdd}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags)}${childHint}`);
+                lines.push(`${e.id} ${mmdd}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags, curator)}${childHint}`);
             }
         }
         lines.push("");
@@ -1433,7 +1490,7 @@ function nodeMarkers(node) {
 function renderEntryFormatted(lines, e, curator, expand = false) {
     const isNode = e.id.includes(".");
     const hasDetail = !!(e.children?.length || e.linkedEntries?.length);
-    const tagStr = formatTagSuffix(e.tags);
+    const tagStr = formatTagSuffix(e.tags, curator);
     // Headline: use title for navigation, show full content below when drilling in
     if (isNode) {
         if (curator) {
@@ -1556,7 +1613,7 @@ function renderEntryFormatted(lines, e, curator, expand = false) {
         lines.push(`  --- Related (shared tags) ---`);
         for (const rel of e.relatedEntries) {
             const rmmdd = rel.created_at.substring(5, 10);
-            lines.push(`  ${rel.id} ${rmmdd}  ${rel.title}${formatTagSuffix(rel.tags)}`);
+            lines.push(`  ${rel.id} ${rmmdd}  ${rel.title}${formatTagSuffix(rel.tags, curator)}`);
         }
     }
     lines.push("");
@@ -1569,7 +1626,7 @@ function renderChildrenFormatted(lines, children, curator) {
     for (const child of children) {
         const indent = "  ".repeat(child.depth - 1);
         const fav = nodeMarkers(child);
-        const ctags = formatTagSuffix(child.tags);
+        const ctags = formatTagSuffix(child.tags, curator);
         const hint = (child.child_count ?? 0) > 0
             ? `  [+${child.child_count} → ${child.id}]`
             : "";
