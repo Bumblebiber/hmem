@@ -2523,30 +2523,68 @@ export class HmemStore {
         const linked = this.resolveDirectLinks(entryId);
         return { linked, tagRelated };
     }
-    /** Resolve bidirectional direct links for an entry, filtering obsolete/irrelevant. */
+    /** Resolve bidirectional direct links for an entry + all subnodes, filtering obsolete/irrelevant. */
     resolveDirectLinks(entryId) {
-        const linkIds = new Set();
-        // Forward links
-        const row = this.db.prepare("SELECT links FROM memories WHERE id = ?").get(entryId);
-        if (row?.links) {
+        const linkedRootIds = new Set();
+        // All IDs in this entry's tree (root + subnodes)
+        const nodeRows = this.db.prepare("SELECT id FROM memory_nodes WHERE root_id = ?").all(entryId);
+        const allIds = [entryId, ...nodeRows.map(r => r.id)];
+        // Forward links: from root entry
+        const rootRow = this.db.prepare("SELECT links FROM memories WHERE id = ?").get(entryId);
+        if (rootRow?.links) {
             try {
-                JSON.parse(row.links).forEach((id) => linkIds.add(id));
+                for (const lid of JSON.parse(rootRow.links)) {
+                    const rootId = lid.includes(".") ? lid.split(".")[0] : lid;
+                    if (rootId !== entryId)
+                        linkedRootIds.add(rootId);
+                }
             }
             catch { }
         }
-        // Reverse links: entries whose links field contains this ID
+        // Forward links: from subnodes (memory_nodes.links)
+        for (const nodeId of allIds) {
+            if (nodeId === entryId)
+                continue; // root already handled above
+            const nodeRow = this.db.prepare("SELECT links FROM memory_nodes WHERE id = ?").get(nodeId);
+            if (nodeRow?.links) {
+                try {
+                    for (const lid of JSON.parse(nodeRow.links)) {
+                        const rootId = lid.includes(".") ? lid.split(".")[0] : lid;
+                        if (rootId !== entryId)
+                            linkedRootIds.add(rootId);
+                    }
+                }
+                catch { }
+            }
+        }
+        // Reverse links: other root entries linking to any of our IDs
+        // Use LIKE '%entryId%' which catches both "P0029" and "P0029.14" etc.
         const reverseRows = this.db.prepare("SELECT id, links FROM memories WHERE links LIKE ? AND id != ?").all(`%${entryId}%`, entryId);
         for (const r of reverseRows) {
             try {
-                if (JSON.parse(r.links).includes(entryId))
-                    linkIds.add(r.id);
+                const links = JSON.parse(r.links);
+                // Check if any link points to our root or any subnode
+                if (links.some(lid => lid === entryId || lid.startsWith(entryId + "."))) {
+                    linkedRootIds.add(r.id);
+                }
             }
             catch { }
         }
-        // Fetch entries
+        // Reverse links: other subnodes linking to any of our IDs
+        const reverseNodeRows = this.db.prepare("SELECT root_id, links FROM memory_nodes WHERE links LIKE ? AND root_id != ?").all(`%${entryId}%`, entryId);
+        for (const r of reverseNodeRows) {
+            try {
+                const links = JSON.parse(r.links);
+                if (links.some(lid => lid === entryId || lid.startsWith(entryId + "."))) {
+                    linkedRootIds.add(r.root_id);
+                }
+            }
+            catch { }
+        }
+        // Fetch full entries, filter obsolete + irrelevant
         const results = [];
-        for (const lid of linkIds) {
-            const lr = this.db.prepare("SELECT * FROM memories WHERE id = ? AND obsolete != 1 AND irrelevant != 1").get(lid);
+        for (const rid of linkedRootIds) {
+            const lr = this.db.prepare("SELECT * FROM memories WHERE id = ? AND obsolete != 1 AND irrelevant != 1").get(rid);
             if (!lr)
                 continue;
             const children = this.fetchChildren(lr.id);

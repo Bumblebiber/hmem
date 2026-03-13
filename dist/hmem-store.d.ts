@@ -484,7 +484,7 @@ export declare class HmemStore {
             matchNode: string;
         }[];
     };
-    /** Resolve bidirectional direct links for an entry, filtering obsolete/irrelevant. */
+    /** Resolve bidirectional direct links for an entry + all subnodes, filtering obsolete/irrelevant. */
     private resolveDirectLinks;
     /** Audit report: broken links, orphaned entries, stale favorites, broken obsolete chains, tag orphans. */
     healthCheck(): {
