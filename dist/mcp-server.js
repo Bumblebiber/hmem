@@ -490,7 +490,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
     "Store types:\n" +
     "  personal (default): Your private memory\n", {
     id: z.string().optional().describe("Specific memory ID, e.g. 'P0001' or 'L0023'"),
-    depth: z.number().min(1).max(3).optional().describe("How deep to read (1-3). Default: 2 when reading by ID, 1 for listings. L4/L5 accessible via direct node ID only."),
+    depth: z.number().min(1).max(4).optional().describe("How deep to read (1-4). Default: 2 when reading by ID, 1 for listings. For L5 detail, drill into specific node IDs."),
     prefix: z.string().optional().describe(`Filter by category: ${prefixKeys.join(", ")}`),
     after: z.string().optional().describe("Only entries after this date (ISO format, e.g. '2026-02-15')"),
     before: z.string().optional().describe("Only entries before this date (ISO format)"),
