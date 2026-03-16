@@ -752,10 +752,16 @@ server.tool(
         });
 
         if (entries.length === 0) {
-          const hint = id ? `No memory with ID "${id}".` :
-            search ? `No memories matching "${search}".` :
-              time_around ? `No entries found around "${time_around}".` :
-              "No memories found for this query.";
+          const hmemPath = storeName === "company"
+            ? path.join(PROJECT_DIR, "company.hmem")
+            : resolveHmemPath(PROJECT_DIR, templateName);
+          const dbExists = fs.existsSync(hmemPath);
+          const label = storeName === "company" ? "company" : templateName;
+          const storeInfo = `\nStore: ${label} | Agent: ${templateName || "(none)"} | DB: ${hmemPath}${dbExists ? "" : " [FILE NOT FOUND]"}`;
+          const hint = id ? `No memory with ID "${id}".${storeInfo}` :
+            search ? `No memories matching "${search}".${storeInfo}` :
+              time_around ? `No entries found around "${time_around}".${storeInfo}` :
+              `No memories found.${storeInfo}`;
           return { content: [{ type: "text" as const, text: hint }] };
         }
 
@@ -972,8 +978,13 @@ server.tool(
         : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
       try {
         const s = hmemStore.getStats();
+        const agentName = AGENT_ID.replace(/_\d+$/, "");
+        const hmemPath = storeName === "company"
+          ? path.join(PROJECT_DIR, "company.hmem")
+          : resolveHmemPath(PROJECT_DIR, agentName);
         const lines: string[] = [];
         lines.push(`Memory stats (${storeName}):`);
+        lines.push(`  Agent: ${agentName || "(none)"} | DB: ${hmemPath}`);
         lines.push(`  Total entries: ${s.totalEntries}`);
         const prefixLine = Object.entries(s.byPrefix).map(([p, c]) => `${p}:${c}`).join(", ");
         if (prefixLine) lines.push(`  By prefix: ${prefixLine}`);
@@ -2005,7 +2016,20 @@ function checkForUpdates(): void {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  log("MCP Server running on stdio");
+
+  // Startup diagnostics — helps debug "0 entries" issues
+  const templateName = AGENT_ID.replace(/_\d+$/, "");
+  const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+  const dbExists = fs.existsSync(hmemPath);
+  let entryCount = 0;
+  if (dbExists) {
+    try {
+      const store = openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+      try { entryCount = store.stats().total; } finally { store.close(); }
+    } catch {}
+  }
+  log(`MCP Server running on stdio | Agent: ${templateName || "(none)"} | Role: ${ROLE || "worker"} | DB: ${hmemPath}${dbExists ? ` (${entryCount} entries)` : " [NOT FOUND]"}`);
+
   checkForUpdates();
 }
 
