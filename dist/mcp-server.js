@@ -1666,6 +1666,15 @@ function nodeMarkers(node) {
     return `${fav}${irr}`;
 }
 function renderEntryFormatted(lines, e, curator, expand = false) {
+    // O-prefix: title-only rendering — never expand children (raw conversation data, too large)
+    // Use read_memory(id="O0042") to drill in explicitly.
+    if (e.prefix === "O" && !expand) {
+        const mmdd = e.created_at.substring(5, 10);
+        const childCount = e.children?.length ?? 0;
+        lines.push(`${e.id} ${mmdd}  ${e.title}${childCount > 0 ? ` (${childCount} exchanges)` : ""}`);
+        lines.push("");
+        return;
+    }
     const isNode = e.id.includes(".");
     const hasDetail = !!(e.children?.length || e.linkedEntries?.length);
     const tagStr = formatTagSuffix(e.tags, curator);

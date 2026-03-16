@@ -2434,9 +2434,11 @@ export class HmemStore {
                 if (seen.has(rootId))
                     continue;
                 seen.add(rootId);
-                const rootRow = this.db.prepare("SELECT title, level_1, created_at, irrelevant, obsolete FROM memories WHERE id = ?").get(rootId);
+                const rootRow = this.db.prepare("SELECT prefix, title, level_1, created_at, irrelevant, obsolete FROM memories WHERE id = ?").get(rootId);
                 if (!rootRow || rootRow.irrelevant === 1 || rootRow.obsolete === 1)
                     continue;
+                if (rootRow.prefix === "O")
+                    continue; // O-entries excluded from related discovery
                 results.push({
                     id: rootId,
                     title: rootRow.title || this.autoExtractTitle(rootRow.level_1),
@@ -2484,7 +2486,7 @@ export class HmemStore {
             if (ftsRootIds.size === 0)
                 return [];
             const idPlaceholders = [...ftsRootIds].map(() => "?").join(", ");
-            const rows = this.db.prepare(`SELECT id, title, level_1, created_at FROM memories WHERE id IN (${idPlaceholders}) AND seq > 0 AND irrelevant != 1 AND obsolete != 1 LIMIT ?`).all(...ftsRootIds, limit);
+            const rows = this.db.prepare(`SELECT id, title, level_1, created_at FROM memories WHERE id IN (${idPlaceholders}) AND seq > 0 AND prefix != 'O' AND irrelevant != 1 AND obsolete != 1 LIMIT ?`).all(...ftsRootIds, limit);
             return rows.map((r) => ({
                 id: r.id,
                 title: r.title || this.autoExtractTitle(r.level_1),
@@ -2591,7 +2593,7 @@ export class HmemStore {
         // 8. Fetch full entries, filter obsolete + irrelevant
         const tagRelated = [];
         for (const s of topScored) {
-            const row = this.db.prepare("SELECT * FROM memories WHERE id = ? AND obsolete != 1 AND irrelevant != 1").get(s.id);
+            const row = this.db.prepare("SELECT * FROM memories WHERE id = ? AND prefix != 'O' AND obsolete != 1 AND irrelevant != 1").get(s.id);
             if (!row)
                 continue;
             const children = this.fetchChildren(row.id);

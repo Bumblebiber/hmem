@@ -2923,8 +2923,9 @@ export class HmemStore {
         const rootId = eid.includes(".") ? eid.split(".")[0] : eid;
         if (seen.has(rootId)) continue;
         seen.add(rootId);
-        const rootRow = this.db.prepare("SELECT title, level_1, created_at, irrelevant, obsolete FROM memories WHERE id = ?").get(rootId) as any;
+        const rootRow = this.db.prepare("SELECT prefix, title, level_1, created_at, irrelevant, obsolete FROM memories WHERE id = ?").get(rootId) as any;
         if (!rootRow || rootRow.irrelevant === 1 || rootRow.obsolete === 1) continue;
+        if (rootRow.prefix === "O") continue; // O-entries excluded from related discovery
         results.push({
           id: rootId,
           title: rootRow.title || this.autoExtractTitle(rootRow.level_1),
@@ -2981,7 +2982,7 @@ export class HmemStore {
 
       const idPlaceholders = [...ftsRootIds].map(() => "?").join(", ");
       const rows = this.db.prepare(
-        `SELECT id, title, level_1, created_at FROM memories WHERE id IN (${idPlaceholders}) AND seq > 0 AND irrelevant != 1 AND obsolete != 1 LIMIT ?`
+        `SELECT id, title, level_1, created_at FROM memories WHERE id IN (${idPlaceholders}) AND seq > 0 AND prefix != 'O' AND irrelevant != 1 AND obsolete != 1 LIMIT ?`
       ).all(...ftsRootIds, limit) as any[];
 
       return rows.map((r: any) => ({
@@ -3096,7 +3097,7 @@ export class HmemStore {
     const tagRelated: { entry: MemoryEntry; score: number; matchNode: string }[] = [];
     for (const s of topScored) {
       const row = this.db.prepare(
-        "SELECT * FROM memories WHERE id = ? AND obsolete != 1 AND irrelevant != 1"
+        "SELECT * FROM memories WHERE id = ? AND prefix != 'O' AND obsolete != 1 AND irrelevant != 1"
       ).get(s.id) as any;
       if (!row) continue;
       const children = this.fetchChildren(row.id);
