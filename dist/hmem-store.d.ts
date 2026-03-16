@@ -293,6 +293,16 @@ export declare class HmemStore {
         ids: string[];
     };
     /**
+     * Append a chat exchange (user prompt + agent response) to an O-entry.
+     * Inserts 3 nodes as a linear chain WITHOUT content parsing — newlines are preserved.
+     *   L2: title (auto-extracted from userText)
+     *   L4: user message (raw, newlines intact)
+     *   L5: agent response (raw, newlines intact)
+     */
+    appendExchange(parentId: string, userText: string, agentText: string): {
+        id: string;
+    };
+    /**
      * Bump access_count on a root entry or node.
      * Returns true if the entry was found and bumped.
      */

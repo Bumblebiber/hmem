@@ -109,15 +109,8 @@ export async function logExchange(): Promise<void> {
     // Find or create active O-entry
     const activeOId = store.getActiveO();
 
-    // Flatten multiline text for appendChildren (newlines → " | " to prevent depth parsing)
-    const flatUser = userMessage.replace(/\n+/g, " | ").substring(0, 25_000);
-    const flatAgent = input.last_assistant_message!.replace(/\n+/g, " | ").substring(0, 50_000);
-    const title = extractTitle(userMessage);
-
-    // appendChildren format: 0 tabs = L2 (direct child of root O-entry)
-    // 1 tab = L3, 2 tabs = L4 (user msg), 3 tabs = L5 (agent response)
-    const chunk = `${title}\n\t\t${flatUser}\n\t\t\t${flatAgent}`;
-    store.appendChildren(activeOId, chunk);
+    // appendExchange stores raw text without newline parsing
+    store.appendExchange(activeOId, userMessage, input.last_assistant_message!);
   } catch (e) {
     console.error(`[hmem log-exchange] ${e}`);
   } finally {

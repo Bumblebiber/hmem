@@ -1933,6 +1933,44 @@ export class HmemStore {
   }
 
   /**
+   * Append a chat exchange (user prompt + agent response) to an O-entry.
+   * Inserts 3 nodes as a linear chain WITHOUT content parsing — newlines are preserved.
+   *   L2: title (auto-extracted from userText)
+   *   L4: user message (raw, newlines intact)
+   *   L5: agent response (raw, newlines intact)
+   */
+  appendExchange(parentId: string, userText: string, agentText: string): { id: string } {
+    this.guardCorrupted();
+    const parentIsRoot = !parentId.includes(".");
+    const rootId = parentIsRoot ? parentId : parentId.split(".")[0];
+    const timestamp = new Date().toISOString();
+
+    // Find next available seq
+    const maxSeq = parentIsRoot
+      ? (this.db.prepare("SELECT MAX(seq) as m FROM memory_nodes WHERE parent_id = ? AND depth = 2").get(parentId) as any)?.m ?? 0
+      : (this.db.prepare("SELECT MAX(seq) as m FROM memory_nodes WHERE parent_id = ?").get(parentId) as any)?.m ?? 0;
+    const seq = maxSeq + 1;
+
+    const title = this.autoExtractTitle(userText.split("\n")[0].replace(/[<>\[\]]/g, ""));
+    const l2Id = `${parentId}.${seq}`;
+    const l4Id = `${l2Id}.1`;
+    const l5Id = `${l4Id}.1`;
+
+    const insertNode = this.db.prepare(
+      "INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+
+    this.db.transaction(() => {
+      insertNode.run(l2Id, parentId, rootId, 2, seq, title, title, timestamp, timestamp);
+      insertNode.run(l4Id, l2Id, rootId, 4, 1, this.autoExtractTitle(userText), userText, timestamp, timestamp);
+      insertNode.run(l5Id, l4Id, rootId, 5, 1, this.autoExtractTitle(agentText), agentText, timestamp, timestamp);
+      this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, rootId);
+    })();
+
+    return { id: l2Id };
+  }
+
+  /**
    * Bump access_count on a root entry or node.
    * Returns true if the entry was found and bumped.
    */
