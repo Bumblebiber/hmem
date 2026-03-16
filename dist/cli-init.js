@@ -29,6 +29,7 @@ const TOOLS = {
             path: "CLAUDE.md",
             mode: "append",
         },
+        skillsDir: path.join(HOME, ".claude", "skills"),
     },
     "opencode": {
         name: "OpenCode",
@@ -42,6 +43,7 @@ const TOOLS = {
         globalInstructions: null,
         projectInstructions: null,
         instructionsManual: "OpenCode reads CLAUDE.md automatically — no separate file needed.",
+        skillsDir: path.join(HOME, ".config", "opencode", "skills"),
     },
     "cursor": {
         name: "Cursor",
@@ -59,6 +61,7 @@ const TOOLS = {
         },
         instructionsManual: "Cursor: add the following to Settings → Rules (cursor.com/settings):\n" +
             "  \"At the start of every session, call read_memory() to load your long-term memory.\"",
+        skillsDir: null, // Cursor doesn't support skills
     },
     "windsurf": {
         name: "Windsurf",
@@ -77,6 +80,7 @@ const TOOLS = {
             path: path.join(".windsurf", "rules", "hmem.md"),
             mode: "standalone",
         },
+        skillsDir: null, // Windsurf doesn't support skills
     },
     "cline": {
         name: "Cline / Roo Code (VS Code)",
@@ -96,6 +100,7 @@ const TOOLS = {
             path: path.join(".clinerules", "hmem.md"),
             mode: "standalone",
         },
+        skillsDir: null, // Cline doesn't support skills natively
     },
     "gemini-cli": {
         name: "Gemini CLI",
@@ -113,6 +118,7 @@ const TOOLS = {
             path: "GEMINI.md",
             mode: "append",
         },
+        skillsDir: path.join(HOME, ".gemini", "skills"),
     },
 };
 // ---- Instructions content ----
@@ -429,5 +435,62 @@ export async function runInit() {
     finally {
         rl.close();
     }
+}
+/**
+ * Copy bundled skill files to detected AI tool skill directories.
+ * Overwrites existing skills with the version from the npm package.
+ */
+export function updateSkills() {
+    const bundledSkillsDir = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "skills");
+    if (!fs.existsSync(bundledSkillsDir)) {
+        console.error("Error: bundled skills directory not found at", bundledSkillsDir);
+        process.exit(1);
+    }
+    const skillNames = fs.readdirSync(bundledSkillsDir).filter(name => fs.statSync(path.join(bundledSkillsDir, name)).isDirectory());
+    if (skillNames.length === 0) {
+        console.error("Error: no skills found in", bundledSkillsDir);
+        process.exit(1);
+    }
+    // Detect installed tools and collect unique skill directories
+    const targets = [];
+    for (const [key, tool] of Object.entries(TOOLS)) {
+        if (tool.skillsDir && tool.detect()) {
+            targets.push({ tool: tool.name, dir: tool.skillsDir });
+        }
+    }
+    if (targets.length === 0) {
+        console.log("No supported AI tools detected. Skills can be manually copied from:");
+        console.log(`  ${bundledSkillsDir}/`);
+        console.log("\nSupported skill directories:");
+        for (const [key, tool] of Object.entries(TOOLS)) {
+            if (tool.skillsDir)
+                console.log(`  ${tool.name}: ${tool.skillsDir}/`);
+        }
+        return;
+    }
+    console.log(`Found ${skillNames.length} skills: ${skillNames.join(", ")}\n`);
+    let totalCopied = 0;
+    for (const { tool, dir } of targets) {
+        console.log(`${tool}: ${dir}/`);
+        fs.mkdirSync(dir, { recursive: true });
+        for (const skillName of skillNames) {
+            const src = path.join(bundledSkillsDir, skillName);
+            const dest = path.join(dir, skillName);
+            fs.mkdirSync(dest, { recursive: true });
+            // Copy all files in the skill directory
+            const files = fs.readdirSync(src);
+            for (const file of files) {
+                const srcFile = path.join(src, file);
+                const destFile = path.join(dest, file);
+                if (fs.statSync(srcFile).isFile()) {
+                    fs.copyFileSync(srcFile, destFile);
+                }
+            }
+            totalCopied++;
+            console.log(`  ✓ ${skillName}`);
+        }
+        console.log();
+    }
+    console.log(`Done — ${totalCopied} skills updated across ${targets.length} tool(s).`);
 }
 //# sourceMappingURL=cli-init.js.map

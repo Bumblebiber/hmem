@@ -15,6 +15,11 @@ switch (command) {
         await runInit();
         break;
     }
+    case "update-skills": {
+        const { updateSkills } = await import("./cli-init.js");
+        updateSkills();
+        break;
+    }
     case "version":
     case "--version":
     case "-v":
@@ -24,9 +29,10 @@ switch (command) {
         console.log(`hmem — Humanlike Memory for AI Agents
 
 Usage:
-  hmem serve       Start the MCP server (stdio transport)
-  hmem init        Interactive installer for AI coding tools
-  hmem version     Show version
+  hmem serve          Start the MCP server (stdio transport)
+  hmem init           Interactive installer for AI coding tools
+  hmem update-skills  Copy/update skill files to detected AI tools
+  hmem version        Show version
 
 Environment variables (for serve):
   HMEM_PROJECT_DIR   Root directory for .hmem files (required)
@@ -35,6 +41,7 @@ Environment variables (for serve):
 
 Examples:
   npx hmem init                          # Configure your AI tools
+  npx hmem update-skills                 # Update skills after npm update
   HMEM_PROJECT_DIR=. npx hmem serve      # Start server in current directory`);
         break;
 }
