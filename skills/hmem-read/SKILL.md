@@ -162,6 +162,28 @@ read_memory(stale_days=60, prefix="L")
 
 ---
 
+## Original Context History (O-prefix)
+
+O-entries store raw session context with progressive summarization (created by `flush_context`).
+They are hidden from bulk reads but searchable — use when you need the original reasoning
+behind a decision or the full conversation that led to an entry:
+
+```
+# Browse recent context entries
+read_memory(prefix="O")
+
+# Search across raw context
+read_memory(search="why did we choose per-node scoring")
+
+# Drill into a specific context entry (L1→L2→L5 linear chain)
+read_memory(id="O0042", expand=true)
+```
+
+O-entries are linked to curated entries (P/L/D/E) via tags, so `context_for` will
+surface relevant O-entries when their tags match.
+
+---
+
 ## Memory Stats
 
 Quick overview of your memory health:
