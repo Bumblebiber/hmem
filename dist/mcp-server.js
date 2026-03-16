@@ -566,8 +566,15 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                 const dedupedTagRelated = tagRelated.filter(r => !linkedIds.has(r.entry.id));
                 const isCurator = curator ?? false;
                 const totalRelated = linked.length + dedupedTagRelated.length;
+                const sourceChildren = source.children?.length ?? 0;
                 const lines = [];
-                lines.push(`## Context for ${context_for}: ${source.title} (${totalRelated} related entries)\n`);
+                // Header with summary — visible even when collapsed in Claude Code
+                const relatedSummary = [
+                    linked.length > 0 ? `${linked.length} linked` : "",
+                    dedupedTagRelated.length > 0 ? `${dedupedTagRelated.length} tag-related` : "",
+                ].filter(Boolean).join(", ");
+                lines.push(`## Context for ${context_for}: ${source.title}`);
+                lines.push(`Source: ${sourceChildren} children | Related: ${relatedSummary || "none"} | Score threshold: ${min_tag_score ?? 4}\n`);
                 // Source entry (expanded)
                 lines.push("### Source entry\n");
                 renderEntryFormatted(lines, source, isCurator, true);
@@ -590,9 +597,13 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                 }
                 const storeLabel = storeName === "company" ? "company" : templateName;
                 const output = lines.join("\n");
-                log(`read_memory [${storeLabel}]: context_for=${context_for}, ${totalRelated} related (${linked.length} linked, ${dedupedTagRelated.length} tag-related)`);
+                // Add token estimate to header line (2nd line)
+                const fmtTok = (n) => n < 1000 ? String(n) : n < 10000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
+                const outputTokens = Math.round(output.length / 4);
+                const finalOutput = output.replace(/^(## Context for .+\n)(Source:.+)\n/, `$1$2 | ~${fmtTok(outputTokens)} tokens\n`);
+                log(`read_memory [${storeLabel}]: context_for=${context_for}, ${totalRelated} related (${linked.length} linked, ${dedupedTagRelated.length} tag-related), ~${fmtTok(outputTokens)} tokens`);
                 return {
-                    content: [{ type: "text", text: corruptionWarning + output }],
+                    content: [{ type: "text", text: corruptionWarning + finalOutput }],
                 };
             }
             const effectiveDepth = depth || (id ? 2 : 1);
