@@ -574,7 +574,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                     dedupedTagRelated.length > 0 ? `${dedupedTagRelated.length} tag-related` : "",
                 ].filter(Boolean).join(", ");
                 lines.push(`## Context for ${context_for}: ${source.title}`);
-                lines.push(`Source: ${sourceChildren} children | Related: ${relatedSummary || "none"} | Score threshold: ${min_tag_score ?? 4}\n`);
+                lines.push(`Source: ${sourceChildren} children | Related: ${relatedSummary || "none"}\n`);
                 // Source entry (expanded)
                 lines.push("### Source entry\n");
                 renderEntryFormatted(lines, source, isCurator, true);
