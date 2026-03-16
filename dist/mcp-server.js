@@ -22,7 +22,7 @@ import path from "node:path";
 import { spawnSync, spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import { searchMemory } from "./memory-search.js";
-import { openAgentMemory, openCompanyMemory, resolveHmemPath, HmemStore } from "./hmem-store.js";
+import { openAgentMemory, openCompanyMemory, resolveHmemPath, routeTask, HmemStore } from "./hmem-store.js";
 import { loadHmemConfig, formatPrefixList } from "./hmem-config.js";
 import { SessionCache } from "./session-cache.js";
 // ---- Environment ----
@@ -1028,6 +1028,38 @@ server.tool("find_related", "Find entries related to the given entry. " +
         finally {
             hmemStore.close();
         }
+    }
+    catch (e) {
+        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+    }
+});
+server.tool("route_task", "Multi-agent only: find the best agent for a task based on memory content. " +
+    "Scans all agent .hmem files in the Agents/ directory and scores them against tags + keywords. " +
+    "Only useful in multi-agent setups (Heimdall, Das Althing) — single-agent users should ignore this tool.\n\n" +
+    "Example: route_task(tags=['#backend', '#sqlite'], keywords='connection pooling bug')\n" +
+    "Returns agents ranked by memory relevance with their top matching entries.", {
+    tags: z.array(z.string()).min(1).describe("Tags to match against agent memories. E.g. ['#backend', '#sqlite', '#bug']"),
+    keywords: z.string().optional().describe("Free-text keywords for FTS5 search supplement. E.g. 'connection pooling timeout'"),
+    limit: z.number().min(1).max(20).default(5).describe("Max agents to return (default: 5)"),
+}, async ({ tags, keywords, limit: maxResults }) => {
+    try {
+        const results = routeTask(PROJECT_DIR, tags, keywords, maxResults, hmemConfig);
+        if (results.length <= 1) {
+            return {
+                content: [{ type: "text", text: results.length === 0
+                            ? "No agents found. route_task requires a multi-agent setup with Agents/*/*.hmem files."
+                            : `Only one agent found (${results[0].agent}). route_task is designed for multi-agent setups.` }],
+            };
+        }
+        const lines = [`## Agent Routing (${results.length} matches)\n`];
+        for (const r of results) {
+            lines.push(`**${r.agent}** — score: ${r.score} (${r.entryCount} matching entries)`);
+            for (const e of r.topEntries) {
+                lines.push(`  ${e.id} (${e.score}) ${e.title}`);
+            }
+            lines.push("");
+        }
+        return { content: [{ type: "text", text: lines.join("\n") }] };
     }
     catch (e) {
         return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
