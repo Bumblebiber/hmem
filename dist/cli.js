@@ -20,6 +20,11 @@ switch (command) {
         updateSkills();
         break;
     }
+    case "log-exchange": {
+        const { logExchange } = await import("./cli-log-exchange.js");
+        await logExchange();
+        break;
+    }
     case "version":
     case "--version":
     case "-v":
@@ -32,6 +37,7 @@ Usage:
   hmem serve          Start the MCP server (stdio transport)
   hmem init           Interactive installer for AI coding tools
   hmem update-skills  Copy/update skill files to detected AI tools
+  hmem log-exchange   Log a chat exchange to active O-entry (called by Stop hook)
   hmem version        Show version
 
 Environment variables (for serve):

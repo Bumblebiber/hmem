@@ -2388,6 +2388,21 @@ export class HmemStore {
     ).all(since, limit) as { id: string; root_id: string; title: string; content: string }[];
   }
 
+  /** Get or create the active O-entry (for log-exchange hook). */
+  getActiveO(): string {
+    const row = this.db.prepare(
+      "SELECT id FROM memories WHERE prefix = 'O' AND active = 1 AND obsolete != 1 AND irrelevant != 1 LIMIT 1"
+    ).get() as { id: string } | undefined;
+    if (row) return row.id;
+
+    // Create new O-entry for today's session
+    const today = new Date().toISOString().substring(0, 10);
+    const result = this.writeLinear("O", { l1: `Session ${today}` }, ["#session"]);
+    this.db.prepare("UPDATE memories SET active = 1, updated_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), result.id);
+    return result.id;
+  }
+
   bumpAccess(id: string): void {
     this.db.prepare(
       "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?"

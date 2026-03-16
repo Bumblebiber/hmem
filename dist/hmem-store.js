@@ -1998,6 +1998,18 @@ export class HmemStore {
             "WHERE mn.created_at > ? AND m.obsolete != 1 AND m.irrelevant != 1 AND mn.irrelevant != 1 " +
             "ORDER BY mn.created_at DESC LIMIT ?").all(since, limit);
     }
+    /** Get or create the active O-entry (for log-exchange hook). */
+    getActiveO() {
+        const row = this.db.prepare("SELECT id FROM memories WHERE prefix = 'O' AND active = 1 AND obsolete != 1 AND irrelevant != 1 LIMIT 1").get();
+        if (row)
+            return row.id;
+        // Create new O-entry for today's session
+        const today = new Date().toISOString().substring(0, 10);
+        const result = this.writeLinear("O", { l1: `Session ${today}` }, ["#session"]);
+        this.db.prepare("UPDATE memories SET active = 1, updated_at = ? WHERE id = ?")
+            .run(new Date().toISOString(), result.id);
+        return result.id;
+    }
     bumpAccess(id) {
         this.db.prepare("UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?").run(new Date().toISOString(), id);
     }

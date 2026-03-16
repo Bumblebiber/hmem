@@ -378,6 +378,8 @@ export declare class HmemStore {
         title: string;
         content: string;
     }[];
+    /** Get or create the active O-entry (for log-exchange hook). */
+    getActiveO(): string;
     bumpAccess(id: string): void;
     private bumpNodeAccess;
     /**
