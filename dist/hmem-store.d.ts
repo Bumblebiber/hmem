@@ -247,6 +247,7 @@ export declare class HmemStore {
         total: number;
         byPrefix: Record<string, number>;
         totalChars: number;
+        staleCount: number;
     };
     /**
      * Update specific fields of an existing root entry (curator use only).
@@ -355,7 +356,14 @@ export declare class HmemStore {
     private nextSeq;
     /** Auto-resolve linked entries on an entry (extracted for reuse in chain resolution). */
     private resolveEntryLinks;
-    private bumpAccess;
+    /** Get child nodes created after a given ISO timestamp (for "new since last session" detection). */
+    getNewNodesSince(since: string, limit?: number): {
+        id: string;
+        root_id: string;
+        title: string;
+        content: string;
+    }[];
+    bumpAccess(id: string): void;
     private bumpNodeAccess;
     /**
      * Follow the obsolete chain from an entry to its final valid correction.

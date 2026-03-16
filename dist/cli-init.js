@@ -422,14 +422,16 @@ export async function runInit() {
         }
         console.log(`\n  Done! Restart your AI tool(s) to activate hmem.\n`);
         console.log(`  Memory directory: ${absMemDir}`);
-        console.log(`\n  Available slash commands (after copying skill files — see README):\n`);
+        console.log(`\n  Install skills (slash commands):\n`);
+        console.log(`    npx hmem update-skills\n`);
+        console.log(`  This copies skill files to your AI tool(s). Available commands after install:\n`);
         console.log(`    /hmem-read     — Load your memory at session start`);
-        console.log(`    /save          — Save session learnings to memory,`);
-        console.log(`                     then commit + push (only if in a git repo with uncommitted changes)`);
-        console.log(`    /hmem-config   — View and adjust memory settings`);
-        console.log(`    /memory-curate — Audit and clean up memory entries`);
-        console.log(`                     (advanced — untested, use with caution)\n`);
-        console.log(`  Skill files: https://github.com/Bumblebiber/hmem#skill-files\n`);
+        console.log(`    /save          — Save session learnings to memory`);
+        console.log(`    /hmem-config   — View and adjust memory settings\n`);
+        console.log(`  Update hmem (always use -g for global packages, NOT inside a project):\n`);
+        console.log(`    npm update -g hmem-mcp          # update MCP server`);
+        console.log(`    npm update -g hmem-sync          # update sync (if installed)`);
+        console.log(`    npx hmem update-skills           # update skill files after upgrade\n`);
         console.log(`  Test: Open your AI tool and call read_memory() — it should respond.\n`);
     }
     finally {

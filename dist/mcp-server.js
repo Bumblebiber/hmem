@@ -53,6 +53,19 @@ catch {
 function log(msg) {
     console.error(`[hmem:${AGENT_ID || "default"}] ${msg}`);
 }
+// ---- Session-start mtime snapshot (for [NEW] markers) ----
+// Captured before any syncPull so we can detect entries created after our last local write.
+const _tmpl = AGENT_ID.replace(/_\d+$/, "");
+const _hmemPathAtStart = resolveHmemPath(PROJECT_DIR, _tmpl);
+const dbMtimeAtStart = (() => {
+    try {
+        if (fs.existsSync(_hmemPathAtStart)) {
+            return fs.statSync(_hmemPathAtStart).mtime.toISOString();
+        }
+    }
+    catch { }
+    return null;
+})();
 // ---- hmem-sync integration ----
 let lastPullAt = 0;
 const PULL_COOLDOWN_MS = 30_000;
@@ -404,6 +417,60 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
         };
     }
 });
+server.tool("update_many", "Batch-update multiple memory entries at once. Applies the same flag(s) to all listed IDs. " +
+    "Use this instead of calling update_memory multiple times during curation.\n\n" +
+    "Example: update_many(ids=['T0005', 'T0012', 'L0044'], irrelevant=true)", {
+    ids: z.array(z.string()).min(1).describe("List of entry/node IDs to update, e.g. ['T0005', 'T0012', 'L0044']"),
+    irrelevant: z.boolean().optional().describe("Mark all as irrelevant [-]"),
+    favorite: z.boolean().optional().describe("Set or clear [♥] favorite on all"),
+    active: z.boolean().optional().describe("Set or clear [*] active on all"),
+    pinned: z.boolean().optional().describe("Set or clear [P] pinned on all"),
+    store: z.enum(["personal", "company"]).default("personal"),
+}, async ({ ids, irrelevant, favorite, active, pinned, store: storeName }) => {
+    const templateName = AGENT_ID.replace(/_\d+$/, "");
+    try {
+        const hmemStore = storeName === "company"
+            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+            : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+        try {
+            const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+            if (storeName === "personal")
+                syncPullThenPush(hmemPath);
+            let updated = 0;
+            let notFound = 0;
+            for (const id of ids) {
+                const ok = hmemStore.updateNode(id, undefined, undefined, undefined, favorite, undefined, irrelevant, undefined, pinned, active);
+                if (ok)
+                    updated++;
+                else
+                    notFound++;
+            }
+            const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
+            const flags = [
+                irrelevant !== undefined ? `irrelevant=${irrelevant}` : "",
+                favorite !== undefined ? `favorite=${favorite}` : "",
+                active !== undefined ? `active=${active}` : "",
+                pinned !== undefined ? `pinned=${pinned}` : "",
+            ].filter(Boolean).join(", ");
+            log(`update_many [${storeLabel}]: ${updated}/${ids.length} updated (${flags})`);
+            if (storeName === "personal")
+                syncPush(hmemPath);
+            const result = `Updated ${updated} of ${ids.length} entries (${flags})`;
+            return {
+                content: [{ type: "text", text: notFound > 0 ? `${result}\n${notFound} not found` : result }],
+            };
+        }
+        finally {
+            hmemStore.close();
+        }
+    }
+    catch (e) {
+        return {
+            content: [{ type: "text", text: `ERROR: ${e}` }],
+            isError: true,
+        };
+    }
+});
 server.tool("append_memory", "Append new child nodes to an existing memory entry or node (your own personal memory). " +
     "Existing children are preserved — new nodes are added after them.\n\n" +
     "Use this to extend an existing entry with additional detail without overwriting it.\n\n" +
@@ -523,7 +590,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
         "Related = directly linked OR sharing weighted tag overlap with any node of the source. " +
         "Tag weights: rare(<=5 uses)=3, medium(6-20)=2, common(>20)=1. " +
         "Example: read_memory({ context_for: 'P0029' }) — loads P0029 + all contextually related entries."),
-    min_tag_score: z.number().optional().describe("Minimum weighted tag score for context_for matches (default: 4). " +
+    min_tag_score: z.number().optional().describe("Minimum weighted tag score for context_for matches (default: 5). " +
         "Score 4 = e.g. 2 medium tags, or 1 rare + 1 common. Lower = more results, higher = stricter."),
 }, async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator, show_all, tag, stale_days, context_for, min_tag_score }) => {
     if (AGENT_ID === "UNKNOWN") {
@@ -560,7 +627,12 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                 }
                 const source = sourceEntries[0];
                 hmemStore.assignBulkTags([source]);
-                const { linked, tagRelated } = hmemStore.findContext(context_for, min_tag_score ?? 4, maxResults ?? 30);
+                const { linked, tagRelated } = hmemStore.findContext(context_for, min_tag_score ?? 5, maxResults ?? 30);
+                // Bump access_count on all related entries (so they get promoted in future bulk reads)
+                for (const e of linked)
+                    hmemStore.bumpAccess(e.id);
+                for (const { entry } of tagRelated)
+                    hmemStore.bumpAccess(entry.id);
                 // Deduplicate: remove linked entries from tagRelated
                 const linkedIds = new Set(linked.map(e => e.id));
                 const dedupedTagRelated = tagRelated.filter(r => !linkedIds.has(r.entry.id));
@@ -587,7 +659,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                 }
                 // Tag-related
                 if (dedupedTagRelated.length > 0) {
-                    lines.push(`### Tag-related (${dedupedTagRelated.length} entries, score >= ${min_tag_score ?? 4})\n`);
+                    lines.push(`### Tag-related (${dedupedTagRelated.length} entries, score >= ${min_tag_score ?? 5})\n`);
                     for (const { entry, score, matchNode } of dedupedTagRelated) {
                         renderEntryFormatted(lines, entry, isCurator);
                         if (isCurator) {
@@ -673,25 +745,58 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             const totalTokens = Math.round(stats.totalChars / 4);
             const fmtTok = (n) => n < 1000 ? String(n) : n < 10000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
             const tokenInfo = ` | ${fmtTok(outputTokens)}/${fmtTok(totalTokens)} tokens`;
+            // Stale hint + new-since-last-session: on first bulk read OR after cache expiry (fresh start)
+            const isFirstOrFresh = isBulkListing && (sessionCache.readCount <= 1 || sessionCache.size === 0);
+            const staleHint = isFirstOrFresh && stats.staleCount > 0
+                ? ` | ${stats.staleCount} stale (>60d)`
+                : "";
+            // New-since-last-session: root entries + child nodes created after DB mtime at server start
+            // Respects active-prefix: in prefixes with active entries, only show new items from active entries
+            let newSinceSection = "";
+            if (isFirstOrFresh && dbMtimeAtStart) {
+                // Detect active prefixes (prefixes where at least one entry has active=1)
+                const activePrefixes = new Set();
+                const activeEntryIds = new Set();
+                for (const e of entries) {
+                    if (e.active) {
+                        activePrefixes.add(e.prefix);
+                        activeEntryIds.add(e.id);
+                    }
+                }
+                // Filter new roots: skip non-active entries in active prefixes
+                const newRoots = entries.filter(e => !e.obsolete && e.created_at > dbMtimeAtStart &&
+                    (!activePrefixes.has(e.prefix) || activeEntryIds.has(e.id)));
+                const newNodes = hmemStore.getNewNodesSince(dbMtimeAtStart, 20);
+                // Exclude nodes belonging to new root entries (already shown)
+                // AND nodes whose root is non-active in an active prefix
+                const newRootIds = new Set(newRoots.map(e => e.id));
+                const newChildNodes = newNodes.filter(n => {
+                    if (newRootIds.has(n.root_id))
+                        return false; // already shown as root
+                    // Check if root entry is suppressed by active-prefix
+                    const rootPrefix = n.root_id.replace(/\d+$/, "");
+                    if (activePrefixes.has(rootPrefix) && !activeEntryIds.has(n.root_id))
+                        return false;
+                    return true;
+                });
+                const parts = [];
+                for (const e of newRoots)
+                    parts.push(`  ${e.id}  ${e.title ?? e.level_1}`);
+                for (const n of newChildNodes) {
+                    const title = n.title || (n.content.length > 50 ? n.content.substring(0, 50) : n.content);
+                    parts.push(`  ${n.id}  ${title}`);
+                }
+                if (parts.length > 0) {
+                    newSinceSection = `New since last session (${parts.length}):\n${parts.join("\n")}\n\n`;
+                }
+            }
             const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
-                `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}${modeInfo}${cacheInfo}${tokenInfo}\n`;
+                `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}${modeInfo}${cacheInfo}${tokenInfo}${staleHint}\n`;
             log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole}${cacheInfo})`);
-            const newRoots = newEntries.filter(e => !e.modified);
-            const modifiedRoots = newEntries.filter(e => e.modified);
-            const pulledParts = [];
-            if (newRoots.length > 0) {
-                pulledParts.push(`## 🔄 Newly synced (${newRoots.length}): ${newRoots.map(e => e.id).join(", ")}`);
-                pulledParts.push(...newRoots.map(e => `  ${e.id} ${e.created_at} — ${e.title}`));
-            }
-            if (modifiedRoots.length > 0) {
-                pulledParts.push(`## 📝 Modified by sync (${modifiedRoots.length}): ${modifiedRoots.map(e => e.id).join(", ")}`);
-                pulledParts.push(...modifiedRoots.map(e => `  ${e.id} ${e.created_at} — ${e.title} (new nodes added)`));
-            }
-            const pulledSection = pulledParts.length > 0 ? pulledParts.join("\n") + "\n\n" : "";
             return {
                 content: [{
                         type: "text",
-                        text: corruptionWarning + pulledSection + header + "\n" + output + REMINDER_HINT,
+                        text: corruptionWarning + newSinceSection + header + "\n" + output + (isBulkListing && (sessionCache.readCount <= 1 || sessionCache.size === 0) ? REMINDER_HINT : ""),
                     }],
             };
         }

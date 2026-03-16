@@ -1549,7 +1549,7 @@ export class HmemStore {
   /**
    * Get statistics about the memory store.
    */
-  stats(): { total: number; byPrefix: Record<string, number>; totalChars: number } {
+  stats(): { total: number; byPrefix: Record<string, number>; totalChars: number; staleCount: number } {
     const total = (this.db.prepare("SELECT COUNT(*) as c FROM memories WHERE seq > 0").get() as any).c;
     const rows = this.db.prepare(
       "SELECT prefix, COUNT(*) as c FROM memories WHERE seq > 0 GROUP BY prefix"
@@ -1561,7 +1561,13 @@ export class HmemStore {
     // Total characters across all entries + nodes (for token estimation)
     const memChars = (this.db.prepare("SELECT COALESCE(SUM(LENGTH(level_1)),0) as c FROM memories WHERE seq > 0").get() as any).c;
     const nodeChars = (this.db.prepare("SELECT COALESCE(SUM(LENGTH(content)),0) as c FROM memory_nodes").get() as any).c;
-    return { total, byPrefix, totalChars: memChars + nodeChars };
+
+    // Stale: not accessed in 60+ days (non-obsolete, non-irrelevant)
+    const staleCount = (this.db.prepare(
+      "SELECT COUNT(*) as c FROM memories WHERE seq > 0 AND irrelevant != 1 AND obsolete != 1 AND last_accessed < datetime('now', '-60 days')"
+    ).get() as any).c;
+
+    return { total, byPrefix, totalChars: memChars + nodeChars, staleCount };
   }
 
   /**
@@ -2297,7 +2303,17 @@ export class HmemStore {
     }
   }
 
-  private bumpAccess(id: string): void {
+  /** Get child nodes created after a given ISO timestamp (for "new since last session" detection). */
+  getNewNodesSince(since: string, limit: number = 20): { id: string; root_id: string; title: string; content: string }[] {
+    return this.db.prepare(
+      "SELECT mn.id, mn.root_id, mn.title, mn.content FROM memory_nodes mn " +
+      "JOIN memories m ON mn.root_id = m.id " +
+      "WHERE mn.created_at > ? AND m.obsolete != 1 AND m.irrelevant != 1 AND mn.irrelevant != 1 " +
+      "ORDER BY mn.created_at DESC LIMIT ?"
+    ).all(since, limit) as { id: string; root_id: string; title: string; content: string }[];
+  }
+
+  bumpAccess(id: string): void {
     this.db.prepare(
       "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?"
     ).run(new Date().toISOString(), id);
@@ -2899,7 +2915,7 @@ export class HmemStore {
    */
   findContext(
     entryId: string,
-    minTagScore: number = 4,
+    minTagScore: number = 5,
     limit: number = 30
   ): { linked: MemoryEntry[]; tagRelated: { entry: MemoryEntry; score: number; matchNode: string }[] } {
     this.guardCorrupted();
