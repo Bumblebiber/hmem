@@ -1694,20 +1694,24 @@ export class HmemStore {
    * For sub-nodes: updates node content only.
    * Does NOT modify children — use appendChildren to extend the tree.
    */
-  updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean, tags?: string[], pinned?: boolean, active?: boolean): boolean {
+  updateNode(id: string, newContent?: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean, tags?: string[], pinned?: boolean, active?: boolean): boolean {
     this.guardCorrupted();
-    const trimmed = newContent.trim();
+    const trimmed = newContent?.trim();
     if (id.includes(".")) {
       // Sub-node in memory_nodes — check char limit for its depth
       const nodeRow = this.db.prepare("SELECT depth, content FROM memory_nodes WHERE id = ?").get(id) as any;
       if (!nodeRow) return false;
       const oldContent = nodeRow.content as string;
-      const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(nodeRow.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
-      if (trimmed.length > nodeLimit * HmemStore.CHAR_LIMIT_TOLERANCE) {
-        throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
+      const sets: string[] = [];
+      const params: any[] = [];
+      if (trimmed) {
+        const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(nodeRow.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
+        if (trimmed.length > nodeLimit * HmemStore.CHAR_LIMIT_TOLERANCE) {
+          throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
+        }
+        sets.push("content = ?", "title = ?");
+        params.push(trimmed, this.autoExtractTitle(trimmed));
       }
-      const sets = ["content = ?", "title = ?"];
-      const params: any[] = [trimmed, this.autoExtractTitle(trimmed)];
       if (favorite !== undefined) {
         sets.push("favorite = ?");
         params.push(favorite ? 1 : 0);
@@ -1755,15 +1759,18 @@ export class HmemStore {
       }
       return result.changes > 0;
     } else {
-      // Root entry in memories — check L1 char limit
-      const l1Limit = this.cfg.maxCharsPerLevel[0];
-      if (trimmed.length > l1Limit * HmemStore.CHAR_LIMIT_TOLERANCE) {
-        throw new Error(`Level 1 exceeds ${l1Limit} character limit (${trimmed.length} chars). Keep L1 compact.`);
+      // Root entry in memories
+      if (trimmed) {
+        const l1Limit = this.cfg.maxCharsPerLevel[0];
+        if (trimmed.length > l1Limit * HmemStore.CHAR_LIMIT_TOLERANCE) {
+          throw new Error(`Level 1 exceeds ${l1Limit} character limit (${trimmed.length} chars). Keep L1 compact.`);
+        }
       }
 
       // Obsolete enforcement: require [✓ID] correction reference
       if (obsolete === true && !curatorBypass) {
-        const correctionMatch = trimmed.match(/\[✓([A-Z]\d{4}(?:\.\d+)*)\]/);
+        const contentToCheck = trimmed ?? (this.db.prepare("SELECT level_1 FROM memories WHERE id = ?").get(id) as any)?.level_1 ?? "";
+        const correctionMatch = contentToCheck.match(/\[✓([A-Z]\d{4}(?:\.\d+)*)\]/);
         if (!correctionMatch) {
           throw new Error("Cannot mark as obsolete without [✓ID] correction reference — write the correction first.");
         }
@@ -1795,8 +1802,12 @@ export class HmemStore {
         }
       }
 
-      const sets: string[] = ["level_1 = ?", "title = ?"];
-      const params: any[] = [trimmed, this.autoExtractTitle(trimmed)];
+      const sets: string[] = [];
+      const params: any[] = [];
+      if (trimmed) {
+        sets.push("level_1 = ?", "title = ?");
+        params.push(trimmed, this.autoExtractTitle(trimmed));
+      }
       if (links !== undefined) {
         sets.push("links = ?");
         params.push(links.length > 0 ? JSON.stringify(links) : null);

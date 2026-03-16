@@ -1387,19 +1387,23 @@ export class HmemStore {
      */
     updateNode(id, newContent, links, obsolete, favorite, curatorBypass, irrelevant, tags, pinned, active) {
         this.guardCorrupted();
-        const trimmed = newContent.trim();
+        const trimmed = newContent?.trim();
         if (id.includes(".")) {
             // Sub-node in memory_nodes — check char limit for its depth
             const nodeRow = this.db.prepare("SELECT depth, content FROM memory_nodes WHERE id = ?").get(id);
             if (!nodeRow)
                 return false;
             const oldContent = nodeRow.content;
-            const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(nodeRow.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
-            if (trimmed.length > nodeLimit * HmemStore.CHAR_LIMIT_TOLERANCE) {
-                throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
+            const sets = [];
+            const params = [];
+            if (trimmed) {
+                const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(nodeRow.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
+                if (trimmed.length > nodeLimit * HmemStore.CHAR_LIMIT_TOLERANCE) {
+                    throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
+                }
+                sets.push("content = ?", "title = ?");
+                params.push(trimmed, this.autoExtractTitle(trimmed));
             }
-            const sets = ["content = ?", "title = ?"];
-            const params = [trimmed, this.autoExtractTitle(trimmed)];
             if (favorite !== undefined) {
                 sets.push("favorite = ?");
                 params.push(favorite ? 1 : 0);
@@ -1440,14 +1444,17 @@ export class HmemStore {
             return result.changes > 0;
         }
         else {
-            // Root entry in memories — check L1 char limit
-            const l1Limit = this.cfg.maxCharsPerLevel[0];
-            if (trimmed.length > l1Limit * HmemStore.CHAR_LIMIT_TOLERANCE) {
-                throw new Error(`Level 1 exceeds ${l1Limit} character limit (${trimmed.length} chars). Keep L1 compact.`);
+            // Root entry in memories
+            if (trimmed) {
+                const l1Limit = this.cfg.maxCharsPerLevel[0];
+                if (trimmed.length > l1Limit * HmemStore.CHAR_LIMIT_TOLERANCE) {
+                    throw new Error(`Level 1 exceeds ${l1Limit} character limit (${trimmed.length} chars). Keep L1 compact.`);
+                }
             }
             // Obsolete enforcement: require [✓ID] correction reference
             if (obsolete === true && !curatorBypass) {
-                const correctionMatch = trimmed.match(/\[✓([A-Z]\d{4}(?:\.\d+)*)\]/);
+                const contentToCheck = trimmed ?? this.db.prepare("SELECT level_1 FROM memories WHERE id = ?").get(id)?.level_1 ?? "";
+                const correctionMatch = contentToCheck.match(/\[✓([A-Z]\d{4}(?:\.\d+)*)\]/);
                 if (!correctionMatch) {
                     throw new Error("Cannot mark as obsolete without [✓ID] correction reference — write the correction first.");
                 }
@@ -1477,8 +1484,12 @@ export class HmemStore {
                     }
                 }
             }
-            const sets = ["level_1 = ?", "title = ?"];
-            const params = [trimmed, this.autoExtractTitle(trimmed)];
+            const sets = [];
+            const params = [];
+            if (trimmed) {
+                sets.push("level_1 = ?", "title = ?");
+                params.push(trimmed, this.autoExtractTitle(trimmed));
+            }
             if (links !== undefined) {
                 sets.push("links = ?");
                 params.push(links.length > 0 ? JSON.stringify(links) : null);

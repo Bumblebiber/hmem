@@ -279,7 +279,7 @@ export declare class HmemStore {
      * For sub-nodes: updates node content only.
      * Does NOT modify children — use appendChildren to extend the tree.
      */
-    updateNode(id: string, newContent: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean, tags?: string[], pinned?: boolean, active?: boolean): boolean;
+    updateNode(id: string, newContent?: string, links?: string[], obsolete?: boolean, favorite?: boolean, curatorBypass?: boolean, irrelevant?: boolean, tags?: string[], pinned?: boolean, active?: boolean): boolean;
     /**
      * Append new child nodes under an existing entry (root or node).
      * Content is tab-indented relative to the parent:
