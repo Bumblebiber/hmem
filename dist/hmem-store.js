@@ -286,6 +286,63 @@ export class HmemStore {
         return { id: rootId, timestamp };
     }
     /**
+     * Write a linear entry with explicit content at each level (no tree branching).
+     * Used by flush_context for O-prefix entries. Each level is a single node forming
+     * a straight chain: root → .1 → .1.1 → .1.1.1 → .1.1.1.1
+     *
+     * Recommended usage: L1 (title) + L2 (paragraph summary) + L5 (raw text).
+     * L3/L4 are optional intermediate detail levels.
+     */
+    writeLinear(prefix, levels, tags, links) {
+        this.guardCorrupted();
+        prefix = prefix.toUpperCase();
+        if (!this.cfg.prefixes[prefix]) {
+            throw new Error(`Invalid prefix "${prefix}".`);
+        }
+        if (!levels.l1 || levels.l1.trim().length === 0) {
+            throw new Error("L1 content is required.");
+        }
+        if (!tags || tags.length === 0) {
+            throw new Error("Tags are required for linear entries.");
+        }
+        const validatedTags = this.validateTags(tags);
+        const seq = this.nextSeq(prefix);
+        const rootId = `${prefix}${String(seq).padStart(4, "0")}`;
+        const timestamp = new Date().toISOString();
+        const title = this.autoExtractTitle(levels.l1);
+        const insertRoot = this.db.prepare(`
+      INSERT INTO memories (id, prefix, seq, created_at, updated_at, title, level_1, links, min_role)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'worker')
+    `);
+        const insertNode = this.db.prepare(`
+      INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+        this.db.transaction(() => {
+            insertRoot.run(rootId, prefix, seq, timestamp, timestamp, title, levels.l1.trim(), links ? JSON.stringify(links) : null);
+            // Build linear chain: .1 → .1.1 → .1.1.1 → .1.1.1.1
+            let parentId = rootId;
+            const levelData = [
+                { depth: 2, content: levels.l2 },
+                { depth: 3, content: levels.l3 },
+                { depth: 4, content: levels.l4 },
+                { depth: 5, content: levels.l5 },
+            ];
+            for (const { depth, content } of levelData) {
+                if (!content || content.trim().length === 0)
+                    continue; // skip empty levels
+                const nodeId = `${parentId}.1`;
+                const nodeTitle = this.autoExtractTitle(content.trim());
+                insertNode.run(nodeId, parentId, rootId, depth, 1, nodeTitle, content.trim(), timestamp, timestamp);
+                parentId = nodeId;
+            }
+            // Tags on first child node (or root if no children)
+            const firstChildId = levels.l2 ? `${rootId}.1` : rootId;
+            this.setTags(firstChildId, validatedTags);
+        })();
+        return { id: rootId, timestamp };
+    }
+    /**
      * Read memories with flexible querying.
      *
      * For ID-based queries: always returns the node + its DIRECT children.
@@ -561,8 +618,10 @@ export class HmemStore {
     readBulkV2(rows, opts) {
         const v2 = this.cfg.bulkReadV2;
         // Step 0: Filter out irrelevant entries (never shown in bulk reads)
+        // O-prefix excluded from unfiltered bulk reads (but shown when explicitly requested via prefix="O")
+        const explicitPrefix = !!opts.prefix;
         const irrelevantCount = rows.filter(r => r.irrelevant === 1).length;
-        const activeRows = rows.filter(r => r.irrelevant !== 1);
+        const activeRows = rows.filter(r => r.irrelevant !== 1 && (explicitPrefix || r.prefix !== "O"));
         // Step 0.5: Detect active-prefixes — prefixes where at least one entry has active=1.
         // Non-active entries in these prefixes are still shown (as compact titles) but don't get expansion slots.
         const activePrefixes = new Set();
@@ -1268,7 +1327,7 @@ export class HmemStore {
      * Get statistics about the memory store.
      */
     stats() {
-        const total = this.db.prepare("SELECT COUNT(*) as c FROM memories WHERE seq > 0").get().c;
+        const total = this.db.prepare("SELECT COUNT(*) as c FROM memories WHERE seq > 0 AND prefix != 'O'").get().c;
         const rows = this.db.prepare("SELECT prefix, COUNT(*) as c FROM memories WHERE seq > 0 GROUP BY prefix").all();
         const byPrefix = {};
         for (const r of rows)
@@ -1277,7 +1336,7 @@ export class HmemStore {
         const memChars = this.db.prepare("SELECT COALESCE(SUM(LENGTH(level_1)),0) as c FROM memories WHERE seq > 0").get().c;
         const nodeChars = this.db.prepare("SELECT COALESCE(SUM(LENGTH(content)),0) as c FROM memory_nodes").get().c;
         // Stale: not accessed in 60+ days (non-obsolete, non-irrelevant)
-        const staleCount = this.db.prepare("SELECT COUNT(*) as c FROM memories WHERE seq > 0 AND irrelevant != 1 AND obsolete != 1 AND last_accessed < datetime('now', '-60 days')").get().c;
+        const staleCount = this.db.prepare("SELECT COUNT(*) as c FROM memories WHERE seq > 0 AND prefix != 'O' AND irrelevant != 1 AND obsolete != 1 AND last_accessed < datetime('now', '-60 days')").get().c;
         return { total, byPrefix, totalChars: memChars + nodeChars, staleCount };
     }
     /**

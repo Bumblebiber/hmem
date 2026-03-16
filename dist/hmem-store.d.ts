@@ -198,6 +198,21 @@ export declare class HmemStore {
      */
     write(prefix: string, content: string, links?: string[], minRole?: AgentRole, favorite?: boolean, tags?: string[], pinned?: boolean): WriteResult;
     /**
+     * Write a linear entry with explicit content at each level (no tree branching).
+     * Used by flush_context for O-prefix entries. Each level is a single node forming
+     * a straight chain: root → .1 → .1.1 → .1.1.1 → .1.1.1.1
+     *
+     * Recommended usage: L1 (title) + L2 (paragraph summary) + L5 (raw text).
+     * L3/L4 are optional intermediate detail levels.
+     */
+    writeLinear(prefix: string, levels: {
+        l1: string;
+        l2?: string;
+        l3?: string;
+        l4?: string;
+        l5?: string;
+    }, tags?: string[], links?: string[]): WriteResult;
+    /**
      * Read memories with flexible querying.
      *
      * For ID-based queries: always returns the node + its DIRECT children.

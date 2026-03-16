@@ -312,6 +312,14 @@ server.tool(
     const agentRole = (ROLE || "worker") as AgentRole;
     const isFirstTime = !AGENT_ID && !fs.existsSync(resolveHmemPath(PROJECT_DIR, ""));
 
+    // O-prefix is reserved for flush_context
+    if (prefix.toUpperCase() === "O") {
+      return {
+        content: [{ type: "text" as const, text: "ERROR: O-prefix entries are created via flush_context, not write_memory." }],
+        isError: true,
+      };
+    }
+
     // Company store: only AL+ can write
     if (storeName === "company") {
       const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
@@ -531,6 +539,71 @@ server.tool(
         const result = `Updated ${updated} of ${ids.length} entries (${flags})`;
         return {
           content: [{ type: "text" as const, text: notFound > 0 ? `${result}\n${notFound} not found` : result }],
+        };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return {
+        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  "flush_context",
+  "Store a conversation chunk as linear context history (O-prefix). " +
+    "The AI does the summarization: chunk raw text by topic, then summarize progressively.\n\n" +
+    "Recommended: provide L1 (title) + L2 (paragraph summary) + L5 (raw text).\n" +
+    "L3/L4 are optional intermediate levels for extra detail.\n\n" +
+    "O-entries are hidden from bulk reads but discoverable via search, tags, and context_for.\n" +
+    "Use during /save to preserve raw session context alongside curated P/L/D/E entries.",
+  {
+    l1: z.string().min(3).max(200).describe(
+      "One-line topic title for this chunk. E.g. 'hmem UX improvements session'"
+    ),
+    l2: z.string().optional().describe(
+      "Paragraph summary (~100 words). Key decisions and outcomes."
+    ),
+    l3: z.string().optional().describe(
+      "Detailed summary (~500 words). Only if L2 is too compressed."
+    ),
+    l4: z.string().optional().describe(
+      "Extended context (~2000 words). Rarely needed."
+    ),
+    l5: z.string().optional().describe(
+      "Raw conversation chunk. Full text, no summarization."
+    ),
+    tags: z.array(z.string()).min(1).describe(
+      "Required hashtags for discovery. E.g. ['#hmem', '#context-for', '#ux']"
+    ),
+    links: z.array(z.string()).optional().describe(
+      "Link to related entries. E.g. ['P0029', 'D0120']"
+    ),
+  },
+  async ({ l1, l2, l3, l4, l5, tags, links }) => {
+    const templateName = AGENT_ID.replace(/_\d+$/, "");
+    try {
+      const hmemStore = openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+      try {
+        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+        syncPullThenPush(hmemPath);
+
+        const result = hmemStore.writeLinear("O", { l1, l2, l3, l4, l5 }, tags, links);
+
+        const levels = [l1, l2, l3, l4, l5].filter(Boolean).length;
+        log(`flush_context: ${result.id} (${levels} levels, ${tags.join(" ")})`);
+
+        syncPush(hmemPath);
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Context saved: ${result.id} (${levels} levels)\n` +
+              `Title: ${l1}\nTags: ${tags.join(" ")}` +
+              (links?.length ? `\nLinks: ${links.join(", ")}` : ""),
+          }],
         };
       } finally {
         hmemStore.close();
