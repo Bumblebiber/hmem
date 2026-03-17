@@ -1,8 +1,9 @@
 ---
 name: hmem-config
 description: >
-  View and change hmem settings. Use when the user types /hmem-config or asks
-  to change memory settings, adjust parameters, or configure hmem.
+  View and change hmem settings, including sync configuration. Use when the user
+  types /hmem-config or asks to change memory settings, adjust parameters, configure
+  hmem, or set up / manage hmem-sync for cross-device synchronization.
 ---
 
 # hmem-config — View and Change Settings
@@ -128,3 +129,63 @@ Then tell the user:
 - Which values were changed
 - That the change takes effect **immediately** — no restart needed
 - That `maxL1Chars` and `maxLnChars` only affect new entries written after the change (existing entries are not reformatted)
+
+---
+
+## Step 5 — hmem-sync Status (check automatically)
+
+Check if hmem-sync is installed and configured. Run this check as part of every /hmem-config invocation.
+
+```bash
+# Check if hmem-sync is installed
+which hmem-sync 2>/dev/null || npx hmem-sync --help 2>/dev/null
+```
+
+### If hmem-sync is installed:
+
+Check config and status:
+```bash
+npx hmem-sync status
+```
+
+Show the user:
+| Setting | Value |
+|---------|-------|
+| Server URL | (from status output) |
+| User ID | (from status output) |
+| Last push | (timestamp or "never") |
+| Last pull | (timestamp or "never") |
+| Sync secrets | yes/no |
+
+Also check if `HMEM_SYNC_PASSPHRASE` is set in the MCP config (`.mcp.json` env block).
+If missing, warn: "Auto-sync is disabled. Add `HMEM_SYNC_PASSPHRASE` to your .mcp.json env to enable automatic push/pull on every read/write."
+
+### If hmem-sync is NOT installed:
+
+Tell the user:
+
+> **hmem-sync** enables zero-knowledge encrypted sync between devices. Your memories are encrypted client-side with AES-256-GCM before leaving your machine — the server only sees opaque blobs.
+>
+> This lets you:
+> - Work on your PC, then continue on your laptop with full memory
+> - Back up your memories to a server you control
+> - Share memories between Claude Code, Gemini CLI, and OpenCode
+>
+> Install: `npm install -g hmem-sync`
+> Setup: `npx hmem-sync setup` (first device) or `npx hmem-sync restore` (additional devices)
+>
+> Want me to install it now?
+
+If the user says yes:
+```bash
+npm install -g hmem-sync
+npx hmem-sync setup
+```
+
+### Sync troubleshooting
+
+Common issues:
+- **"Config not found"** → run `npx hmem-sync setup` or `npx hmem-sync restore`
+- **401 Token verification failed** → passphrase has special characters that need shell escaping. Use `--passphrase` flag or set `HMEM_SYNC_PASSPHRASE` in .mcp.json env.
+- **0 entries after pull** → check `HMEM_AGENT_ID` matches between devices. Different agent IDs = different .hmem files.
+- **Updates always global**: `npm update -g hmem-sync` (NOT inside a project directory)
