@@ -1973,7 +1973,16 @@ async function main() {
         }
         catch { }
     }
-    log(`MCP Server running on stdio | Agent: ${templateName || "(none)"} | Role: ${ROLE || "worker"} | DB: ${hmemPath}${dbExists ? ` (${entryCount} entries)` : " [NOT FOUND]"}`);
+    if (!dbExists) {
+        log(`WARNING: DB not found at ${hmemPath}`);
+        if (templateName && templateName !== "UNKNOWN") {
+            log(`  HMEM_AGENT_ID="${templateName}" → expects: ${PROJECT_DIR}/Agents/${templateName}/${templateName}.hmem`);
+            log(`  Without HMEM_AGENT_ID: would use ${PROJECT_DIR}/memory.hmem`);
+        }
+        log(`  Check HMEM_PROJECT_DIR and HMEM_AGENT_ID in your .mcp.json`);
+        log(`  The DB will be created on first write_memory() call.`);
+    }
+    log(`MCP Server running on stdio | Agent: ${templateName || "(none)"} | Role: ${ROLE || "worker"} | DB: ${hmemPath}${dbExists ? ` (${entryCount} entries)` : " [NOT FOUND — see warnings above]"}`);
     checkForUpdates();
 }
 main().catch((error) => {

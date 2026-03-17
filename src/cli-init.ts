@@ -247,12 +247,30 @@ async function askMultiChoice(question: string, choices: string[]): Promise<numb
 /**
  * Generates the MCP config entry for standard tools (Claude Code, Cursor, Windsurf, Cline).
  */
+/**
+ * Resolve the absolute path to the node binary.
+ * Handles nvm environments where 'node' is not in PATH for non-interactive shells.
+ */
+function resolveNodePath(): string {
+  // process.execPath is always the absolute path to the current node binary
+  return process.execPath;
+}
+
+/**
+ * Resolve the absolute path to hmem's mcp-server.js.
+ * Works whether installed globally or locally.
+ */
+function resolveMcpServerPath(): string {
+  // This file (cli-init.js) is in dist/ — mcp-server.js is a sibling
+  return path.join(path.dirname(new URL(import.meta.url).pathname), "mcp-server.js");
+}
+
 function standardMcpEntry(projectDir: string): Record<string, unknown> {
   return {
     mcpServers: {
       hmem: {
-        command: "npx",
-        args: ["-y", "hmem-mcp", "serve"],
+        command: resolveNodePath(),
+        args: [resolveMcpServerPath()],
         env: {
           HMEM_PROJECT_DIR: projectDir,
         },
@@ -269,7 +287,7 @@ function opencodeMcpEntry(projectDir: string): Record<string, unknown> {
     mcp: {
       hmem: {
         type: "local",
-        command: ["npx", "-y", "hmem-mcp", "serve"],
+        command: [resolveNodePath(), resolveMcpServerPath()],
         environment: {
           HMEM_PROJECT_DIR: projectDir,
         },

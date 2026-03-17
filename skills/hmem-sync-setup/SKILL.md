@@ -111,15 +111,26 @@ npx hmem-sync restore
 This prompts for all values interactively. Or pass them as flags:
 
 ```bash
+# Without agent ID → stores as memory.hmem
 npx hmem-sync restore \
   --server-url https://sync.example.com/hmem-sync \
   --user-id myname \
   --token abc123... \
   --passphrase "my passphrase" \
   --hmem-path ~/.hmem/
+
+# With agent ID → stores as Agents/DEVELOPER/DEVELOPER.hmem
+npx hmem-sync restore \
+  --server-url https://sync.example.com/hmem-sync \
+  --user-id myname \
+  --token abc123... \
+  --passphrase "my passphrase" \
+  --hmem-path ~/.hmem/ \
+  --agent-id DEVELOPER
 ```
 
-Note: `--hmem-path` accepts a directory — it will auto-detect or create `memory.hmem` inside it.
+**IMPORTANT:** If you use `HMEM_AGENT_ID` in your .mcp.json, you MUST also use `--agent-id` in restore.
+Otherwise the DB lands at `memory.hmem` but hmem-mcp looks for `Agents/X/X.hmem`.
 
 ### Step 4: Verify
 
