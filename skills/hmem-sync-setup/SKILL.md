@@ -12,9 +12,35 @@ description: >
 Zero-knowledge encrypted sync for hmem. Memories are encrypted client-side (AES-256-GCM)
 before leaving the device — the server only sees opaque blobs.
 
-## Determine the scenario
+## Recommended: Use `hmem-sync connect`
 
-Ask the user (or detect from context):
+The `connect` command replaces `setup` and `restore` with a single smart wizard:
+
+```bash
+npx hmem-sync connect
+```
+
+It automatically:
+1. Asks for credentials (new account or existing)
+2. Detects local DB + server data
+3. Shows entry counts on both sides
+4. Asks the user what to sync (push, pull, merge, or skip)
+5. Verifies the result
+
+For non-interactive use:
+```bash
+# New account
+npx hmem-sync connect --user-id myname --passphrase "pass" --hmem-path ~/.hmem/ --agent-id DEVELOPER
+
+# Existing account
+npx hmem-sync connect --user-id myname --passphrase "pass" --token abc123... --hmem-path ~/.hmem/ --agent-id DEVELOPER
+```
+
+The legacy `setup` and `restore` commands still work for backwards compatibility.
+
+## Legacy: Determine the scenario
+
+If not using `connect`, pick manually:
 
 **A) First device** — no sync account exists yet → `hmem-sync setup`
 **B) Additional device** — account exists on another machine → `hmem-sync restore`
