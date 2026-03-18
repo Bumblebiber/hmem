@@ -334,11 +334,87 @@ Use `tag_bulk` when adding a new systematic tag to an existing category, or clea
 
 ---
 
+## H-Prefix: User Skill Assessment
+
+Actively track the user's expertise level across topics. This drives how you communicate —
+a coding expert doesn't need variable explanations, a beginner doesn't need jargon.
+
+### Structure
+
+One H-entry per main topic, with sub-nodes per subtopic:
+
+```
+write_memory(prefix="H", content="User Skill: IT
+	Coding — Advanced: writes TypeScript fluently, debugs SQLite schemas, understands async/MCP
+	Terminal/CLI — Advanced: bash, git, systemctl, nvm, sqlite3 comfortable
+	Networking — Intermediate: HTTP/DNS solid, asked about WebSocket details
+	DevOps — Intermediate: systemd + nvm yes, Docker unfamiliar",
+  tags=["#skill-assessment", "#it"])
+```
+
+Levels: **Beginner → Intermediate → Advanced → Expert**
+
+Always include evidence (observed behavior, not assumptions).
+
+### When to assess
+
+- **First interaction**: Make initial assessment from vocabulary, questions, and tool usage
+- **Ongoing (every few exchanges)**: Watch for signals:
+  - **Upgrade signals**: uses domain-specific terms correctly, solves problems independently, corrects the agent
+  - **Downgrade signals**: "das verstehe ich nicht", "explain that", asks about basic concepts, misuses terms
+- **On /save**: Review and update assessments if evidence accumulated
+
+### How to update
+
+Reference the O-entry (automatic session log) where the skill change was observed:
+
+```
+# User demonstrated new skill — link to the exchange that proves it
+append_memory(id="H0010", content="Docker — Intermediate: configured docker-compose independently (see O0042.15)")
+
+# User's skill improved
+update_memory(id="H0010.3", content="Networking — Advanced: configures DNS, TLS, reverse proxies (see O0042.23)")
+
+# User struggled — downgrade with evidence
+update_memory(id="H0010.4", content="DevOps — Beginner: asked what systemd is, needed step-by-step (see O0042.8)")
+```
+
+The O-entry reference lets future agents verify the assessment by reading the original conversation.
+
+### How to USE assessments
+
+Before explaining anything technical, check the relevant H-entry:
+
+- **Beginner**: Explain concepts, use analogies, avoid jargon, step-by-step
+- **Intermediate**: Brief explanations, some jargon OK, link to docs for details
+- **Advanced**: Direct technical language, skip basics, focus on trade-offs
+- **Expert**: Peer-level discussion, challenge assumptions, discuss edge cases
+
+Example: If H0010.1 says "Coding — Advanced", don't explain what a Map is.
+If H0010.4 says "DevOps — Beginner", explain what a systemd service does before configuring one.
+
+### Topics are open-ended
+
+Not just IT — any domain the user works in:
+- Music (theory, instruments, production)
+- Mechanical (bikes, cars, tools)
+- Business (accounting, marketing, management)
+- Languages (German, English proficiency)
+
+Create new H-entries as topics emerge naturally from conversation.
+
+---
+
+## Language Consistency
+
+Match the language of existing entries. Before writing, check what language the memory store uses (run `read_memory()` if unsure). If existing entries are in German, write in German. If English, write in English. Do not mix languages within a single store — it makes search and curation harder.
+
 ## Anti-Patterns
 
 | Wrong | Right |
 |-------|-------|
 | L1 too short: "Fixed bug" | Full sentence with root cause |
+| Writing English when existing entries are German | Match the store's language |
 | Tabs inside content text (e.g. code snippets) | Use spaces for indentation within content — tabs at line start always mean "go deeper in the hierarchy" |
 | Mixed spaces and tabs for hierarchy | Stay consistent — either tabs or spaces as your depth marker |
 | Everything flat, no indentation | Use hierarchy — L2/L3 for details |

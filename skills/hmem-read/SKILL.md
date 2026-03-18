@@ -93,6 +93,21 @@ read_memory(context_for="P0029", min_tag_score=7)  # stricter — only strong ma
 
 ---
 
+## Adapt Communication to User Skill Level
+
+After loading memory, check H-prefix entries for **User Skill Assessments** (e.g. H0010 "User Skill: IT").
+These tell you the user's expertise level per topic — adapt your language accordingly:
+
+- **Beginner**: Explain concepts, avoid jargon, use analogies
+- **Intermediate**: Brief explanations, some jargon OK
+- **Advanced**: Direct technical language, skip basics
+- **Expert**: Peer-level discussion, challenge assumptions
+
+If no skill assessment exists yet, create one based on the user's vocabulary and questions
+(see hmem-write skill for the H-prefix convention).
+
+---
+
 ## After loading — proactive cleanup
 
 Only on the **first read of a session** (not after every read). Scan L1 summaries and flag:
