@@ -2395,6 +2395,11 @@ export class HmemStore {
     return (row?.maxSeq || 0) + 1;
   }
 
+  /** Clear all active markers — called at MCP server start so each session starts neutral. */
+  clearAllActive(): void {
+    this.db.prepare("UPDATE memories SET active = 0 WHERE active = 1").run();
+  }
+
   /** Auto-resolve linked entries on an entry (extracted for reuse in chain resolution). */
   private resolveEntryLinks(entry: MemoryEntry, opts: ReadOptions): void {
     const linkDepth = opts.resolveLinks === false ? 0 : (opts.linkDepth ?? 1);

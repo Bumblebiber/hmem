@@ -1966,6 +1966,8 @@ async function main() {
             const store = openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
             try {
                 entryCount = store.stats().total;
+                // Reset all active markers — each session starts neutral, agent picks project
+                store.clearAllActive();
             }
             finally {
                 store.close();

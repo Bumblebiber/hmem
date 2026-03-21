@@ -69,7 +69,7 @@ tag_rename(old_tag="#hmem-store", new_tag="#hmem")           # rename a tag ever
 
 | Prefix | Category | When to use |
 |--------|----------|-------------|
-| **P** | (P)roject | Project experiences, summaries |
+| **P** | (P)roject | Project entries — standardized L1 format (see below) |
 | **L** | (L)esson | Lessons learned, best practices |
 | **E** | (E)rror | Bugs, errors + their fix |
 | **D** | (D)ecision | Architecture decisions with reasoning |
@@ -85,6 +85,35 @@ tag_rename(old_tag="#hmem-store", new_tag="#hmem")           # rename a tag ever
 { "prefixes": { "R": "Research" } }
 ```
 Custom prefixes are merged with the defaults — they don't replace them. Without registering, the system will reject the prefix.
+
+### P-Entry L1 Format (standardized)
+
+Every project entry MUST follow this L1 format:
+
+```
+Name | Status | Stack | Short description
+```
+
+**Status values:**
+
+| Status | Meaning |
+|--------|---------|
+| New | Just started, concept phase |
+| Active | In active development |
+| Mature | Feature-complete, only bugfixes |
+| Paused | On hold, will resume later |
+| Archived | Done or abandoned |
+
+**Examples:**
+
+```
+hmem-mcp | Active | TS/SQLite/npm | Persistente hierarchische AI-Memory mit 5-Level Lazy Loading
+Heimdall | Paused | TS/Bun/OpenCode-Fork | Permanenter Fork von OpenCode CLI mit hmem + Groupchat
+EasySAP | Active | AHK v2/SAP GUI Scripting | SAP-Automatisierung für Carl Zeiss
+Das Althing | Archived | TS/Node.js | Multi-Agent-Orchestrator — abgelöst durch Heimdall
+```
+
+L2 children are session logs, technical details, repo paths etc. — not part of L1.
 
 ### Marking entries as favorites
 
@@ -352,7 +381,8 @@ write_memory(prefix="H", content="User Skill: IT
   tags=["#skill-assessment", "#it"])
 ```
 
-Levels: **Beginner → Intermediate → Advanced → Expert**
+Levels: **1-10 scale** (see user-assessment skill for full details).
+1-2 = no experience, 5-6 = intermediate, 9-10 = expert. Half-points allowed.
 
 Always include evidence (observed behavior, not assumptions).
 

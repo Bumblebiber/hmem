@@ -1995,6 +1995,10 @@ export class HmemStore {
         const row = this.db.prepare("SELECT MAX(seq) as maxSeq FROM memories WHERE prefix = ?").get(prefix);
         return (row?.maxSeq || 0) + 1;
     }
+    /** Clear all active markers — called at MCP server start so each session starts neutral. */
+    clearAllActive() {
+        this.db.prepare("UPDATE memories SET active = 0 WHERE active = 1").run();
+    }
     /** Auto-resolve linked entries on an entry (extracted for reuse in chain resolution). */
     resolveEntryLinks(entry, opts) {
         const linkDepth = opts.resolveLinks === false ? 0 : (opts.linkDepth ?? 1);

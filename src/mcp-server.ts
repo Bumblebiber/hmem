@@ -2279,7 +2279,11 @@ async function main() {
   if (dbExists) {
     try {
       const store = openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
-      try { entryCount = store.stats().total; } finally { store.close(); }
+      try {
+        entryCount = store.stats().total;
+        // Reset all active markers — each session starts neutral, agent picks project
+        store.clearAllActive();
+      } finally { store.close(); }
     } catch {}
   }
   if (!dbExists) {

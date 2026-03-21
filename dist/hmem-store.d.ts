@@ -379,6 +379,8 @@ export declare class HmemStore {
     private parseTimeWindow;
     private buildRoleFilter;
     private nextSeq;
+    /** Clear all active markers — called at MCP server start so each session starts neutral. */
+    clearAllActive(): void;
     /** Auto-resolve linked entries on an entry (extracted for reuse in chain resolution). */
     private resolveEntryLinks;
     /** Get child nodes created after a given ISO timestamp (for "new since last session" detection). */
