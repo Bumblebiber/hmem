@@ -289,14 +289,51 @@ export class HmemStore {
         ORDER BY shared DESC
         LIMIT 3
       `).all(...validatedTags, prefix);
-            if (overlapRows.length > 0) {
-                const matches = overlapRows.map(r => {
-                    const row = this.db.prepare("SELECT title FROM memories WHERE id = ?").get(r.root_id);
-                    return `  ${r.root_id} (${r.shared}/${validatedTags.length} tags) ${row?.title ?? ""}`;
-                }).join("\n");
-                throw new Error(`DUPLICATE DETECTED: Existing ${prefix}-entries share tags with this write:\n${matches}\n\n` +
-                    `Use append_memory(id="${overlapRows[0].root_id}", content="...") to add to the existing entry.\n` +
-                    `To force a new root entry, pass force=true.`);
+            // Phase 2: FTS5 title similarity (fallback for entries with different tags)
+            let ftsMatches = [];
+            if (overlapRows.length === 0) {
+                const words = level1.replace(/[^a-zA-Z0-9äöüÄÖÜß\s-]/g, " ")
+                    .split(/\s+/)
+                    .filter(w => w.length > 3)
+                    .slice(0, 4);
+                if (words.length >= 2) {
+                    try {
+                        const andQuery = words.join(" AND ");
+                        const ftsHits = this.db.prepare(`
+              SELECT rm.root_id FROM hmem_fts_rowid_map rm
+              JOIN hmem_fts f ON f.rowid = rm.fts_rowid
+              WHERE hmem_fts MATCH ? LIMIT 5
+            `).all(andQuery);
+                        const seen = new Set();
+                        for (const hit of ftsHits) {
+                            if (seen.has(hit.root_id))
+                                continue;
+                            seen.add(hit.root_id);
+                            const row = this.db.prepare("SELECT id, title, prefix FROM memories WHERE id = ? AND prefix = ? AND obsolete != 1 AND irrelevant != 1").get(hit.root_id, prefix);
+                            if (row)
+                                ftsMatches.push({ root_id: row.id, title: row.title });
+                        }
+                    }
+                    catch { /* FTS5 might not exist */ }
+                }
+            }
+            if (overlapRows.length > 0 || ftsMatches.length > 0) {
+                const parts = [];
+                if (overlapRows.length > 0) {
+                    const tagHits = overlapRows.map(r => {
+                        const row = this.db.prepare("SELECT title FROM memories WHERE id = ?").get(r.root_id);
+                        return `  ${r.root_id} (${r.shared}/${validatedTags.length} shared tags) ${row?.title ?? ""}`;
+                    }).join("\n");
+                    parts.push(`Tag overlap:\n${tagHits}`);
+                }
+                if (ftsMatches.length > 0) {
+                    const ftsHits = ftsMatches.map(r => `  ${r.root_id} ${r.title}`).join("\n");
+                    parts.push(`Similar titles:\n${ftsHits}`);
+                }
+                const bestMatch = overlapRows[0]?.root_id ?? ftsMatches[0]?.root_id;
+                throw new Error(`Similar ${prefix}-entries already exist:\n${parts.join("\n")}\n\n` +
+                    `If this belongs to an existing entry, use: append_memory(id="${bestMatch}", content="...")\n` +
+                    `If this is intentionally a NEW entry, retry with: force=true`);
             }
         }
         // Run in a transaction
