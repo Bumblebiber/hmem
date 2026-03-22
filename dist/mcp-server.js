@@ -841,13 +841,25 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                     newSinceSection = `New since last session (${parts.length}):\n${parts.join("\n")}\n\n`;
                 }
             }
+            // No-active-project warning: on first bulk read, if no P-entry is active
+            let projectWarning = "";
+            if (isFirstOrFresh && !id && !prefix && !search) {
+                const hasActiveProject = entries.some(e => e.prefix === "P" && e.active);
+                if (!hasActiveProject) {
+                    const projects = entries.filter(e => e.prefix === "P" && !e.obsolete && !e.irrelevant);
+                    if (projects.length > 0) {
+                        const projectList = projects.map(e => `  ${e.id}  ${e.title}`).join("\n");
+                        projectWarning = `⚠ No project is active. Set one with update_memory(id="P00XX", active=true).\nO-entries (session logs) will be marked "unassigned" until a project is activated.\n\nAvailable projects:\n${projectList}\n\n`;
+                    }
+                }
+            }
             const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
                 `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}${modeInfo}${cacheInfo}${tokenInfo}${staleHint}\n`;
             log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole}${cacheInfo})`);
             return {
                 content: [{
                         type: "text",
-                        text: corruptionWarning + newSinceSection + header + "\n" + output + (isBulkListing && (sessionCache.readCount <= 1 || sessionCache.size === 0) ? REMINDER_HINT : ""),
+                        text: corruptionWarning + projectWarning + newSinceSection + header + "\n" + output + (isBulkListing && (sessionCache.readCount <= 1 || sessionCache.size === 0) ? REMINDER_HINT : ""),
                     }],
             };
         }
