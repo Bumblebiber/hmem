@@ -253,7 +253,9 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
         "Use for reference entries you need to see in full every session."),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
     min_role: z.enum(["worker", "al", "pl", "ceo"]).default("worker").describe("Minimum role to see this entry"),
-}, async ({ prefix, content, links, favorite, tags, pinned, store: storeName, min_role: minRole }) => {
+    force: z.boolean().optional().describe("Force creation of a new root entry even if existing entries share tags. " +
+        "Only use when you intentionally want a separate entry, not a child of an existing one."),
+}, async ({ prefix, content, links, favorite, tags, pinned, store: storeName, min_role: minRole, force }) => {
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker");
     const isFirstTime = !AGENT_ID && !fs.existsSync(resolveHmemPath(PROJECT_DIR, ""));
@@ -292,7 +294,7 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
             const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
             if (storeName === "personal")
                 syncPullThenPush(hmemPath);
-            const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite, tags, pinned);
+            const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite, tags, pinned, force);
             const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
             log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix}, min_role=${effectiveMinRole})`);
             if (storeName === "personal")

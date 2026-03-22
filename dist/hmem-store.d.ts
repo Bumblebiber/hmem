@@ -196,7 +196,7 @@ export declare class HmemStore {
      * Each indented line → its own memory_nodes row with compound ID
      * Multiple lines at the same indent depth → siblings (new capability)
      */
-    write(prefix: string, content: string, links?: string[], minRole?: AgentRole, favorite?: boolean, tags?: string[], pinned?: boolean): WriteResult;
+    write(prefix: string, content: string, links?: string[], minRole?: AgentRole, favorite?: boolean, tags?: string[], pinned?: boolean, force?: boolean): WriteResult;
     /**
      * Write a linear entry with explicit content at each level (no tree branching).
      * Used by flush_context for O-prefix entries. Each level is a single node forming

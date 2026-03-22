@@ -306,8 +306,12 @@ server.tool(
     min_role: z.enum(["worker", "al", "pl", "ceo"]).default("worker").describe(
       "Minimum role to see this entry"
     ),
+    force: z.boolean().optional().describe(
+      "Force creation of a new root entry even if existing entries share tags. " +
+      "Only use when you intentionally want a separate entry, not a child of an existing one."
+    ),
   },
-  async ({ prefix, content, links, favorite, tags, pinned, store: storeName, min_role: minRole }) => {
+  async ({ prefix, content, links, favorite, tags, pinned, store: storeName, min_role: minRole, force }) => {
     const templateName = AGENT_ID.replace(/_\d+$/, "");
     const agentRole = (ROLE || "worker") as AgentRole;
     const isFirstTime = !AGENT_ID && !fs.existsSync(resolveHmemPath(PROJECT_DIR, ""));
@@ -351,7 +355,7 @@ server.tool(
         const effectiveMinRole = storeName === "company" ? (minRole as AgentRole) : ("worker" as AgentRole);
         const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
         if (storeName === "personal") syncPullThenPush(hmemPath);
-        const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite, tags, pinned);
+        const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite, tags, pinned, force);
         const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
         log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix}, min_role=${effectiveMinRole})`);
         if (storeName === "personal") syncPush(hmemPath);

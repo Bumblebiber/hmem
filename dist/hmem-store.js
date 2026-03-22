@@ -224,7 +224,7 @@ export class HmemStore {
      * Each indented line → its own memory_nodes row with compound ID
      * Multiple lines at the same indent depth → siblings (new capability)
      */
-    write(prefix, content, links, minRole = "worker", favorite, tags, pinned) {
+    write(prefix, content, links, minRole = "worker", favorite, tags, pinned, force) {
         this.guardCorrupted();
         prefix = prefix.toUpperCase();
         if (!this.cfg.prefixes[prefix]) {
@@ -265,6 +265,40 @@ export class HmemStore {
             throw new Error("Tags are required. Provide at least 1 tag (3+ recommended) for discoverability. Example: tags=['#hmem', '#sqlite', '#bug']");
         }
         const validatedTags = this.validateTags(tags);
+        // Duplicate detection: check for existing entries with significant tag overlap
+        if (prefix !== "O" && !force) { // O-entries are auto-generated, skip check
+            const tagPlaceholders = validatedTags.map(() => "?").join(", ");
+            const overlapRows = this.db.prepare(`
+        SELECT
+          CASE WHEN mt.entry_id LIKE '%.%'
+          THEN SUBSTR(mt.entry_id, 1, INSTR(mt.entry_id, '.') - 1)
+          ELSE mt.entry_id END as root_id,
+          COUNT(DISTINCT mt.tag) as shared
+        FROM memory_tags mt
+        JOIN memories m ON m.id = (
+          CASE WHEN mt.entry_id LIKE '%.%'
+          THEN SUBSTR(mt.entry_id, 1, INSTR(mt.entry_id, '.') - 1)
+          ELSE mt.entry_id END
+        )
+        WHERE mt.tag IN (${tagPlaceholders})
+          AND m.prefix = ?
+          AND m.obsolete != 1
+          AND m.irrelevant != 1
+        GROUP BY root_id
+        HAVING shared >= 2
+        ORDER BY shared DESC
+        LIMIT 3
+      `).all(...validatedTags, prefix);
+            if (overlapRows.length > 0) {
+                const matches = overlapRows.map(r => {
+                    const row = this.db.prepare("SELECT title FROM memories WHERE id = ?").get(r.root_id);
+                    return `  ${r.root_id} (${r.shared}/${validatedTags.length} tags) ${row?.title ?? ""}`;
+                }).join("\n");
+                throw new Error(`DUPLICATE DETECTED: Existing ${prefix}-entries share tags with this write:\n${matches}\n\n` +
+                    `Use append_memory(id="${overlapRows[0].root_id}", content="...") to add to the existing entry.\n` +
+                    `To force a new root entry, pass force=true.`);
+            }
+        }
         // Run in a transaction
         this.db.transaction(() => {
             insertRoot.run(rootId, prefix, seq, timestamp, timestamp, title, level1, links ? JSON.stringify(links) : null, minRole, favorite ? 1 : 0, pinned ? 1 : 0);
