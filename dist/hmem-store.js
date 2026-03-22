@@ -2048,9 +2048,13 @@ export class HmemStore {
         const row = this.db.prepare("SELECT id FROM memories WHERE prefix = 'O' AND active = 1 AND obsolete != 1 AND irrelevant != 1 LIMIT 1").get();
         if (row)
             return row.id;
-        // Create new O-entry for today's session
+        // Find active project for context
+        const activeProject = this.db.prepare("SELECT id, title FROM memories WHERE prefix = 'P' AND active = 1 AND obsolete != 1 LIMIT 1").get();
         const today = new Date().toISOString().substring(0, 10);
-        const result = this.writeLinear("O", { l1: `Session ${today}` }, ["#session"]);
+        const projectName = activeProject?.title?.split("|")[0]?.trim() ?? "unassigned";
+        const tags = ["#session"];
+        const links = activeProject ? [activeProject.id] : undefined;
+        const result = this.writeLinear("O", { l1: `${projectName} — Session ${today}` }, tags, links);
         this.db.prepare("UPDATE memories SET active = 1, updated_at = ? WHERE id = ?")
             .run(new Date().toISOString(), result.id);
         return result.id;
