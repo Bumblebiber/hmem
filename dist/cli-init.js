@@ -449,6 +449,10 @@ export async function runInit() {
         console.log(`    npm update -g hmem-sync          # update sync (if installed)`);
         console.log(`    npx hmem update-skills           # update skill files after upgrade\n`);
         console.log(`  Test: Open your AI tool and call read_memory() — it should respond.\n`);
+        console.log(`  Sync memories across devices (optional):\n`);
+        console.log(`    npm install -g hmem-sync`);
+        console.log(`    npx hmem-sync connect\n`);
+        console.log(`  This lets you work on multiple devices with the same memory.`);
     }
     finally {
         rl.close();

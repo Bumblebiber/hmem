@@ -926,10 +926,23 @@ server.tool(
           const dbExists = fs.existsSync(hmemPath);
           const label = storeName === "company" ? "company" : templateName;
           const storeInfo = `\nStore: ${label} | Agent: ${templateName || "(none)"} | DB: ${hmemPath}${dbExists ? "" : " [FILE NOT FOUND]"}`;
+
+          // Sync hint: if memory is empty and hmem-sync is not configured, suggest it
+          let syncHint = "";
+          if (!id && !search && !time_around) {
+            const syncConfigPath = path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
+            if (!fs.existsSync(syncConfigPath)) {
+              syncHint = "\n\n💡 Memory is empty. If you have memories on another device, you can sync them:\n" +
+                "  npm install -g hmem-sync\n" +
+                "  npx hmem-sync connect\n" +
+                "Ask the user if they want to set up sync.";
+            }
+          }
+
           const hint = id ? `No memory with ID "${id}".${storeInfo}` :
             search ? `No memories matching "${search}".${storeInfo}` :
               time_around ? `No entries found around "${time_around}".${storeInfo}` :
-              `No memories found.${storeInfo}`;
+              `No memories found.${storeInfo}${syncHint}`;
           return { content: [{ type: "text" as const, text: hint }] };
         }
 
