@@ -941,70 +941,62 @@ export class HmemStore {
       if (r.active === 1) activePrefixes.add(r.prefix);
     }
 
-    // Step 0.6: Cascading related-suppression — entries in OTHER prefixes that are thematically
-    // related ONLY to suppressed (non-active) entries get demoted to title-only too.
-    // Logic: collect tags from non-active entries, subtract tags from active entries,
-    // then find entries in other prefixes that share ONLY the remaining "suppressed" tags.
+    // Step 0.6: Project-relevant filtering — when a P-entry is active, L/D/E/T/M/S entries
+    // are only expanded if they are relevant to the active project. Relevance is determined by:
+    //   1. H, R prefixes → always relevant (user knowledge + rules)
+    //   2. Has #universal tag → always relevant (cross-project knowledge)
+    //   3. Shares ≥1 tag with the active P-entry (root + children) → project-relevant
+    //   4. Everything else → title-only (suppressed)
     const relatedSuppressed = new Set<string>();
-    if (activePrefixes.size > 0) {
-      const activeEntryIds: string[] = [];
-      const nonActiveEntryIds: string[] = [];
-      for (const r of activeRows) {
-        if (activePrefixes.has(r.prefix)) {
-          if (r.active === 1) activeEntryIds.push(r.id);
-          else nonActiveEntryIds.push(r.id);
+    const alwaysRelevantPrefixes = new Set(["H", "R"]);
+    {
+      // Find active P-entry and collect its tags (root + all children)
+      const activePEntries = activeRows.filter(r => r.prefix === "P" && r.active === 1);
+      if (activePEntries.length > 0) {
+        const projectTagSet = new Set<string>();
+        for (const pe of activePEntries) {
+          const allIds = [pe.id, ...(this.db.prepare(
+            "SELECT id FROM memory_nodes WHERE root_id = ?"
+          ).all(pe.id) as { id: string }[]).map(r => r.id)];
+          const tagMap = this.fetchTagsBulk(allIds);
+          for (const tags of tagMap.values()) {
+            if (tags) tags.forEach(t => projectTagSet.add(t));
+          }
         }
-      }
-      if (nonActiveEntryIds.length > 0 && activeEntryIds.length > 0) {
-        // Fetch tags for active and non-active entries (root-level tags + child tags)
-        const activeTagRows = activeEntryIds.length > 0
-          ? this.db.prepare(
-              `SELECT DISTINCT tag FROM memory_tags WHERE ${activeEntryIds.map(() => "entry_id = ? OR entry_id LIKE ?").join(" OR ")}`
-            ).all(...activeEntryIds.flatMap(id => [id, `${id}.%`])) as { tag: string }[]
-          : [];
-        const activeTags = new Set(activeTagRows.map(r => r.tag));
 
-        const nonActiveTagRows = this.db.prepare(
-          `SELECT DISTINCT tag FROM memory_tags WHERE ${nonActiveEntryIds.map(() => "entry_id = ? OR entry_id LIKE ?").join(" OR ")}`
-        ).all(...nonActiveEntryIds.flatMap(id => [id, `${id}.%`])) as { tag: string }[];
-        // Suppressed tags = tags that appear in non-active entries but NOT in active entries
-        const suppressedTags = nonActiveTagRows.map(r => r.tag).filter(t => !activeTags.has(t));
+        // Check each non-P entry: is it relevant?
+        const otherEntries = activeRows.filter(r =>
+          !activePrefixes.has(r.prefix) && !alwaysRelevantPrefixes.has(r.prefix) && r.obsolete !== 1
+        );
+        if (otherEntries.length > 0) {
+          // Fetch tags for all candidates (root + children)
+          const otherIds = otherEntries.map(r => r.id);
+          const otherTagMap = this.fetchTagsBulk(otherIds);
+          const otherChildIds = otherIds.flatMap(id =>
+            (this.db.prepare("SELECT id FROM memory_nodes WHERE root_id = ?").all(id) as { id: string }[]).map(r => r.id)
+          );
+          const childTagMap = otherChildIds.length > 0 ? this.fetchTagsBulk(otherChildIds) : new Map<string, string[]>();
 
-        if (suppressedTags.length > 0) {
-          // Find root entries in OTHER prefixes that have ONLY suppressed tags (no active tags)
-          const prefixList = [...activePrefixes];
-          const otherEntries = activeRows.filter(r => !activePrefixes.has(r.prefix) && r.obsolete !== 1);
-          if (otherEntries.length > 0) {
-            const otherIds = otherEntries.map(r => r.id);
-            const otherTagMap = this.fetchTagsBulk(otherIds);
-            // Also fetch child tags for better coverage
-            const otherChildIds = otherIds.flatMap(id => {
-              const children = this.db.prepare(
-                "SELECT id FROM memory_nodes WHERE root_id = ?"
-              ).all(id) as { id: string }[];
-              return children.map(c => c.id);
-            });
-            const childTagMap = otherChildIds.length > 0 ? this.fetchTagsBulk(otherChildIds) : new Map<string, string[]>();
-            // Merge child tags into parent
-            for (const e of otherEntries) {
-              const rootTags = otherTagMap.get(e.id) ?? [];
-              const childNodes = this.db.prepare(
-                "SELECT id FROM memory_nodes WHERE root_id = ?"
-              ).all(e.id) as { id: string }[];
-              const allTags = new Set(rootTags);
-              for (const cn of childNodes) {
-                const ct = childTagMap.get(cn.id);
-                if (ct) ct.forEach(t => allTags.add(t));
-              }
-              if (allTags.size === 0) continue;
-              // Check: does this entry have ANY active tags?
-              const hasActiveTags = [...allTags].some(t => activeTags.has(t));
-              const hasSuppressedTags = [...allTags].some(t => suppressedTags.includes(t));
-              // Only suppress if entry shares suppressed tags but NO active tags
-              if (hasSuppressedTags && !hasActiveTags) {
-                relatedSuppressed.add(e.id);
-              }
+          for (const e of otherEntries) {
+            // Collect all tags (root + children)
+            const allTags = new Set(otherTagMap.get(e.id) ?? []);
+            const childNodes = this.db.prepare(
+              "SELECT id FROM memory_nodes WHERE root_id = ?"
+            ).all(e.id) as { id: string }[];
+            for (const cn of childNodes) {
+              const ct = childTagMap.get(cn.id);
+              if (ct) ct.forEach(t => allTags.add(t));
             }
+
+            // #universal tag → always relevant
+            if (allTags.has("#universal")) continue;
+
+            // Shares ≥1 tag with active project → relevant
+            const hasProjectTag = [...allTags].some(t => projectTagSet.has(t));
+            if (hasProjectTag) continue;
+
+            // No relevance found → suppress to title-only
+            relatedSuppressed.add(e.id);
           }
         }
       }
