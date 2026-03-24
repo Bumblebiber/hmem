@@ -1833,7 +1833,34 @@ export class HmemStore {
       return result.changes > 0;
     } else {
       // Root entry in memories
-      if (trimmed) {
+      // If content has tab-indented children, split L1 from children
+      if (trimmed && (trimmed.includes("\n\t") || trimmed.includes("\n "))) {
+        // Extract L1 (non-indented lines) and child content (indented lines)
+        const lines = trimmed.split("\n");
+        const l1Lines: string[] = [];
+        const childLines: string[] = [];
+        for (const line of lines) {
+          if (line.startsWith("\t") || (line.length > 0 && line[0] === " " && line.trimStart() !== line)) {
+            childLines.push(line);
+          } else {
+            l1Lines.push(line);
+          }
+        }
+        const l1Text = l1Lines.join(" | ").trim();
+        const l1Limit = this.cfg.maxCharsPerLevel[0];
+        if (l1Text.length > l1Limit * HmemStore.CHAR_LIMIT_TOLERANCE) {
+          throw new Error(`Level 1 exceeds ${l1Limit} character limit (${l1Text.length} chars). Keep L1 compact.`);
+        }
+        // Update L1
+        const updateTs = new Date().toISOString();
+        const newTitle = this.autoExtractTitle(l1Text);
+        this.db.prepare("UPDATE memories SET level_1 = ?, title = ?, updated_at = ? WHERE id = ?")
+          .run(l1Text, newTitle, updateTs, id);
+        // Append children via appendChildren (handles seq numbering correctly)
+        if (childLines.length > 0) {
+          this.appendChildren(id, childLines.join("\n"));
+        }
+      } else if (trimmed) {
         const l1Limit = this.cfg.maxCharsPerLevel[0];
         if (trimmed.length > l1Limit * HmemStore.CHAR_LIMIT_TOLERANCE) {
           throw new Error(`Level 1 exceeds ${l1Limit} character limit (${trimmed.length} chars). Keep L1 compact.`);
