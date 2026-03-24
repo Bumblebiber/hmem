@@ -78,6 +78,18 @@ export interface HmemConfig {
     accessMin?: number;
     accessMax?: number;
   };
+  /** Sync configuration (present only in unified config format). */
+  sync?: SyncConfigBlock;
+}
+
+export interface SyncConfigBlock {
+  serverUrl: string;
+  userId: string;
+  salt: string;
+  token?: string;
+  syncSecrets?: boolean;
+  lastPushAt?: string | null;
+  lastPullAt?: string | null;
 }
 
 export const DEFAULT_PREFIXES: Record<string, string> = {
@@ -167,21 +179,34 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
 
   try {
     const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+
+    // Detect unified vs legacy (flat) format
+    const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
+      "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN"]);
+    const isUnified = raw.memory && typeof raw.memory === "object"
+      && !Array.isArray(raw.memory)
+      && Object.keys(raw.memory).some((k: string) => MEMORY_KEYS.has(k));
+    // For unified format with empty memory section, still treat as unified if sync is present
+    const isUnifiedEmpty = !isUnified && raw.memory && typeof raw.memory === "object"
+      && !Array.isArray(raw.memory) && raw.sync && typeof raw.sync === "object";
+    const memoryRaw = (isUnified || isUnifiedEmpty) ? raw.memory : raw;
+    const syncRaw = raw.sync && typeof raw.sync === "object" && !Array.isArray(raw.sync) ? raw.sync : undefined;
+
     const cfg: HmemConfig = {
       ...DEFAULT_CONFIG,
       prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
       bulkReadV2: { ...DEFAULT_CONFIG.bulkReadV2 },
     };
 
-    if (typeof raw.maxDepth === "number" && raw.maxDepth >= 1 && raw.maxDepth <= 10) cfg.maxDepth = raw.maxDepth;
-    if (typeof raw.defaultReadLimit === "number" && raw.defaultReadLimit > 0) cfg.defaultReadLimit = raw.defaultReadLimit;
-    if (typeof raw.accessCountTopN === "number" && raw.accessCountTopN >= 0) cfg.accessCountTopN = raw.accessCountTopN;
-    if (typeof raw.maxTitleChars === "number" && raw.maxTitleChars >= 10 && raw.maxTitleChars <= 120) cfg.maxTitleChars = raw.maxTitleChars;
+    if (typeof memoryRaw.maxDepth === "number" && memoryRaw.maxDepth >= 1 && memoryRaw.maxDepth <= 10) cfg.maxDepth = memoryRaw.maxDepth;
+    if (typeof memoryRaw.defaultReadLimit === "number" && memoryRaw.defaultReadLimit > 0) cfg.defaultReadLimit = memoryRaw.defaultReadLimit;
+    if (typeof memoryRaw.accessCountTopN === "number" && memoryRaw.accessCountTopN >= 0) cfg.accessCountTopN = memoryRaw.accessCountTopN;
+    if (typeof memoryRaw.maxTitleChars === "number" && memoryRaw.maxTitleChars >= 10 && memoryRaw.maxTitleChars <= 120) cfg.maxTitleChars = memoryRaw.maxTitleChars;
 
     // Prefixes: merge user-defined with defaults (user can override or add)
-    if (raw.prefixes && typeof raw.prefixes === "object" && !Array.isArray(raw.prefixes)) {
+    if (memoryRaw.prefixes && typeof memoryRaw.prefixes === "object" && !Array.isArray(memoryRaw.prefixes)) {
       const merged = { ...DEFAULT_PREFIXES };
-      for (const [key, val] of Object.entries(raw.prefixes)) {
+      for (const [key, val] of Object.entries(memoryRaw.prefixes)) {
         if (typeof key === "string" && /^[A-Z]$/.test(key) && typeof val === "string" && val.length > 0) {
           merged[key] = val;
         }
@@ -190,8 +215,8 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     }
 
     // Prefix descriptions: merge user-defined with defaults
-    if (raw.prefixDescriptions && typeof raw.prefixDescriptions === "object" && !Array.isArray(raw.prefixDescriptions)) {
-      for (const [key, val] of Object.entries(raw.prefixDescriptions)) {
+    if (memoryRaw.prefixDescriptions && typeof memoryRaw.prefixDescriptions === "object" && !Array.isArray(memoryRaw.prefixDescriptions)) {
+      for (const [key, val] of Object.entries(memoryRaw.prefixDescriptions)) {
         if (typeof key === "string" && /^[A-Z]$/.test(key) && typeof val === "string" && val.length > 0) {
           cfg.prefixDescriptions[key] = val;
         }
@@ -205,8 +230,8 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     }
 
     // V2 bulk-read tuning
-    if (raw.bulkReadV2 && typeof raw.bulkReadV2 === "object") {
-      const v2 = raw.bulkReadV2;
+    if (memoryRaw.bulkReadV2 && typeof memoryRaw.bulkReadV2 === "object") {
+      const v2 = memoryRaw.bulkReadV2;
       if (typeof v2.topAccessCount === "number" && v2.topAccessCount >= 0) cfg.bulkReadV2.topAccessCount = v2.topAccessCount;
       if (typeof v2.topNewestCount === "number" && v2.topNewestCount >= 0) cfg.bulkReadV2.topNewestCount = v2.topNewestCount;
       if (typeof v2.topObsoleteCount === "number" && v2.topObsoleteCount >= 0) cfg.bulkReadV2.topObsoleteCount = v2.topObsoleteCount;
@@ -221,16 +246,16 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     }
 
     // Resolve char limits: explicit array > linear endpoints > default
-    if (Array.isArray(raw.maxCharsPerLevel) && raw.maxCharsPerLevel.length >= 1) {
-      const levels = raw.maxCharsPerLevel as number[];
+    if (Array.isArray(memoryRaw.maxCharsPerLevel) && memoryRaw.maxCharsPerLevel.length >= 1) {
+      const levels = memoryRaw.maxCharsPerLevel as number[];
       if (levels.every((n: unknown) => typeof n === "number" && n > 0)) {
         const padded = [...levels];
         while (padded.length < cfg.maxDepth) padded.push(padded[padded.length - 1]);
         cfg.maxCharsPerLevel = padded.slice(0, cfg.maxDepth);
       }
-    } else if (typeof raw.maxL1Chars === "number" || typeof raw.maxLnChars === "number") {
-      const l1 = typeof raw.maxL1Chars === "number" ? raw.maxL1Chars : DEFAULT_CONFIG.maxCharsPerLevel[0];
-      const ln = typeof raw.maxLnChars === "number" ? raw.maxLnChars : DEFAULT_CONFIG.maxCharsPerLevel[DEFAULT_CONFIG.maxCharsPerLevel.length - 1];
+    } else if (typeof memoryRaw.maxL1Chars === "number" || typeof memoryRaw.maxLnChars === "number") {
+      const l1 = typeof memoryRaw.maxL1Chars === "number" ? memoryRaw.maxL1Chars : DEFAULT_CONFIG.maxCharsPerLevel[0];
+      const ln = typeof memoryRaw.maxLnChars === "number" ? memoryRaw.maxLnChars : DEFAULT_CONFIG.maxCharsPerLevel[DEFAULT_CONFIG.maxCharsPerLevel.length - 1];
       cfg.maxCharsPerLevel = linearLimits(l1, ln, cfg.maxDepth);
     } else {
       cfg.maxCharsPerLevel = linearLimits(
@@ -238,6 +263,19 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
         DEFAULT_CONFIG.maxCharsPerLevel[DEFAULT_CONFIG.maxCharsPerLevel.length - 1],
         cfg.maxDepth
       );
+    }
+
+    // Parse sync section (unified format only)
+    if (syncRaw && syncRaw.serverUrl && syncRaw.userId && syncRaw.salt) {
+      cfg.sync = {
+        serverUrl: syncRaw.serverUrl,
+        userId: syncRaw.userId,
+        salt: syncRaw.salt,
+        token: syncRaw.token,
+        syncSecrets: syncRaw.syncSecrets !== undefined ? syncRaw.syncSecrets : true,
+        lastPushAt: syncRaw.lastPushAt ?? null,
+        lastPullAt: syncRaw.lastPullAt ?? null,
+      };
     }
 
     return cfg;
