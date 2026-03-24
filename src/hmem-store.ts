@@ -935,8 +935,8 @@ export class HmemStore {
 
     // Step 0.5: Detect active-prefixes — prefixes where at least one entry has active=1.
     // Non-active entries in these prefixes are still shown (as compact titles) but don't get expansion slots.
-    // P-prefix is ALWAYS treated as active-prefix — projects only expand when explicitly activated.
-    const activePrefixes = new Set<string>(["P"]);
+    // P and I prefixes ALWAYS treated as active-prefix — only expand when explicitly activated.
+    const activePrefixes = new Set<string>(["P", "I"]);
     for (const r of activeRows) {
       if (r.active === 1) activePrefixes.add(r.prefix);
     }
@@ -1907,6 +1907,12 @@ export class HmemStore {
       if (active !== undefined) {
         sets.push("active = ?");
         params.push(active ? 1 : 0);
+        // Deactivate all other entries in the same prefix when activating
+        if (active) {
+          const prefix = id.replace(/\d+$/, "");
+          this.db.prepare("UPDATE memories SET active = 0 WHERE prefix = ? AND id != ? AND active = 1")
+            .run(prefix, id);
+        }
       }
       if (sets.length === 0) {
         // Only tags to update — no SQL UPDATE needed
