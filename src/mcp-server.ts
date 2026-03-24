@@ -81,8 +81,12 @@ const PULL_COOLDOWN_MS = 30_000;
 
 function hmemSyncEnabled(hmemPath: string): boolean {
   const passphrase = process.env["HMEM_SYNC_PASSPHRASE"];
+  if (!passphrase) return false;
+  // Unified config has sync section with token
+  if (hmemConfig?.sync?.serverUrl && hmemConfig?.sync?.token) return true;
+  // Legacy: check for .hmem-sync-config.json
   const cfg = path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
-  return !!passphrase && fs.existsSync(cfg);
+  return fs.existsSync(cfg);
 }
 
 function hmemSyncConfig(hmemPath: string): string {
@@ -930,8 +934,8 @@ server.tool(
           // Sync hint: if memory is empty and hmem-sync is not configured, suggest it
           let syncHint = "";
           if (!id && !search && !time_around) {
-            const syncConfigPath = path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
-            if (!fs.existsSync(syncConfigPath)) {
+            const hasSyncSetup = hmemConfig?.sync?.serverUrl || fs.existsSync(path.join(path.dirname(hmemPath), ".hmem-sync-config.json"));
+            if (!hasSyncSetup) {
               syncHint = "\n\n💡 Memory is empty. If you have memories on another device, you can sync them:\n" +
                 "  npm install -g hmem-sync\n" +
                 "  npx hmem-sync connect\n" +
