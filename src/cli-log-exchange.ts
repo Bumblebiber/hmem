@@ -111,6 +111,19 @@ export async function logExchange(): Promise<void> {
 
     // appendExchange stores raw text without newline parsing
     store.appendExchange(activeOId, userMessage, input.last_assistant_message!);
+
+    // Periodic save nudge: every N exchanges, ask agent to save learnings
+    const SAVE_INTERVAL = 20;
+    const exchangeCount = store.countDirectChildren(activeOId);
+
+    if (exchangeCount > 0 && exchangeCount % SAVE_INTERVAL === 0) {
+      // Output JSON to stdout — Stop hook interprets this as "don't stop yet"
+      const nudge = {
+        decision: "block",
+        reason: `${exchangeCount} exchanges since last save. Write key learnings to memory using write_memory (L for lessons, E for errors, D for decisions) before continuing. Keep it brief — just the important stuff.`,
+      };
+      process.stdout.write(JSON.stringify(nudge));
+    }
   } catch (e) {
     console.error(`[hmem log-exchange] ${e}`);
   } finally {

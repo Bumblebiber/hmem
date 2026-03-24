@@ -391,6 +391,8 @@ export declare class HmemStore {
         content: string;
     }[];
     /** Get or create the active O-entry (for log-exchange hook). */
+    /** Count L2 children of a root entry (direct children only). */
+    countDirectChildren(rootId: string): number;
     getActiveO(): string;
     bumpAccess(id: string): void;
     private bumpNodeAccess;

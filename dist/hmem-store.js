@@ -2116,6 +2116,10 @@ export class HmemStore {
             "ORDER BY mn.created_at DESC LIMIT ?").all(since, limit);
     }
     /** Get or create the active O-entry (for log-exchange hook). */
+    /** Count L2 children of a root entry (direct children only). */
+    countDirectChildren(rootId) {
+        return this.db.prepare("SELECT COUNT(*) as n FROM memory_nodes WHERE root_id = ? AND depth = 2").get(rootId)?.n ?? 0;
+    }
     getActiveO() {
         const row = this.db.prepare("SELECT id FROM memories WHERE prefix = 'O' AND active = 1 AND obsolete != 1 AND irrelevant != 1 LIMIT 1").get();
         if (row)
