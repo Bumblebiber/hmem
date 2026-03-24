@@ -167,6 +167,10 @@ export function linearLimits(l1: number, ln: number, depth: number): number[] {
   );
 }
 
+/** Known memory config keys — used to detect unified vs flat format. */
+const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
+  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN"]);
+
 /**
  * Load hmem.config.json from projectDir.
  * Unknown keys are ignored. Missing keys fall back to defaults.
@@ -180,16 +184,13 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
   try {
     const raw = JSON.parse(fs.readFileSync(configPath, "utf-8"));
 
-    // Detect unified vs legacy (flat) format
-    const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
-      "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN"]);
+    // Detect unified vs legacy (flat) format.
+    // Unified: { memory: { <known keys> }, sync?: { ... } }
+    // Legacy:  { maxL1Chars: 200, ... } (memory settings at top level)
     const isUnified = raw.memory && typeof raw.memory === "object"
       && !Array.isArray(raw.memory)
       && Object.keys(raw.memory).some((k: string) => MEMORY_KEYS.has(k));
-    // For unified format with empty memory section, still treat as unified if sync is present
-    const isUnifiedEmpty = !isUnified && raw.memory && typeof raw.memory === "object"
-      && !Array.isArray(raw.memory) && raw.sync && typeof raw.sync === "object";
-    const memoryRaw = (isUnified || isUnifiedEmpty) ? raw.memory : raw;
+    const memoryRaw = isUnified ? raw.memory : raw;
     const syncRaw = raw.sync && typeof raw.sync === "object" && !Array.isArray(raw.sync) ? raw.sync : undefined;
 
     const cfg: HmemConfig = {
