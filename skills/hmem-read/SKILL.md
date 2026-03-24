@@ -19,6 +19,11 @@ Do NOT just read this document — execute a tool call immediately.
 If the tool `read_memory` is not available, tell the user:
 "read_memory tool not found. Run `hmem init` to configure the MCP server."
 
+**Announcements:** If `read_memory` or `hmem-sync pull` shows urgent announcements
+(yellow warnings at the top), act on them **immediately** before doing anything else.
+These are broadcast messages from the user or another device — typically config changes,
+server migrations, or breaking updates that must be handled first.
+
 ---
 
 ## Path A: Fresh Session Start (no context yet)
@@ -96,12 +101,12 @@ read_memory(context_for="P0029", min_tag_score=7)  # stricter — only strong ma
 ## Adapt Communication to User Skill Level
 
 After loading memory, check H-prefix entries for **User Skill Assessments** (e.g. H0010 "User Skill: IT").
-These tell you the user's expertise level per topic — adapt your language accordingly:
+These contain 1-10 scores per subtopic — adapt your language accordingly:
 
-- **Beginner**: Explain concepts, avoid jargon, use analogies
-- **Intermediate**: Brief explanations, some jargon OK
-- **Advanced**: Direct technical language, skip basics
-- **Expert**: Peer-level discussion, challenge assumptions
+- **1-4**: Explain concepts, avoid jargon, use analogies
+- **5-6**: Brief explanations, some jargon OK
+- **7-8**: Direct technical language, skip basics
+- **9-10**: Peer-level discussion, challenge assumptions
 
 If no skill assessment exists yet, create one based on the user's vocabulary and questions
 (see hmem-write skill for the H-prefix convention).

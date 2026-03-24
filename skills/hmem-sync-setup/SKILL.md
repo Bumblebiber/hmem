@@ -176,6 +176,57 @@ Add `HMEM_SYNC_PASSPHRASE` to `.mcp.json` env block and restart the AI tool.
 
 ---
 
+## Urgent Announcements
+
+Broadcast messages to all synced devices. Each device sees announcements once on the next pull.
+
+### When to send
+
+- Server migration (new URL, DNS change)
+- Breaking config changes (e.g. "update maxL1Chars to 200")
+- Security issues (compromised token, rotate credentials)
+- Coordinated action needed across all devices
+
+### How to send
+
+```bash
+# From the directory containing .hmem-sync-config.json:
+npx hmem-sync announce --message "Server URL changing to https://new-server/hmem-sync"
+
+# Or via curl:
+curl -X POST https://server/hmem-sync/announcements \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Your urgent message here"}'
+```
+
+### How to edit or delete
+
+```bash
+# List all announcements:
+curl -s https://server/hmem-sync/announcements -H "Authorization: Bearer $TOKEN"
+
+# Edit (by ID from list):
+curl -X PUT https://server/hmem-sync/announcements/2 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Corrected message"}'
+
+# Delete:
+curl -X DELETE https://server/hmem-sync/announcements/2 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### When you RECEIVE an announcement
+
+Announcements appear as yellow warnings before pull output. They indicate urgent action is needed.
+
+**Act on them immediately — before any other work.** Do not write to memory, do not start tasks.
+Read the message, execute the requested action (config change, URL update, etc.), verify it worked,
+then continue with normal work.
+
+---
+
 ## Troubleshooting
 
 | Problem | Cause | Fix |
