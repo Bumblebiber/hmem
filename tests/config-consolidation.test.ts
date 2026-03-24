@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { loadHmemConfig, DEFAULT_CONFIG } from "../src/hmem-config.js";
+import { loadHmemConfig, saveHmemConfig, DEFAULT_CONFIG } from "../src/hmem-config.js";
 
 const TMP = join(import.meta.dirname ?? __dirname, ".tmp-config-test");
 
@@ -59,5 +59,46 @@ describe("loadHmemConfig", () => {
     writeFileSync(join(TMP, "hmem.config.json"), JSON.stringify(config));
     const cfg = loadHmemConfig(TMP);
     expect(cfg.sync!.syncSecrets).toBe(false);
+  });
+});
+
+describe("saveHmemConfig", () => {
+  it("saves and reloads unified config with roundtrip fidelity", () => {
+    const cfg = loadHmemConfig(TMP); // defaults, no file
+    cfg.maxCharsPerLevel[0] = 350;
+    cfg.sync = {
+      serverUrl: "https://test.com",
+      userId: "me",
+      salt: "salt123",
+      token: "secret_token",
+      syncSecrets: true,
+      lastPushAt: null,
+      lastPullAt: null,
+    };
+    saveHmemConfig(TMP, cfg);
+
+    const reloaded = loadHmemConfig(TMP);
+    expect(reloaded.maxCharsPerLevel[0]).toBe(350);
+    expect(reloaded.maxDepth).toBe(cfg.maxDepth);
+    expect(reloaded.sync!.serverUrl).toBe("https://test.com");
+    expect(reloaded.sync!.token).toBe("secret_token");
+  });
+
+  it("saves config with chmod 600 when token present", () => {
+    const cfg = loadHmemConfig(TMP);
+    cfg.sync = { serverUrl: "x", userId: "y", salt: "z", token: "secret" };
+    saveHmemConfig(TMP, cfg);
+
+    const stat = statSync(join(TMP, "hmem.config.json"));
+    expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  it("saves config without sync section when sync is undefined", () => {
+    const cfg = loadHmemConfig(TMP);
+    saveHmemConfig(TMP, cfg);
+
+    const raw = JSON.parse(readFileSync(join(TMP, "hmem.config.json"), "utf8"));
+    expect(raw.memory).toBeDefined();
+    expect(raw.sync).toBeUndefined();
   });
 });

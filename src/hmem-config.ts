@@ -167,6 +167,39 @@ export function linearLimits(l1: number, ln: number, depth: number): number[] {
   );
 }
 
+/**
+ * Save hmem.config.json in the unified format.
+ * Writes maxCharsPerLevel directly (no reverse-computing maxL1Chars/maxLnChars).
+ * If a sync token is present, the file is chmod 600 for security.
+ */
+export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
+  const configPath = path.join(projectDir, "hmem.config.json");
+
+  const output: Record<string, unknown> = {
+    memory: {
+      maxCharsPerLevel: config.maxCharsPerLevel,
+      maxDepth: config.maxDepth,
+      defaultReadLimit: config.defaultReadLimit,
+      maxTitleChars: config.maxTitleChars,
+      accessCountTopN: config.accessCountTopN,
+      prefixes: config.prefixes,
+      prefixDescriptions: config.prefixDescriptions,
+      bulkReadV2: config.bulkReadV2,
+    },
+  };
+
+  if (config.sync) {
+    output.sync = config.sync;
+  }
+
+  fs.writeFileSync(configPath, JSON.stringify(output, null, 2), "utf-8");
+
+  // Secure file if token is present
+  if (config.sync?.token) {
+    try { fs.chmodSync(configPath, 0o600); } catch {}
+  }
+}
+
 /** Known memory config keys — used to detect unified vs flat format. */
 const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
   "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN"]);
