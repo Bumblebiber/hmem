@@ -15,7 +15,7 @@ switch (command) {
 
   case "init": {
     const { runInit } = await import("./cli-init.js");
-    await runInit();
+    await runInit(process.argv.slice(3));
     break;
   }
 
@@ -42,7 +42,7 @@ switch (command) {
 
 Usage:
   hmem serve          Start the MCP server (stdio transport)
-  hmem init           Interactive installer for AI coding tools
+  hmem init           Install hmem for AI coding tools (interactive or with flags)
   hmem update-skills  Copy/update skill files to detected AI tools
   hmem log-exchange   Log a chat exchange to active O-entry (called by Stop hook)
   hmem version        Show version
@@ -52,8 +52,17 @@ Environment variables (for serve):
   HMEM_AGENT_ID      Agent identifier (optional)
   HMEM_AGENT_ROLE    Role: worker | al | pl | ceo (default: worker)
 
+Non-interactive init flags:
+  --global             System-wide install (default)
+  --local              Project-local install
+  --tools claude-code  Comma-separated tool list (default: all detected)
+  --dir /path          Memory directory (default: ~/.hmem)
+  --no-example         Skip example memory installation
+
 Examples:
-  npx hmem init                          # Configure your AI tools
+  npx hmem init                          # Interactive installer
+  npx hmem init --global                 # Non-interactive, all detected tools
+  npx hmem init --global --tools claude-code  # Non-interactive, Claude Code only
   npx hmem update-skills                 # Update skills after npm update
   HMEM_PROJECT_DIR=. npx hmem serve      # Start server in current directory`);
     break;

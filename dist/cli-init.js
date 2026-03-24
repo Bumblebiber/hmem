@@ -283,11 +283,37 @@ function writeConfigFile(filePath, config) {
     fs.writeFileSync(filePath, JSON.stringify(config, null, 2) + "\n", "utf-8");
 }
 // ---- Main ----
-export async function runInit() {
-    rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+/**
+ * Parse CLI flags for non-interactive mode.
+ * Flags: --global, --local, --tools tool1,tool2, --dir /path, --no-example
+ */
+function parseInitFlags(args) {
+    const flags = {};
+    for (let i = 0; i < args.length; i++) {
+        if (args[i] === "--global")
+            flags["scope"] = "global";
+        else if (args[i] === "--local")
+            flags["scope"] = "local";
+        else if (args[i] === "--tools" && args[i + 1])
+            flags["tools"] = args[++i];
+        else if (args[i] === "--dir" && args[i + 1])
+            flags["dir"] = args[++i];
+        else if (args[i] === "--no-example")
+            flags["no-example"] = "true";
+    }
+    return flags;
+}
+export async function runInit(args = []) {
+    const flags = parseInitFlags(args);
+    const nonInteractive = Object.keys(flags).length > 0;
+    // Non-interactive: skip readline entirely
+    if (!nonInteractive) {
+        rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    }
     try {
         console.log("\n  hmem — Humanlike Memory for AI Agents\n");
-        console.log("  This installer configures your AI coding tools to use hmem.\n");
+        if (!nonInteractive)
+            console.log("  This installer configures your AI coding tools to use hmem.\n");
         // Step 1: Detect installed tools
         const detected = [];
         const notDetected = [];
@@ -299,23 +325,31 @@ export async function runInit() {
                 notDetected.push(id);
             }
         }
-        if (detected.length > 0) {
-            console.log("  Detected tools:");
-            for (const id of detected) {
-                console.log(`    [x] ${TOOLS[id].name}`);
+        if (!nonInteractive) {
+            if (detected.length > 0) {
+                console.log("  Detected tools:");
+                for (const id of detected) {
+                    console.log(`    [x] ${TOOLS[id].name}`);
+                }
             }
-        }
-        if (notDetected.length > 0) {
-            for (const id of notDetected) {
-                console.log(`    [ ] ${TOOLS[id].name} (not found)`);
+            if (notDetected.length > 0) {
+                for (const id of notDetected) {
+                    console.log(`    [ ] ${TOOLS[id].name} (not found)`);
+                }
             }
         }
         // Step 2: System-wide or project-local?
-        const scopeIdx = await askChoice("Installation scope:", [
-            "System-wide (global — works in any directory)",
-            "Project-local (only in current directory)",
-        ]);
-        const isGlobal = scopeIdx === 0;
+        let isGlobal;
+        if (nonInteractive) {
+            isGlobal = flags["scope"] !== "local"; // default: global
+        }
+        else {
+            const scopeIdx = await askChoice("Installation scope:", [
+                "System-wide (global — works in any directory)",
+                "Project-local (only in current directory)",
+            ]);
+            isGlobal = scopeIdx === 0;
+        }
         // Step 3: Which tools?
         const allToolIds = isGlobal
             ? detected.filter(id => TOOLS[id].globalDir !== null)
@@ -325,14 +359,27 @@ export async function runInit() {
             console.log("  Install Claude Code, OpenCode, Cursor, Windsurf, Gemini CLI, or Cline first.\n");
             return;
         }
-        const toolChoices = allToolIds.map(id => TOOLS[id].name);
-        const selectedIndices = await askMultiChoice("Configure hmem for which tools?", toolChoices);
-        const selectedTools = selectedIndices.map(i => allToolIds[i]);
+        let selectedTools;
+        if (nonInteractive && flags["tools"]) {
+            // Match tool names/ids from comma-separated list
+            const requested = flags["tools"].split(",").map(t => t.trim().toLowerCase());
+            selectedTools = allToolIds.filter(id => requested.includes(id) || requested.includes(TOOLS[id].name.toLowerCase()));
+            if (selectedTools.length === 0)
+                selectedTools = allToolIds; // fallback: all detected
+        }
+        else if (nonInteractive) {
+            selectedTools = allToolIds; // default: all detected
+        }
+        else {
+            const toolChoices = allToolIds.map(id => TOOLS[id].name);
+            const selectedIndices = await askMultiChoice("Configure hmem for which tools?", toolChoices);
+            selectedTools = selectedIndices.map(i => allToolIds[i]);
+        }
         // Step 4: Memory directory
         const defaultDir = isGlobal ? path.join(HOME, ".hmem") : process.cwd();
-        const memDirAnswer = await ask(`\nMemory directory (press Enter to use default):\n  [${defaultDir}]: `);
-        const memDir = memDirAnswer || defaultDir;
-        const absMemDir = path.resolve(memDir);
+        const absMemDir = nonInteractive
+            ? path.resolve(flags["dir"] || defaultDir)
+            : path.resolve((await ask(`\nMemory directory (press Enter to use default):\n  [${defaultDir}]: `)) || defaultDir);
         // Create memory directory if it doesn't exist
         if (!fs.existsSync(absMemDir)) {
             fs.mkdirSync(absMemDir, { recursive: true });
@@ -341,11 +388,10 @@ export async function runInit() {
         // Step 4b: Example memory
         const memoryPath = path.join(absMemDir, "memory.hmem");
         if (!fs.existsSync(memoryPath)) {
-            const exampleIdx = await askChoice("Start with an example memory? (67 real entries from hmem development — lessons, decisions, errors, milestones)", [
-                "Start fresh (empty memory)",
-                "Install example (recommended for first-time users)",
-            ]);
-            if (exampleIdx === 1) {
+            const installExample = nonInteractive
+                ? flags["no-example"] !== "true" // default: install example in non-interactive
+                : (await askChoice("Start with an example memory? (67 real entries from hmem development — lessons, decisions, errors, milestones)", ["Start fresh (empty memory)", "Install example (recommended for first-time users)"])) === 1;
+            if (installExample) {
                 // Find the bundled example file relative to this script (dist/cli-init.js → ../hmem_developer.hmem)
                 const exampleSrc = path.join(import.meta.dirname, "..", "hmem_developer.hmem");
                 if (fs.existsSync(exampleSrc)) {
@@ -455,7 +501,8 @@ export async function runInit() {
         console.log(`  This lets you work on multiple devices with the same memory.`);
     }
     finally {
-        rl.close();
+        if (rl)
+            rl.close();
     }
 }
 /**
