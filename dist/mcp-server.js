@@ -897,16 +897,29 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                     newSinceSection = `New since last session (${parts.length}):\n${parts.join("\n")}\n\n`;
                 }
             }
-            // No-active-project warning: on first bulk read, if no P-entry is active
+            // PROJECT GATE: on unfiltered bulk reads, BLOCK output if no project is active.
+            // The agent MUST activate a project first — otherwise O-entries go unassigned.
             let projectWarning = "";
-            if (isFirstOrFresh && !id && !prefix && !search) {
+            if (!id && !prefix && !search && !time_around && !stale_days && !tag) {
                 const hasActiveProject = entries.some(e => e.prefix === "P" && e.active);
                 if (!hasActiveProject) {
                     const projects = entries.filter(e => e.prefix === "P" && !e.obsolete && !e.irrelevant);
-                    if (projects.length > 0) {
-                        const projectList = projects.map(e => `  ${e.id}  ${e.title}`).join("\n");
-                        projectWarning = `⚠ No project is active. Set one with update_memory(id="P00XX", active=true).\nO-entries (session logs) will be marked "unassigned" until a project is activated.\n\nAvailable projects:\n${projectList}\n\n`;
-                    }
+                    const projectList = projects.length > 0
+                        ? projects.map(e => `  ${e.id}  ${e.title}`).join("\n")
+                        : "  (no projects yet — create one with write_memory(prefix=\"P\", content=\"Name | Status | Stack | Description\", tags=[...]))";
+                    return {
+                        content: [{
+                                type: "text",
+                                text: `⚠ ACTION REQUIRED: No project is active.\n\n` +
+                                    `Ask the user which project to work on, then activate it:\n` +
+                                    `  update_memory(id="P00XX", active=true)\n\n` +
+                                    `Or create a new one:\n` +
+                                    `  write_memory(prefix="P", content="Name | Status | Stack | Description", tags=["#project"])\n\n` +
+                                    `Available projects:\n${projectList}\n\n` +
+                                    `Session logs (O-entries) will be linked to the active project.\n` +
+                                    `Memory data is withheld until a project is activated.`,
+                            }],
+                    };
                 }
             }
             const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
