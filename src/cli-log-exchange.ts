@@ -112,9 +112,12 @@ export async function logExchange(): Promise<void> {
     // appendExchange stores raw text without newline parsing
     store.appendExchange(activeOId, userMessage, input.last_assistant_message!);
 
-    // Periodic save nudge: file-based counter that persists across O-entry resets
+    // Periodic save nudge: per-session counter based on transcript path
     const SAVE_INTERVAL = 20;
-    const counterPath = path.join(path.dirname(hmemPath), ".hmem-exchange-counter");
+    const sessionId = path.basename(input.transcript_path!, ".jsonl");
+    const counterDir = path.join(path.dirname(hmemPath), ".hmem-counters");
+    if (!fs.existsSync(counterDir)) fs.mkdirSync(counterDir, { recursive: true });
+    const counterPath = path.join(counterDir, `${sessionId}.count`);
     let counter = 0;
     try {
       counter = parseInt(fs.readFileSync(counterPath, "utf8").trim(), 10) || 0;

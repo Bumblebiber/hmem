@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import readline from "node:readline";
+import { saveHmemConfig, DEFAULT_CONFIG } from "./hmem-config.js";
 // In WSL, os.homedir() may return the Windows path — prefer the Linux home directory
 const HOME = (process.env.WSL_DISTRO_NAME || process.env.WSLENV)
     ? (process.env.HOME ?? os.homedir())
@@ -473,13 +474,7 @@ export async function runInit(args = []) {
         // Step 7: Create default hmem.config.json if not exists
         const hmemConfigPath = path.join(absMemDir, "hmem.config.json");
         if (!fs.existsSync(hmemConfigPath)) {
-            const defaultConfig = {
-                maxL1Chars: 120,
-                maxLnChars: 50000,
-                maxDepth: 5,
-                defaultReadLimit: 100,
-            };
-            writeConfigFile(hmemConfigPath, defaultConfig);
+            saveHmemConfig(absMemDir, { ...DEFAULT_CONFIG });
             console.log(`\n  [ok] Config: ${hmemConfigPath}`);
         }
         console.log(`\n  Done! Restart your AI tool(s) to activate hmem.\n`);

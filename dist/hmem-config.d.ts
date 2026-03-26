@@ -74,6 +74,17 @@ export interface HmemConfig {
         accessMin?: number;
         accessMax?: number;
     };
+    /** Sync configuration (present only in unified config format). */
+    sync?: SyncConfigBlock;
+}
+export interface SyncConfigBlock {
+    serverUrl: string;
+    userId: string;
+    salt: string;
+    token?: string;
+    syncSecrets?: boolean;
+    lastPushAt?: string | null;
+    lastPullAt?: string | null;
 }
 export declare const DEFAULT_PREFIXES: Record<string, string>;
 /**
@@ -92,6 +103,12 @@ export declare function formatPrefixList(prefixes: Record<string, string>): stri
  * depth=1 → [l1], depth=2 → [l1, ln], depth=5 → [l1, …, ln]
  */
 export declare function linearLimits(l1: number, ln: number, depth: number): number[];
+/**
+ * Save hmem.config.json in the unified format.
+ * Writes maxCharsPerLevel directly (no reverse-computing maxL1Chars/maxLnChars).
+ * If a sync token is present, the file is chmod 600 for security.
+ */
+export declare function saveHmemConfig(projectDir: string, config: HmemConfig): void;
 /**
  * Load hmem.config.json from projectDir.
  * Unknown keys are ignored. Missing keys fall back to defaults.
