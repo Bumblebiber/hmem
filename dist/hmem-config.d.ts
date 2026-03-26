@@ -74,10 +74,12 @@ export interface HmemConfig {
         accessMin?: number;
         accessMax?: number;
     };
-    /** Sync configuration (present only in unified config format). */
-    sync?: SyncConfigBlock;
+    /** Sync configuration — single server or array for multi-server redundancy. */
+    sync?: SyncConfigBlock | SyncConfigBlock[];
 }
 export interface SyncConfigBlock {
+    /** Display name for this server (optional, for multi-server identification) */
+    name?: string;
     serverUrl: string;
     userId: string;
     salt: string;
@@ -86,6 +88,8 @@ export interface SyncConfigBlock {
     lastPushAt?: string | null;
     lastPullAt?: string | null;
 }
+/** Normalize sync config to always return an array. */
+export declare function getSyncServers(config: HmemConfig): SyncConfigBlock[];
 export declare const DEFAULT_PREFIXES: Record<string, string>;
 /**
  * Default descriptions for prefix category headers (X0000 entries).

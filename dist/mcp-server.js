@@ -23,7 +23,7 @@ import { spawnSync, spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import { searchMemory } from "./memory-search.js";
 import { openAgentMemory, openCompanyMemory, resolveHmemPath, routeTask, HmemStore } from "./hmem-store.js";
-import { loadHmemConfig, formatPrefixList } from "./hmem-config.js";
+import { loadHmemConfig, formatPrefixList, getSyncServers } from "./hmem-config.js";
 import { SessionCache } from "./session-cache.js";
 // ---- Environment ----
 // HMEM_* vars are the canonical names; COUNCIL_* kept for backwards compatibility
@@ -73,8 +73,9 @@ function hmemSyncEnabled(hmemPath) {
     const passphrase = process.env["HMEM_SYNC_PASSPHRASE"];
     if (!passphrase)
         return false;
-    // Unified config has sync section with token
-    if (hmemConfig?.sync?.serverUrl && hmemConfig?.sync?.token)
+    // Unified config: sync section with at least one server
+    const servers = getSyncServers(hmemConfig);
+    if (servers.length > 0 && servers.some(s => s.serverUrl && s.token))
         return true;
     // Legacy: check for .hmem-sync-config.json
     const cfg = path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
@@ -105,13 +106,27 @@ function syncPull(hmemPath) {
         db.close();
     }
     catch { /* db may not exist yet */ }
-    const result = spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
-        env: { ...process.env },
-        encoding: "utf8",
-        shell: process.platform === "win32",
-    });
-    if (result.error)
-        process.stderr.write(`hmem-sync pull error: ${result.error.message}\n`);
+    // Pull from all configured servers (unified multi-server or legacy single)
+    const servers = getSyncServers(hmemConfig);
+    if (servers.length > 0) {
+        for (const s of servers) {
+            if (!s.serverUrl || !s.token)
+                continue;
+            const result = spawnSync("hmem-sync", [
+                "pull", "--config", hmemSyncConfig(hmemPath),
+                "--server-url", s.serverUrl, "--token", s.token,
+            ], { env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32" });
+            if (result.error)
+                process.stderr.write(`hmem-sync pull error (${s.name ?? s.serverUrl}): ${result.error.message}\n`);
+        }
+    }
+    else {
+        const result = spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
+            env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32",
+        });
+        if (result.error)
+            process.stderr.write(`hmem-sync pull error: ${result.error.message}\n`);
+    }
     // Find new entries AND entries with new nodes introduced by this pull
     try {
         const db = new Database(hmemPath, { readonly: true });
@@ -150,23 +165,45 @@ function syncPull(hmemPath) {
 function syncPullThenPush(hmemPath) {
     if (!hmemSyncEnabled(hmemPath))
         return;
-    spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
-        env: { ...process.env },
-        encoding: "utf8",
-        shell: process.platform === "win32",
-    });
+    const servers = getSyncServers(hmemConfig);
+    if (servers.length > 0) {
+        for (const s of servers) {
+            if (!s.serverUrl || !s.token)
+                continue;
+            spawnSync("hmem-sync", [
+                "pull", "--config", hmemSyncConfig(hmemPath),
+                "--server-url", s.serverUrl, "--token", s.token,
+            ], { env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32" });
+        }
+    }
+    else {
+        spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
+            env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32",
+        });
+    }
     lastPullAt = Date.now();
 }
 function syncPush(hmemPath) {
     if (!hmemSyncEnabled(hmemPath))
         return;
-    const child = spawn("hmem-sync", ["push", "--config", hmemSyncConfig(hmemPath)], {
-        env: { ...process.env },
-        shell: process.platform === "win32",
-        stdio: "ignore",
-        detached: true,
-    });
-    child.unref();
+    const servers = getSyncServers(hmemConfig);
+    if (servers.length > 0) {
+        for (const s of servers) {
+            if (!s.serverUrl || !s.token)
+                continue;
+            const child = spawn("hmem-sync", [
+                "push", "--config", hmemSyncConfig(hmemPath),
+                "--server-url", s.serverUrl, "--token", s.token,
+            ], { env: { ...process.env }, shell: process.platform === "win32", stdio: "ignore", detached: true });
+            child.unref();
+        }
+    }
+    else {
+        const child = spawn("hmem-sync", ["push", "--config", hmemSyncConfig(hmemPath)], {
+            env: { ...process.env }, shell: process.platform === "win32", stdio: "ignore", detached: true,
+        });
+        child.unref();
+    }
 }
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
@@ -773,7 +810,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                 // Sync hint: if memory is empty and hmem-sync is not configured, suggest it
                 let syncHint = "";
                 if (!id && !search && !time_around) {
-                    const hasSyncSetup = hmemConfig?.sync?.serverUrl || fs.existsSync(path.join(path.dirname(hmemPath), ".hmem-sync-config.json"));
+                    const hasSyncSetup = getSyncServers(hmemConfig).length > 0 || fs.existsSync(path.join(path.dirname(hmemPath), ".hmem-sync-config.json"));
                     if (!hasSyncSetup) {
                         syncHint = "\n\n💡 Memory is empty. If you have memories on another device, you can sync them:\n" +
                             "  npm install -g hmem-sync\n" +

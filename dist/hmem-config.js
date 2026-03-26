@@ -1,5 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
+/** Normalize sync config to always return an array. */
+export function getSyncServers(config) {
+    if (!config.sync)
+        return [];
+    return Array.isArray(config.sync) ? config.sync : [config.sync];
+}
 export const DEFAULT_PREFIXES = {
     P: "Project",
     L: "Lesson",
@@ -92,8 +98,9 @@ export function saveHmemConfig(projectDir, config) {
         output.sync = config.sync;
     }
     fs.writeFileSync(configPath, JSON.stringify(output, null, 2), "utf-8");
-    // Secure file if token is present
-    if (config.sync?.token) {
+    // Secure file if any sync token is present
+    const servers = getSyncServers(config);
+    if (servers.some(s => s.token)) {
         try {
             fs.chmodSync(configPath, 0o600);
         }

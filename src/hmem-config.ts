@@ -78,11 +78,13 @@ export interface HmemConfig {
     accessMin?: number;
     accessMax?: number;
   };
-  /** Sync configuration (present only in unified config format). */
-  sync?: SyncConfigBlock;
+  /** Sync configuration — single server or array for multi-server redundancy. */
+  sync?: SyncConfigBlock | SyncConfigBlock[];
 }
 
 export interface SyncConfigBlock {
+  /** Display name for this server (optional, for multi-server identification) */
+  name?: string;
   serverUrl: string;
   userId: string;
   salt: string;
@@ -90,6 +92,12 @@ export interface SyncConfigBlock {
   syncSecrets?: boolean;
   lastPushAt?: string | null;
   lastPullAt?: string | null;
+}
+
+/** Normalize sync config to always return an array. */
+export function getSyncServers(config: HmemConfig): SyncConfigBlock[] {
+  if (!config.sync) return [];
+  return Array.isArray(config.sync) ? config.sync : [config.sync];
 }
 
 export const DEFAULT_PREFIXES: Record<string, string> = {
@@ -194,8 +202,9 @@ export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
 
   fs.writeFileSync(configPath, JSON.stringify(output, null, 2), "utf-8");
 
-  // Secure file if token is present
-  if (config.sync?.token) {
+  // Secure file if any sync token is present
+  const servers = getSyncServers(config);
+  if (servers.some(s => s.token)) {
     try { fs.chmodSync(configPath, 0o600); } catch {}
   }
 }
