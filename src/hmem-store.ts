@@ -1934,11 +1934,25 @@ export class HmemStore {
       if (active !== undefined) {
         sets.push("active = ?");
         params.push(active ? 1 : 0);
-        // Deactivate all other entries in the same prefix when activating
         if (active) {
           const prefix = id.replace(/\d+$/, "");
+          // Deactivate all other entries in the same prefix
           this.db.prepare("UPDATE memories SET active = 0 WHERE prefix = ? AND id != ? AND active = 1")
             .run(prefix, id);
+          // When activating a P-entry: link all unassigned O-entries to this project
+          if (prefix === "P") {
+            const unassigned = this.db.prepare(
+              "SELECT id, links FROM memories WHERE prefix = 'O' AND obsolete != 1 AND irrelevant != 1 AND (links IS NULL OR links = '[]' OR links = 'null')"
+            ).all() as { id: string; links: string | null }[];
+            for (const o of unassigned) {
+              const existingLinks: string[] = o.links ? (() => { try { return JSON.parse(o.links); } catch { return []; } })() : [];
+              if (!existingLinks.includes(id)) {
+                existingLinks.push(id);
+                this.db.prepare("UPDATE memories SET links = ? WHERE id = ?")
+                  .run(JSON.stringify(existingLinks), o.id);
+              }
+            }
+          }
         }
       }
       if (sets.length === 0) {
