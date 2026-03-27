@@ -70,15 +70,33 @@ tag_rename(old_tag="#hmem-store", new_tag="#hmem")           # rename a tag ever
 | Prefix | Category | When to use |
 |--------|----------|-------------|
 | **P** | (P)roject | Project entries — standardized L1 format (see below) |
-| **L** | (L)esson | Lessons learned, best practices |
-| **E** | (E)rror | Bugs, errors + their fix |
-| **D** | (D)ecision | Architecture decisions with reasoning |
-| **T** | (T)ask | Task notes, work progress |
+| **L** | (L)esson | Lessons learned, best practices — cross-project knowledge |
+| **E** | (E)rror | Bugs, errors + their fix — cross-project knowledge |
+| **D** | (D)ecision | Architecture decisions with reasoning — cross-project knowledge |
+| **T** | (T)ask | Cross-project or infrastructure tasks ONLY (see note below) |
 | **M** | (M)ilestone | Key milestones, releases |
 | **S** | (S)kill | Skills, processes, how-to guides |
 | **N** | (N)avigator | Code pointers — where something lives in the codebase |
 | **H** | (H)uman | Knowledge about the user — preferences, context, working style |
 | **R** | (R)ule | User-defined rules and constraints — "always do X", "never do Y" |
+
+### Where do tasks, errors, lessons, and decisions go?
+
+**Tasks** belong inside the project's P-entry L2 "Open tasks" node:
+```
+append_memory(id="P0048.8", content="Implement multi-server sync\n\tPush/pull to all configured servers", tags=["#hmem-sync"])
+```
+Use the T-prefix ONLY for tasks that span multiple projects or are infrastructure/meta tasks (e.g. "Set up Strato server", "Run curation pass"). These get `links=["P00XX"]` to the most relevant project.
+
+**Errors (E), Lessons (L), Decisions (D)** stay as independent root entries — they are **cross-project knowledge**. An SQLite lesson learned in hmem applies to every SQLite project. Always add `tags` and `links` to connect them back:
+```
+write_memory(prefix="E", content="...", tags=["#hmem", "#sqlite"], links=["P0048"])
+```
+
+**P-entry "Known issues" (L2)** contains short summaries pointing to E-entries — not the errors themselves:
+```
+append_memory(id="P0048.6", content="Auto-sync fails with multiple .hmem in CWD → E0097, T0043", tags=["#hmem-sync"])
+```
 
 **Custom prefixes:** If none of the above fit, you can use any single uppercase letter. To register it officially (so the system validates it), add it to `hmem.config.json` under `"prefixes"`:
 ```json
@@ -135,9 +153,8 @@ One-line description
 	Open tasks — current TODOs (links to T-entries)
 ```
 
-**P0000** is the reserved "Non-Project" catch-all. Entries not tied to any project
-link to P0000. There must ALWAYS be at least one active project — if nothing else
-applies, activate P0000.
+**Non-Project catch-all:** Create a "Non-Project" P-entry for entries not tied to any project.
+There must ALWAYS be at least one active project — if nothing else applies, activate the Non-Project entry.
 
 **Examples:**
 
