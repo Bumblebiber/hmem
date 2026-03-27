@@ -1,6 +1,6 @@
 # hmem — Humanlike Memory for AI Agents
 
-> **Your AI loads 5k tokens and has full context of 80k+.** That's hmem — persistent, hierarchical memory that works across sessions, devices, and AI tools. Zero tokens wasted.
+> **700 tokens to load a project. 5k for everything.** That's hmem — persistent, hierarchical memory that works across sessions, devices, and AI tools. Zero tokens wasted.
 
 **hmem** is an MCP server that gives AI agents human-like long-term memory. Instead of dumping everything into context, it stores knowledge in a 5-level hierarchy — like how you remember: broad strokes first, details on demand.
 
@@ -13,7 +13,8 @@ The result? An AI that starts a new session and *already knows* your projects, y
 **Without hmem:** Every session starts from zero. Your AI asks the same questions, makes the same mistakes, contradicts last week's decisions, and wastes tokens loading context it already processed.
 
 **With hmem:**
-- **5k tokens** loads a complete overview of 300+ memories spanning months of work
+- **700 tokens** to load a project — `load_project("P0048")` returns the full briefing: tech stack, architecture, codebase structure, open tasks, ideas, and related errors/lessons. Ready to work immediately
+- **5k tokens** for the full picture — `read_memory()` loads a complete overview across ALL projects, decisions, errors, lessons, and rules spanning months of work
 - **Gets more efficient over time** — as your memory grows, the bulk read algorithm gets *better*, not worse. New entries push older, less relevant ones into title-only mode. 1,000 entries cost barely more tokens than 100.
 - **Original context preserved** — nothing is summarized away or compressed. Every detail you stored is still there at full fidelity, accessible on demand. Level 1 is a summary, but Levels 2-5 hold the complete original text, word for word.
 - **Drill on demand** — the AI only fetches details when it actually needs them
