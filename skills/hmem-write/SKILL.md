@@ -141,8 +141,7 @@ The MCP server validates that L2 nodes start with one of these names. Minimum fo
 | **Usage** | How the project is used | Installation/Setup, CLI/API commands, Common workflows |
 | **Context** | Background and motivation | Initiator, Target audience, Business context, Dependencies (links) |
 | **Deployment** | Build/CI/CD/publish process | (flat or with L3 sub-steps) |
-| **Known issues** | **Pointers** to E-entries (not the bugs themselves) | `"Auto-sync fails → E0097, T0043"` — one-liner summaries |
-| **Bugs** | **Inline bug reports** not yet promoted to E-entries | L3: symptom + cause, L4: reproduction steps. When investigated → create E-entry + move to Known issues |
+| **Bugs** | Active bugs + known limitations | L3: inline report (symptom + cause) OR pointer to E-entry (`→ E0097`). L4: reproduction steps |
 | **Protocol** | Session log, chronological | One-liner per session + links to O-entries |
 | **Open tasks** | Project-specific TODOs | One per L3 node. Cross-project tasks → T-prefix with links |
 | **Ideas** | Feature ideas, brainstorming | L3: short description, L4: implementation details |

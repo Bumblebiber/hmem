@@ -366,7 +366,7 @@ server.tool(
     if (prefix.toUpperCase() === "P") {
       const VALID_L2_CATEGORIES = [
         "overview", "codebase", "usage", "context", "deployment",
-        "known issues", "bugs", "protocol", "open tasks", "ideas",
+        "bugs", "protocol", "open tasks", "ideas",
       ];
       const lines = content.split("\n");
       const l2Lines = lines.filter(l => /^\t[^\t]/.test(l)).map(l => l.replace(/^\t/, "").toLowerCase().trim());
