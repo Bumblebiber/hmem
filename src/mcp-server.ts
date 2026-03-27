@@ -1414,6 +1414,76 @@ server.tool(
 );
 
 server.tool(
+  "load_project",
+  "Load a project and activate it. Returns L2 content + L3 titles — the perfect project briefing. " +
+    "Also marks the project as active (deactivates any previously active project in the same prefix).\n\n" +
+    "Use this when starting work on a project. It combines read_memory(id, depth=3) + update_memory(active=true) in one call.\n\n" +
+    "Example: load_project({ id: 'P0048' })\n" +
+    "Returns: Overview, Codebase, Usage, Context, etc. with L3 subcategory titles.",
+  {
+    id: z.string().describe("Project entry ID, e.g. 'P0048'"),
+    store: z.enum(["personal", "company"]).default("personal").describe(
+      "Target store: 'personal' or 'company'"
+    ),
+  },
+  async ({ id, store: storeName }) => {
+    try {
+      const templateName = AGENT_ID.replace(/_\d+$/, "");
+      const hmemStore = storeName === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+      try {
+        // Validate it's a P-entry
+        if (!id.startsWith("P")) {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: load_project only works with P-prefix entries. Got: ${id}` }],
+            isError: true,
+          };
+        }
+
+        // Activate the project
+        hmemStore.update(id, { active: true });
+
+        // Read with expand + depth 3 (L2 content + L3 titles + L4 hints)
+        const entries = hmemStore.read({
+          id,
+          depth: 3,
+          expand: true,
+          agentRole: (ROLE || "worker") as AgentRole,
+        });
+
+        if (entries.length === 0) {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: Project ${id} not found.` }],
+            isError: true,
+          };
+        }
+
+        // Format using the same rendering as read_memory
+        const output = formatGroupedOutput(hmemStore, entries, false, hmemConfig);
+
+        log(`load_project: ${id} activated and loaded (depth=3)`);
+
+        // Sync if enabled
+        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
+        if (storeName === "personal") syncPush(hmemPath);
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: `✓ Project ${id} activated.\n\n${output}`,
+          }],
+        };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
   "memory_health",
   "Audit report for your memory: broken links (links pointing to deleted entries), " +
     "orphaned entries (no sub-nodes), stale favorites/pinned (not accessed in 60 days), " +
