@@ -1464,8 +1464,10 @@ server.tool(
 
         // Custom compact rendering for project briefing: L2 content + L3 titles, no dates, compact IDs
         const e = entries[0];
+        const syncThreshold = getSyncThreshold();
+        const syncTag = syncThreshold && e.updated_at && e.updated_at <= syncThreshold ? " ✓" : "";
         const lines: string[] = [];
-        lines.push(`${e.id}  ${e.title}`);
+        lines.push(`${e.id}${syncTag}  ${e.title}`);
         if (e.level_1 && e.level_1 !== e.title) lines.push(`  ${e.level_1}`);
         if (e.children) {
           for (const child of (e.children as MemoryNode[]).filter(c => !c.irrelevant)) {
@@ -2137,12 +2139,14 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig, curator: b
       const act = e.active ? " [*]" : "";
       const obs = e.obsolete ? " [!]" : "";
       const irr = e.irrelevant ? " [-]" : "";
+      const syncThreshold = getSyncThreshold();
+      const sync = syncThreshold && e.updated_at && e.updated_at <= syncThreshold ? " ✓" : "";
 
       if (e.expanded && e.children && e.children.length > 0) {
         const visibleChildren = (e.children as MemoryNode[]).filter(c => !c.irrelevant);
         const hiddenIrr = e.children.length - visibleChildren.length;
         const rootId = e.id;
-        lines.push(`${e.id}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags, curator)}`);
+        lines.push(`${e.id}${fav}${act}${obs}${sync}  ${e.title}${formatTagSuffix(e.tags, curator)}`);
         for (const child of visibleChildren) {
           const short = child.title || (child.content.length > CHILD_TITLE_LEN
             ? child.content.substring(0, CHILD_TITLE_LEN)
@@ -2161,7 +2165,7 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig, curator: b
       } else {
         // Non-expanded: compact line with child count
         const childHint = (e.hiddenChildrenCount ?? 0) > 0 ? ` (${e.hiddenChildrenCount})` : "";
-        lines.push(`${e.id}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags, curator)}${childHint}`);
+        lines.push(`${e.id}${fav}${act}${obs}${sync}  ${e.title}${formatTagSuffix(e.tags, curator)}${childHint}`);
       }
     }
     lines.push("");
