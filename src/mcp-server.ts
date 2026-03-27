@@ -1497,6 +1497,10 @@ server.tool(
           }
         }
         const output = lines.join("\n");
+        const outputTokens = Math.round(output.length / 4);
+        const totalStats = hmemStore.stats();
+        const totalTokens = Math.round(totalStats.totalChars / 4);
+        const tokenInfo = ` | ${(outputTokens / 1000).toFixed(1)}k/${(totalTokens / 1000).toFixed(0)}k tokens`;
 
         log(`load_project: ${id} activated and loaded (depth=3)`);
 
@@ -1507,7 +1511,7 @@ server.tool(
         return {
           content: [{
             type: "text" as const,
-            text: `✓ Project ${id} activated.\n\n${output}`,
+            text: `✓ Project ${id} activated.${tokenInfo}\n\n${output}`,
           }],
         };
       } finally {
