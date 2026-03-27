@@ -18,6 +18,7 @@ The result? An AI that starts a new session and *already knows* your projects, y
 - **Original context preserved** — nothing is summarized away or compressed. Every detail you stored is still there at full fidelity, accessible on demand. Level 1 is a summary, but Levels 2-5 hold the complete original text, word for word.
 - **Drill on demand** — the AI only fetches details when it actually needs them
 - **Cross-device** — encrypted sync means your laptop, PC, and server share the same brain
+- **Cross-provider** — Claude, Gemini, GPT, DeepSeek, local models — all read and write the same memory. Switch providers without losing context. Your Gemini session picks up where Claude left off.
 - **Cross-tool** — works with Claude Code, Gemini CLI, Cursor, Windsurf, OpenCode, Cline
 - **Auto-logging** — via Claude Code's Stop hook, every conversation is automatically preserved
 - **No token waste** — hierarchical lazy loading means the AI never loads more than it needs
