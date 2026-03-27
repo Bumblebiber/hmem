@@ -74,11 +74,12 @@ tag_rename(old_tag="#hmem-store", new_tag="#hmem")           # rename a tag ever
 | **E** | (E)rror | Bugs, errors + their fix — cross-project knowledge |
 | **D** | (D)ecision | Architecture decisions with reasoning — cross-project knowledge |
 | **T** | (T)ask | Cross-project or infrastructure tasks ONLY (see note below) |
-| **M** | (M)ilestone | Key milestones, releases |
+| **M** | (M)ilestone | Cross-project milestones ONLY — project milestones go in P-entry L2 "Protocol" |
 | **S** | (S)kill | Skills, processes, how-to guides |
 | **N** | (N)avigator | Code pointers — where something lives in the codebase |
 | **H** | (H)uman | Knowledge about the user — preferences, context, working style |
 | **R** | (R)ule | User-defined rules and constraints — "always do X", "never do Y" |
+| **I** | (I)nfrastructure | Devices, servers, deployments, network — one entry per device/server |
 
 ### Where do tasks, errors, lessons, and decisions go?
 
@@ -87,6 +88,12 @@ tag_rename(old_tag="#hmem-store", new_tag="#hmem")           # rename a tag ever
 append_memory(id="P0048.8", content="Implement multi-server sync\n\tPush/pull to all configured servers", tags=["#hmem-sync"])
 ```
 Use the T-prefix ONLY for tasks that span multiple projects or are infrastructure/meta tasks (e.g. "Set up Strato server", "Run curation pass"). These get `links=["P00XX"]` to the most relevant project.
+
+**Milestones** belong in the P-entry L2 "Protocol" node as a chronological entry:
+```
+append_memory(id="P0048.7", content="v4.0.0 published — project gate + load_project tool (2026-03-27)", tags=["#release"])
+```
+Use the M-prefix ONLY for milestones that span multiple projects (e.g. "First cross-device sync working").
 
 **Errors (E), Lessons (L), Decisions (D)** stay as independent root entries — they are **cross-project knowledge**. An SQLite lesson learned in hmem applies to every SQLite project. Always add `tags` and `links` to connect them back:
 ```
