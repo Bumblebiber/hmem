@@ -59,6 +59,8 @@ export interface MemoryEntry {
   irrelevant?: boolean;
   /** True if this entry is actively relevant (root-only). When any entry in a prefix has active=1, only active entries of that prefix are expanded in bulk reads. */
   active?: boolean;
+  /** ISO timestamp of last modification (write/update/append). Used for sync status. */
+  updated_at?: string;
   /** True if this entry was already delivered in a previous bulk read (session cache). */
   suppressed?: boolean;
   /**
@@ -2866,6 +2868,7 @@ export class HmemStore {
       irrelevant: row.irrelevant === 1,
       active: row.active === 1,
       pinned: row.pinned === 1,
+      updated_at: row.updated_at ?? undefined,
       children,
     };
   }

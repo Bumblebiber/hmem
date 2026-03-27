@@ -2242,6 +2242,16 @@ function nodeMarkers(node: MemoryNode): string {
   return `${fav}${irr}`;
 }
 
+/** Get the minimum lastPushAt across all sync servers — entries updated before this are fully synced. */
+function getSyncThreshold(): string | null {
+  const servers = getSyncServers(hmemConfig);
+  if (servers.length === 0) return null;
+  const pushTimes = servers.map(s => s.lastPushAt).filter((t): t is string => !!t);
+  if (pushTimes.length === 0) return null;
+  // Min = earliest push → everything before this is on ALL servers
+  return pushTimes.reduce((a, b) => a < b ? a : b);
+}
+
 function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean, expand: boolean = false): void {
   // O-prefix: title-only rendering — never expand children (raw conversation data, too large)
   // Use read_memory(id="O0042") to drill in explicitly.
@@ -2287,7 +2297,9 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
       const pinnedTag = e.pinned ? " [P]" : "";
       const obsoleteTag = e.obsolete ? " [!]" : "";
       const irrelevantTag = e.irrelevant ? " [-]" : "";
-      lines.push(`${e.id}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}  ${e.title}${tagStr}`);
+      const syncThreshold = getSyncThreshold();
+      const syncTag = syncThreshold && e.updated_at && e.updated_at <= syncThreshold ? " ✓" : "";
+      lines.push(`${e.id}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}${syncTag}  ${e.title}${tagStr}`);
     }
     // Show full level_1 content below title when entry is expanded/drilled
     if (hasDetail && e.level_1 !== e.title) {
