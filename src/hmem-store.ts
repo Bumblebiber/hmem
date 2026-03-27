@@ -66,7 +66,7 @@ export interface MemoryEntry {
    * 'favorite' = favorite flag set, 'access' = top-N by access_count.
    * Rendered as [♥] or [★] in output.
    */
-  promoted?: "access" | "favorite" | "subnode";
+  promoted?: "access" | "favorite" | "subnode" | "task";
   /**
    * In bulk reads: number of direct children NOT shown (only the latest child is included).
    * undefined = ID-based read (all direct children shown as usual).
@@ -1002,6 +1002,73 @@ export class HmemStore {
       }
     }
 
+    // Step 0.7: Active entry context injection — when a T/P/D-entry is active, find E/L entries
+    // with weighted tag overlap and promote them to expanded (title + children visible).
+    // Uses same weighted scoring as findRelatedCombined: rare(≤5)=3, medium(6-20)=2, common(>20)=1.
+    // Minimum score threshold: 4 (e.g. 2 medium tags, or 1 rare + 1 common).
+    // Example: Active D-entry about SQL → agent sees SQL-related errors and lessons automatically.
+    const taskPromotedIds = new Set<string>();
+    {
+      const contextPrefixes = new Set(["T", "P", "D"]);
+      const activeTEntries = activeRows.filter(r => contextPrefixes.has(r.prefix) && r.active === 1);
+      if (activeTEntries.length > 0) {
+        // Collect tags from all active tasks (root + children)
+        const taskTags = new Set<string>();
+        for (const te of activeTEntries) {
+          const allIds = [te.id, ...(this.db.prepare(
+            "SELECT id FROM memory_nodes WHERE root_id = ?"
+          ).all(te.id) as { id: string }[]).map(r => r.id)];
+          const tagMap = this.fetchTagsBulk(allIds);
+          for (const tags of tagMap.values()) {
+            if (tags) tags.forEach(t => taskTags.add(t));
+          }
+        }
+
+        if (taskTags.size > 0) {
+          // Get global tag frequencies for weighting
+          const tagFreqs = new Map<string, number>();
+          const freqRows = this.db.prepare(
+            "SELECT tag, COUNT(DISTINCT entry_id) as freq FROM memory_tags GROUP BY tag"
+          ).all() as { tag: string; freq: number }[];
+          for (const r of freqRows) tagFreqs.set(r.tag, r.freq);
+
+          // Score E/L entries by weighted tag overlap
+          const targetPrefixes = new Set(["E", "L"]);
+          const candidates = activeRows.filter(r =>
+            targetPrefixes.has(r.prefix) && r.obsolete !== 1 && r.irrelevant !== 1
+          );
+
+          for (const c of candidates) {
+            const cTags = new Set(this.fetchTags(c.id));
+            // Also include child tags
+            const childNodes = this.db.prepare(
+              "SELECT id FROM memory_nodes WHERE root_id = ?"
+            ).all(c.id) as { id: string }[];
+            const childTagMap = childNodes.length > 0 ? this.fetchTagsBulk(childNodes.map(n => n.id)) : new Map<string, string[]>();
+            for (const tags of childTagMap.values()) {
+              if (tags) tags.forEach(t => cTags.add(t));
+            }
+
+            // Calculate weighted score
+            let score = 0;
+            for (const t of cTags) {
+              if (!taskTags.has(t)) continue;
+              const freq = tagFreqs.get(t) ?? 999;
+              if (freq <= 5) score += 3;       // rare
+              else if (freq <= 20) score += 2; // medium
+              else score += 1;                 // common
+            }
+
+            if (score >= 4) {
+              taskPromotedIds.add(c.id);
+              // Un-suppress if project filtering suppressed it
+              relatedSuppressed.delete(c.id);
+            }
+          }
+        }
+      }
+    }
+
     // Step 1: Separate obsolete from non-obsolete FIRST
     const obsoleteRows = activeRows.filter(r => r.obsolete === 1);
     const nonObsoleteRows = activeRows.filter(r => r.obsolete !== 1);
@@ -1097,6 +1164,11 @@ export class HmemStore {
       if (r.active === 1) {
         expandedIds.add(r.id);
       }
+    }
+
+    // Task-promoted: E/L entries relevant to active tasks (weighted tag scoring)
+    for (const id of taskPromotedIds) {
+      if (!hidden.has(id)) expandedIds.add(id);
     }
 
     // Top-subnode: entries with the most sub-nodes (by count) always expanded
@@ -1200,10 +1272,11 @@ export class HmemStore {
 
     const entries = visibleRows.map(r => {
       const isExpanded = expandedIds.has(r.id);
-      let promoted: "access" | "favorite" | "subnode" | undefined;
+      let promoted: "access" | "favorite" | "subnode" | "task" | undefined;
       if (r.favorite === 1) promoted = "favorite";
       else if (topAccess.some(t => t.id === r.id)) promoted = "access";
       else if (topSubnodeIds.has(r.id)) promoted = "subnode";
+      else if (taskPromotedIds.has(r.id)) promoted = "task";
 
       let children: MemoryNode[] | undefined;
       let linkedEntries: MemoryEntry[] | undefined;

@@ -1016,7 +1016,7 @@ server.tool(
         if (useCache) {
           const allIds = entries.filter(e => !e.obsolete).map(e => e.id);
           const promotedIds = new Set(
-            entries.filter(e => e.promoted === "favorite" || e.promoted === "access" || e.promoted === "subnode").map(e => e.id)
+            entries.filter(e => e.promoted === "favorite" || e.promoted === "access" || e.promoted === "subnode" || e.promoted === "task").map(e => e.id)
           );
           sessionCache.registerDelivered(allIds, promotedIds);
         }
@@ -2240,7 +2240,7 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
     }
   } else {
     if (curator) {
-      const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : e.promoted === "subnode" ? " [≡]" : "";
+      const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : e.promoted === "subnode" ? " [≡]" : e.promoted === "task" ? " [⚡]" : "";
       const activeTag = e.active ? " [*]" : "";
       const pinnedTag = e.pinned ? " [P]" : "";
       const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
@@ -2251,7 +2251,7 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
       lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}${accessed}`);
       lines.push(`  ${e.title}${tagStr}`);
     } else {
-      const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : e.promoted === "subnode" ? " [≡]" : "";
+      const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : e.promoted === "subnode" ? " [≡]" : e.promoted === "task" ? " [⚡]" : "";
       const activeTag = e.active ? " [*]" : "";
       const pinnedTag = e.pinned ? " [P]" : "";
       const obsoleteTag = e.obsolete ? " [!]" : "";
