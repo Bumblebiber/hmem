@@ -86,13 +86,13 @@ tag_rename(old_tag="#hmem-store", new_tag="#hmem")           # rename a tag ever
 ```
 Custom prefixes are merged with the defaults — they don't replace them. Without registering, the system will reject the prefix.
 
-### P-Entry L1 Format (standardized)
+### P-Entry Standard Schema (enforced by MCP server)
 
-Every project entry MUST follow this L1 format:
+Every project entry MUST follow this structure. The MCP server validates L2 nodes
+against the required categories when `prefix="P"`.
 
-```
-Name | Status | Stack | Short description
-```
+**L1 Title:** `Name | Status | Tech | Repo`
+**L1 Body:** One-line description
 
 **Status values:**
 
@@ -104,16 +104,48 @@ Name | Status | Stack | Short description
 | Paused | On hold, will resume later |
 | Archived | Done or abandoned |
 
+**Required L2 categories (fixed order, omit empty ones):**
+
+```
+P00XX Title | Status | Tech | Repo
+One-line description
+	Overview — what an agent should read FIRST (like CLAUDE.md /init output)
+		Current state — what works, what doesn't, current version
+		Goals — short-term and long-term objectives
+		Architecture — high-level data flow, core concepts (no code)
+		Environment — paths, servers, repo URL, how to start
+	Codebase — code structure description (no code, only signatures + purpose)
+		Entry point — main/index, start command
+		Core modules — per L4 node: name, signature, purpose, return value
+		Helpers / Utilities — per L4 node with links to consuming modules
+		Config / Constants — important configuration values
+		Tests — how to test, what's covered
+	Usage — how the project is used
+		Installation / Setup
+		CLI / API — commands, endpoints, MCP tools
+		Common workflows
+	Context — background and classification
+		Initiator — who, why, when started
+		Target audience
+		Business context
+		Dependencies / Related projects (links to other P/T/D)
+	Deployment — build, CI/CD, npm publish, server config
+	Known issues — current bugs/limitations (links to E-entries)
+	Protocol — session log, chronological, one-liner + links to O-entries
+	Open tasks — current TODOs (links to T-entries)
+```
+
+**P0000** is the reserved "Non-Project" catch-all. Entries not tied to any project
+link to P0000. There must ALWAYS be at least one active project — if nothing else
+applies, activate P0000.
+
 **Examples:**
 
 ```
 hmem-mcp | Active | TS/SQLite/npm | Persistente hierarchische AI-Memory mit 5-Level Lazy Loading
 Heimdall | Paused | TS/Bun/OpenCode-Fork | Permanenter Fork von OpenCode CLI mit hmem + Groupchat
 EasySAP | Active | AHK v2/SAP GUI Scripting | SAP-Automatisierung für Carl Zeiss
-Das Althing | Archived | TS/Node.js | Multi-Agent-Orchestrator — abgelöst durch Heimdall
 ```
-
-L2 children are session logs, technical details, repo paths etc. — not part of L1.
 
 ### Marking entries as favorites
 

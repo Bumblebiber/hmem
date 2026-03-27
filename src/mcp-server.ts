@@ -359,6 +359,34 @@ server.tool(
       };
     }
 
+    // P-prefix: validate L2 structure against standard schema
+    if (prefix.toUpperCase() === "P") {
+      const VALID_L2_CATEGORIES = [
+        "overview", "codebase", "usage", "context", "deployment",
+        "known issues", "protocol", "open tasks",
+      ];
+      const lines = content.split("\n");
+      const l2Lines = lines.filter(l => /^\t[^\t]/.test(l)).map(l => l.replace(/^\t/, "").toLowerCase().trim());
+      if (l2Lines.length > 0) {
+        const invalid = l2Lines.filter(l => {
+          const firstWord = l.split(/\s*[—\-:]/)[0].trim();
+          return !VALID_L2_CATEGORIES.some(cat => firstWord.startsWith(cat));
+        });
+        if (invalid.length > 0) {
+          return {
+            content: [{ type: "text" as const, text:
+              `WARNING: P-entry L2 nodes must use standard categories.\n` +
+              `Valid: ${VALID_L2_CATEGORIES.join(", ")}\n` +
+              `Invalid L2 nodes found: ${invalid.map(l => `"${l.substring(0, 50)}"`).join(", ")}\n\n` +
+              `See R0009 (P-Entry Standard Schema) for the full specification.\n` +
+              `Fix the L2 node names and retry. If this is intentional, explain why in the content.`
+            }],
+            isError: true,
+          };
+        }
+      }
+    }
+
     // Company store: only AL+ can write
     if (storeName === "company") {
       const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
