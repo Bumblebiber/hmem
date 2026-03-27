@@ -1,6 +1,6 @@
 # hmem — Humanlike Memory for AI Agents
 
-> **Your AI loads 5k tokens and has full context of 400k+.** That's hmem — persistent, hierarchical memory that works across sessions, devices, and AI tools. Zero tokens wasted.
+> **Your AI loads 5k tokens and has full context of 80k+.** That's hmem — persistent, hierarchical memory that works across sessions, devices, and AI tools. Zero tokens wasted.
 
 **hmem** is an MCP server that gives AI agents human-like long-term memory. Instead of dumping everything into context, it stores knowledge in a 5-level hierarchy — like how you remember: broad strokes first, details on demand.
 
