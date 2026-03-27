@@ -71,16 +71,10 @@ At session start, the agent loads Level 1 summaries — one line per memory. Whe
 
 ### New in v4
 
-- **`load_project` tool** — one call to activate a project and get a full briefing (L2 content + L3 titles). The recommended way to start working: `load_project(id="P0048")` returns Overview, Codebase, Usage, Context, and more — everything an agent needs to get productive immediately
-- **P-Entry Standard Schema** — project entries follow a validated structure with 10 L2 categories (Overview → Codebase → Usage → Context → Deployment → Known issues → Bugs → Protocol → Open tasks → Ideas). The MCP server rejects P-entries that don't follow the schema. Every agent gets the same consistent project briefing
-- **Active Entry Context Injection `[⚡]`** — when a task (T), project (P), or decision (D) is marked active, the system automatically finds related errors and lessons by weighted tag scoring (rare tags = 3pts, medium = 2pts, common = 1pt, threshold ≥ 4) and promotes them in the bulk read. Your agent sees relevant past mistakes without manually searching
-- **Compact rendering** — child nodes render as `.1`, `.1.2` instead of `P0048.1`, `P0048.1.2`. Dates removed from non-curator output. Saves ~100 tokens per bulk read
-- **Sync status `✓`** — entries backed up to all configured sync servers show a ✓ marker. At a glance you see what's safe and what's local-only
-- **Multi-server sync** — the `sync` config accepts an array of servers. Push goes to ALL servers (redundancy), pull from the primary. Configure in `hmem.config.json`:
-  ```json
-  { "sync": [{ "serverUrl": "https://primary/hmem-sync", ... }, { "serverUrl": "https://backup/hmem-sync", ... }] }
-  ```
-- **Unified config** — `hmem.config.json` merges memory settings + sync config into one file (`{ "memory": {...}, "sync": {...} }`). Auto-migrates from legacy format on first use
+- **`load_project` tool** — one call to activate a project and get a complete briefing (~500 tokens). The recommended way to start working on a project
+- **P-Entry Standard Schema** — validated project structure with 10 L2 categories. The MCP server enforces consistency across all agents
+- **Context Injection `[⚡]`** — activate a task, and related errors + lessons appear automatically in bulk reads. No manual searching for past mistakes
+- **Multi-server sync** — push to multiple servers for redundancy. `"sync": [{ ... }, { ... }]` in config
 
 ---
 
