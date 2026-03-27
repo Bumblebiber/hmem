@@ -1462,8 +1462,39 @@ server.tool(
           };
         }
 
-        // Format using the same rendering as read_memory
-        const output = formatGroupedOutput(hmemStore, entries, false, hmemConfig);
+        // Custom compact rendering for project briefing: L2 content + L3 titles, no dates, compact IDs
+        const e = entries[0];
+        const lines: string[] = [];
+        lines.push(`${e.id}  ${e.title}`);
+        if (e.level_1 && e.level_1 !== e.title) lines.push(`  ${e.level_1}`);
+        if (e.children) {
+          for (const child of (e.children as MemoryNode[]).filter(c => !c.irrelevant)) {
+            const cId = child.id.replace(e.id, "");
+            lines.push(`  ${cId}  ${child.title || child.content.substring(0, 60)}`);
+            // Show L3 children as compact titles (the briefing level)
+            if (child.children && child.children.length > 0) {
+              for (const gc of child.children.filter((g: any) => !g.irrelevant)) {
+                const gcId = gc.id.replace(e.id, "");
+                const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
+                lines.push(`    ${gcId}  ${gcTitle}`);
+                // L4 hint
+                if (gc.child_count && gc.child_count > 0) {
+                  lines.push(`      [+${gc.child_count} → ${gc.id}]`);
+                }
+              }
+            } else if (child.child_count && child.child_count > 0) {
+              lines.push(`    [+${child.child_count} → ${child.id}]`);
+            }
+          }
+        }
+        // Links
+        if (e.linkedEntries && e.linkedEntries.length > 0) {
+          lines.push("  Links:");
+          for (const le of e.linkedEntries) {
+            lines.push(`    ${le.id}  ${le.title}`);
+          }
+        }
+        const output = lines.join("\n");
 
         log(`load_project: ${id} activated and loaded (depth=3)`);
 
@@ -2102,7 +2133,6 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig, curator: b
     const desc = config.prefixDescriptions[prefix] ?? config.prefixes[prefix] ?? prefix;
     lines.push(`## ${desc} (${prefixEntries.length} total)\n`);
     for (const e of prefixEntries) {
-      const mmdd = e.created_at.substring(5, 10);
       const fav = e.favorite ? " [♥]" : "";
       const act = e.active ? " [*]" : "";
       const obs = e.obsolete ? " [!]" : "";
@@ -2111,15 +2141,16 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig, curator: b
       if (e.expanded && e.children && e.children.length > 0) {
         const visibleChildren = (e.children as MemoryNode[]).filter(c => !c.irrelevant);
         const hiddenIrr = e.children.length - visibleChildren.length;
-        // Expanded entry (favorite/top-accessed): show with L2 children
-        lines.push(`${e.id} ${mmdd}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags, curator)}`);
+        const rootId = e.id;
+        lines.push(`${e.id}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags, curator)}`);
         for (const child of visibleChildren) {
           const short = child.title || (child.content.length > CHILD_TITLE_LEN
             ? child.content.substring(0, CHILD_TITLE_LEN)
             : child.content);
           const grandchildren = (child.child_count ?? 0) > 0 ? ` (${child.child_count})` : "";
           const cfav = child.favorite ? " [♥]" : "";
-          lines.push(`  ${child.id}${cfav}  ${short}${grandchildren}`);
+          const compactChildId = child.id.replace(rootId, "");
+          lines.push(`  ${compactChildId}${cfav}  ${short}${grandchildren}`);
         }
         if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
           lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
@@ -2130,7 +2161,7 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig, curator: b
       } else {
         // Non-expanded: compact line with child count
         const childHint = (e.hiddenChildrenCount ?? 0) > 0 ? ` (${e.hiddenChildrenCount})` : "";
-        lines.push(`${e.id} ${mmdd}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags, curator)}${childHint}`);
+        lines.push(`${e.id}${fav}${act}${obs}  ${e.title}${formatTagSuffix(e.tags, curator)}${childHint}`);
       }
     }
     lines.push("");
@@ -2256,8 +2287,7 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
       const pinnedTag = e.pinned ? " [P]" : "";
       const obsoleteTag = e.obsolete ? " [!]" : "";
       const irrelevantTag = e.irrelevant ? " [-]" : "";
-      const mmdd = e.created_at.substring(5, 10);
-      lines.push(`${e.id} ${mmdd}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}  ${e.title}${tagStr}`);
+      lines.push(`${e.id}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}  ${e.title}${tagStr}`);
     }
     // Show full level_1 content below title when entry is expanded/drilled
     if (hasDetail && e.level_1 !== e.title) {
@@ -2266,15 +2296,18 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
   }
 
   // Children — filter out irrelevant nodes
+  // Root ID for compact child rendering (e.g. P0048.1 → .1)
+  const rootId = e.id.includes(".") ? e.id.split(".")[0] : e.id;
+
   if (e.children && e.children.length > 0) {
     const visibleChildren = e.children.filter(c => !c.irrelevant);
     const hiddenIrrelevant = e.children.length - visibleChildren.length;
 
     if (expand || e.pinned) {
       // Expand mode or pinned: full L2 content + recursive children
-      renderChildrenExpanded(lines, visibleChildren, curator);
+      renderChildrenExpanded(lines, visibleChildren, curator, rootId);
     } else if (e.expanded && !expand) {
-      renderChildrenFormatted(lines, visibleChildren, curator);
+      renderChildrenFormatted(lines, visibleChildren, curator, rootId);
       if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
         lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
       }
@@ -2283,13 +2316,14 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
       const child = visibleChildren[0] as MemoryNode | undefined;
       if (child) {
         const fav = nodeMarkers(child);
+        const compactChildId = child.id.replace(rootId, "");
         const hint = (child.child_count ?? 0) > 0
           ? `  [+${child.child_count} → ${child.id}]`
           : "";
         if (curator) {
           lines.push(`  [${child.id}]${fav} ${child.title}${hint}`);
         } else {
-          lines.push(`  ${child.id}${fav}  ${child.title}${hint}`);
+          lines.push(`  ${compactChildId}${fav}  ${child.title}${hint}`);
         }
       }
       if (e.hiddenChildrenCount > 0) {
@@ -2297,7 +2331,7 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
       }
     } else {
       // ID-based read: show all direct children as titles
-      renderChildrenFormatted(lines, visibleChildren, curator);
+      renderChildrenFormatted(lines, visibleChildren, curator, rootId);
     }
 
     if (hiddenIrrelevant > 0) {
@@ -2355,20 +2389,20 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
  * Render a list of child nodes — shows titles for navigation.
  * Use read_memory(id=child.id) to see full content.
  */
-function renderChildrenFormatted(lines: string[], children: MemoryNode[], curator: boolean): void {
+function renderChildrenFormatted(lines: string[], children: MemoryNode[], curator: boolean, rootId?: string): void {
   for (const child of children) {
     const indent = "  ".repeat(child.depth - 1);
     const fav = nodeMarkers(child);
     const ctags = formatTagSuffix(child.tags, curator);
+    const compactId = rootId ? child.id.replace(rootId, "") : child.id;
     const hint = (child.child_count ?? 0) > 0
       ? `  [+${child.child_count} → ${child.id}]`
       : "";
     if (curator) {
       lines.push(`${indent}[${child.id}]${fav} ${child.title}${ctags}${hint}`);
     } else {
-      lines.push(`${indent}${child.id}${fav}  ${child.title}${ctags}${hint}`);
+      lines.push(`${indent}${compactId}${fav}  ${child.title}${ctags}${hint}`);
     }
-    // Don't recurse into grandchildren — titles only, drill for content
   }
 }
 
@@ -2378,10 +2412,11 @@ function renderChildrenFormatted(lines: string[], children: MemoryNode[], curato
  * At the depth boundary (children loaded but THEIR children are not),
  * renders as titles instead of full content.
  */
-function renderChildrenExpanded(lines: string[], children: MemoryNode[], curator: boolean): void {
+function renderChildrenExpanded(lines: string[], children: MemoryNode[], curator: boolean, rootId?: string): void {
   for (const child of children) {
     const indent = "  ".repeat(child.depth - 1);
     const fav = nodeMarkers(child);
+    const compactId = rootId ? child.id.replace(rootId, "") : child.id;
     const visibleGrandchildren = child.children?.filter(c => !c.irrelevant);
     const hasLoadedChildren = visibleGrandchildren && visibleGrandchildren.length > 0;
     const isBoundary = !hasLoadedChildren && (child.child_count ?? 0) > 0;
@@ -2391,23 +2426,23 @@ function renderChildrenExpanded(lines: string[], children: MemoryNode[], curator
       if (curator) {
         lines.push(`${indent}[${child.id}]${fav} ${child.content}`);
       } else {
-        lines.push(`${indent}${child.id}${fav}  ${child.content}`);
+        lines.push(`${indent}${compactId}${fav}  ${child.content}`);
       }
-      renderChildrenExpanded(lines, visibleGrandchildren, curator);
+      renderChildrenExpanded(lines, visibleGrandchildren, curator, rootId);
     } else if (isBoundary) {
       // Boundary: title only + child count hint
       const hint = `  [+${child.child_count} → ${child.id}]`;
       if (curator) {
         lines.push(`${indent}[${child.id}]${fav} ${child.title}${hint}`);
       } else {
-        lines.push(`${indent}${child.id}${fav}  ${child.title}${hint}`);
+        lines.push(`${indent}${compactId}${fav}  ${child.title}${hint}`);
       }
     } else {
       // Leaf node (no children at all): full content
       if (curator) {
         lines.push(`${indent}[${child.id}]${fav} ${child.content}`);
       } else {
-        lines.push(`${indent}${child.id}${fav}  ${child.content}`);
+        lines.push(`${indent}${compactId}${fav}  ${child.content}`);
       }
     }
   }
