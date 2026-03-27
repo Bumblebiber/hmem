@@ -158,6 +158,7 @@ One-line description
 	Known issues — current bugs/limitations (links to E-entries)
 	Protocol — session log, chronological, one-liner + links to O-entries
 	Open tasks — current TODOs (links to T-entries)
+	Ideas — feature ideas, brainstorming (L3: short description, L4: implementation details)
 ```
 
 **Non-Project catch-all:** Create a "Non-Project" P-entry for entries not tied to any project.
