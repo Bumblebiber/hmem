@@ -114,10 +114,10 @@ Custom prefixes are merged with the defaults — they don't replace them. Withou
 ### P-Entry Standard Schema (enforced by MCP server)
 
 Every project entry MUST follow this structure. The MCP server validates L2 nodes
-against the required categories when `prefix="P"`.
+against the standard categories when `prefix="P"`.
 
-**L1 Title:** `Name | Status | Tech | Repo`
-**L1 Body:** One-line description
+**L1 Title:** `Name | Status | Tech Stack | Short description`
+**L1 Body:** (same line or next non-indented line) One-sentence project summary.
 
 **Status values:**
 
@@ -129,49 +129,51 @@ against the required categories when `prefix="P"`.
 | Paused | On hold, will resume later |
 | Archived | Done or abandoned |
 
-**Required L2 categories (fixed order, omit empty ones):**
+**L2 categories (fixed order, skip sections that are empty):**
+
+The MCP server validates that L2 nodes start with one of these names. Minimum for a new project: Overview + Codebase (or Usage).
+
+| L2 Category | What goes here | L3 children |
+|-------------|---------------|-------------|
+| **Overview** | First thing an agent reads (like CLAUDE.md /init) | Current state, Goals, Architecture, Environment |
+| **Codebase** | Code structure — NO code, only names + signatures | Entry point, Core modules (each module = L4 node with signature + purpose + return), Helpers, Config, Tests |
+| **Usage** | How the project is used | Installation/Setup, CLI/API commands, Common workflows |
+| **Context** | Background and motivation | Initiator, Target audience, Business context, Dependencies (links) |
+| **Deployment** | Build/CI/CD/publish process | (flat or with L3 sub-steps) |
+| **Known issues** | **Pointers** to E-entries (not the bugs themselves) | `"Auto-sync fails → E0097, T0043"` — one-liner summaries |
+| **Bugs** | **Inline bug reports** not yet promoted to E-entries | L3: symptom + cause, L4: reproduction steps. When investigated → create E-entry + move to Known issues |
+| **Protocol** | Session log, chronological | One-liner per session + links to O-entries |
+| **Open tasks** | Project-specific TODOs | One per L3 node. Cross-project tasks → T-prefix with links |
+| **Ideas** | Feature ideas, brainstorming | L3: short description, L4: implementation details |
+
+**load_project tool:** Use `load_project(id="P0048")` to activate a project and get the full briefing (L2 content + L3 titles) in one call. This is the recommended way to start working on a project — it combines read + activate.
+
+**Markers you may see on entries:**
+
+| Marker | Meaning |
+|--------|---------|
+| `[♥]` | Favorite — always expanded in bulk reads |
+| `[★]` | Top-accessed — high weighted access score |
+| `[≡]` | Top-subnode — many children |
+| `[⚡]` | Task-promoted — relevant to an active T/P/D entry (tag overlap) |
+| `[*]` | Active — currently in focus |
+| `[P]` | Pinned — super-favorite, shows full L2 |
+| `[!]` | Obsolete — superseded, kept for history |
+| `[-]` | Irrelevant — hidden from bulk reads |
+| `✓` | Synced — backed up to all sync servers |
+
+**Complete P-entry example (WeatherBot):**
 
 ```
-P00XX Title | Status | Tech | Repo
-One-line description
-	Overview — what an agent should read FIRST (like CLAUDE.md /init output)
-		Current state — what works, what doesn't, current version
-		Goals — short-term and long-term objectives
-		Architecture — high-level data flow, core concepts (no code)
-		Environment — paths, servers, repo URL, how to start
-	Codebase — code structure description (no code, only signatures + purpose)
-		Entry point — main/index, start command
-		Core modules — per L4 node: name, signature, purpose, return value
-		Helpers / Utilities — per L4 node with links to consuming modules
-		Config / Constants — important configuration values
-		Tests — how to test, what's covered
-	Usage — how the project is used
-		Installation / Setup
-		CLI / API — commands, endpoints, MCP tools
-		Common workflows
-	Context — background and classification
-		Initiator — who, why, when started
-		Target audience
-		Business context
-		Dependencies / Related projects (links to other P/T/D)
-	Deployment — build, CI/CD, npm publish, server config
-	Known issues — current bugs/limitations (links to E-entries)
-	Bugs — active, reproducible bugs (L3: symptom + cause, L4: reproduction steps)
-	Protocol — session log, chronological, one-liner + links to O-entries
-	Open tasks — current TODOs (links to T-entries)
-	Ideas — feature ideas, brainstorming (L3: short description, L4: implementation details)
+write_memory(
+  prefix="P",
+  content="WeatherBot | New | Python/Discord.py | Discord bot for weather forecasts\n\tOverview\n\t\tCurrent state — scaffolding done, no commands yet\n\t\tGoals — daily/hourly forecasts via slash commands, multi-city\n\t\tArchitecture — Discord slash command → OpenWeatherMap API → formatted embed\n\t\tEnvironment — /home/user/weatherbot, python bot.py, needs DISCORD_TOKEN + WEATHER_API_KEY\n\tCodebase\n\t\tEntry point — bot.py, start: python bot.py\n\t\tCore modules\n\t\t\tweather_cog.py — WeatherCog(Cog); fetch_forecast(city: str) → discord.Embed\n\t\t\tformatter.py — format_embed(data: dict) → discord.Embed\n\t\tHelpers / Utilities\n\t\t\tapi_client.py — get_weather(city: str) → dict; wraps HTTP to OpenWeatherMap\n\t\tConfig / Constants — .env: DISCORD_TOKEN, WEATHER_API_KEY, DEFAULT_CITY\n\t\tTests — pytest, test_weather_cog.py (3 tests)\n\tUsage\n\t\tInstallation / Setup — pip install -r requirements.txt, cp .env.example .env\n\t\tCLI / API — /weather <city>, /forecast <city> (planned)\n\tContext\n\t\tInitiator — personal project, Mar 2026\n\t\tTarget audience — personal Discord server\n\t\tDependencies — discord.py, OpenWeatherMap API, aiohttp\n\tOpen tasks\n\t\tImplement /forecast command for multi-day view\n\t\tAdd city autocomplete",
+  tags=["#discord", "#python", "#weather", "#bot"],
+  links=[]
+)
 ```
 
-**Non-Project catch-all:** Create a "Non-Project" P-entry for entries not tied to any project.
-There must ALWAYS be at least one active project — if nothing else applies, activate the Non-Project entry.
-
-**Examples:**
-
-```
-hmem-mcp | Active | TS/SQLite/npm | Persistente hierarchische AI-Memory mit 5-Level Lazy Loading
-Heimdall | Paused | TS/Bun/OpenCode-Fork | Permanenter Fork von OpenCode CLI mit hmem + Groupchat
-EasySAP | Active | AHK v2/SAP GUI Scripting | SAP-Automatisierung für Carl Zeiss
-```
+Note: L2 nodes use 1 tab, L3 uses 2 tabs, L4 uses 3 tabs. Each module under "Core modules" is an L4 node with signature + purpose. Skip empty sections — no need for placeholder text.
 
 ### Marking entries as favorites
 
