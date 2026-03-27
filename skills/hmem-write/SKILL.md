@@ -116,7 +116,8 @@ Custom prefixes are merged with the defaults — they don't replace them. Withou
 Every project entry MUST follow this structure. The MCP server validates L2 nodes
 against the standard categories when `prefix="P"`.
 
-**L1 Title:** `Name | Status | Tech Stack | Short description`
+**L1 Title:** `Name | Status | Tech Stack | GH: owner/repo | Short description`
+The GH field is optional — include it when a GitHub repo exists, omit otherwise.
 **L1 Body:** (same line or next non-indented line) One-sentence project summary.
 
 **Status values:**
@@ -167,7 +168,7 @@ The MCP server validates that L2 nodes start with one of these names. Minimum fo
 ```
 write_memory(
   prefix="P",
-  content="WeatherBot | New | Python/Discord.py | Discord bot for weather forecasts\n\tOverview\n\t\tCurrent state — scaffolding done, no commands yet\n\t\tGoals — daily/hourly forecasts via slash commands, multi-city\n\t\tArchitecture — Discord slash command → OpenWeatherMap API → formatted embed\n\t\tEnvironment — /home/user/weatherbot, python bot.py, needs DISCORD_TOKEN + WEATHER_API_KEY\n\tCodebase\n\t\tEntry point — bot.py, start: python bot.py\n\t\tCore modules\n\t\t\tweather_cog.py — WeatherCog(Cog); fetch_forecast(city: str) → discord.Embed\n\t\t\tformatter.py — format_embed(data: dict) → discord.Embed\n\t\tHelpers / Utilities\n\t\t\tapi_client.py — get_weather(city: str) → dict; wraps HTTP to OpenWeatherMap\n\t\tConfig / Constants — .env: DISCORD_TOKEN, WEATHER_API_KEY, DEFAULT_CITY\n\t\tTests — pytest, test_weather_cog.py (3 tests)\n\tUsage\n\t\tInstallation / Setup — pip install -r requirements.txt, cp .env.example .env\n\t\tCLI / API — /weather <city>, /forecast <city> (planned)\n\tContext\n\t\tInitiator — personal project, Mar 2026\n\t\tTarget audience — personal Discord server\n\t\tDependencies — discord.py, OpenWeatherMap API, aiohttp\n\tOpen tasks\n\t\tImplement /forecast command for multi-day view\n\t\tAdd city autocomplete",
+  content="WeatherBot | New | Python/Discord.py | GH: user/weatherbot | Discord bot for weather forecasts\n\tOverview\n\t\tCurrent state — scaffolding done, no commands yet\n\t\tGoals — daily/hourly forecasts via slash commands, multi-city\n\t\tArchitecture — Discord slash command → OpenWeatherMap API → formatted embed\n\t\tEnvironment — /home/user/weatherbot, python bot.py, needs DISCORD_TOKEN + WEATHER_API_KEY\n\tCodebase\n\t\tEntry point — bot.py, start: python bot.py\n\t\tCore modules\n\t\t\tweather_cog.py — WeatherCog(Cog); fetch_forecast(city: str) → discord.Embed\n\t\t\tformatter.py — format_embed(data: dict) → discord.Embed\n\t\tHelpers / Utilities\n\t\t\tapi_client.py — get_weather(city: str) → dict; wraps HTTP to OpenWeatherMap\n\t\tConfig / Constants — .env: DISCORD_TOKEN, WEATHER_API_KEY, DEFAULT_CITY\n\t\tTests — pytest, test_weather_cog.py (3 tests)\n\tUsage\n\t\tInstallation / Setup — pip install -r requirements.txt, cp .env.example .env\n\t\tCLI / API — /weather <city>, /forecast <city> (planned)\n\tContext\n\t\tInitiator — personal project, Mar 2026\n\t\tTarget audience — personal Discord server\n\t\tDependencies — discord.py, OpenWeatherMap API, aiohttp\n\tOpen tasks\n\t\tImplement /forecast command for multi-day view\n\t\tAdd city autocomplete",
   tags=["#discord", "#python", "#weather", "#bot"],
   links=[]
 )
