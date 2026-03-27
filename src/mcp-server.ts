@@ -1496,6 +1496,21 @@ server.tool(
             lines.push(`    ${le.id}  ${le.title}`);
           }
         }
+
+        // Context injection: find related E/L entries by weighted tag scoring
+        try {
+          const ctx = hmemStore.findContext(id, 4, 10);
+          const relatedEL = ctx.tagRelated.filter(r =>
+            (r.entry.prefix === "E" || r.entry.prefix === "L") && !r.entry.obsolete && !r.entry.irrelevant
+          );
+          if (relatedEL.length > 0) {
+            lines.push("  Related errors & lessons:");
+            for (const r of relatedEL) {
+              lines.push(`    ${r.entry.id} [⚡]  ${r.entry.title}`);
+            }
+          }
+        } catch { /* findContext may fail on empty/new entries */ }
+
         const output = lines.join("\n");
         const outputTokens = Math.round(output.length / 4);
         const totalStats = hmemStore.stats();
