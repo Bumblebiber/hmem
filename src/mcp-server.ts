@@ -122,12 +122,13 @@ function syncPull(hmemPath: string): Array<{id: string, title: string, created_a
       if (!s.serverUrl || !s.token) continue;
       const result = spawnSync("hmem-sync", [
         "pull", "--config", hmemSyncConfig(hmemPath),
+        "--hmem-path", hmemPath,
         "--server-url", s.serverUrl, "--token", s.token,
       ], { env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32" });
       if (result.error) process.stderr.write(`hmem-sync pull error (${s.name ?? s.serverUrl}): ${result.error.message}\n`);
     }
   } else {
-    const result = spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
+    const result = spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath], {
       env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32",
     });
     if (result.error) process.stderr.write(`hmem-sync pull error: ${result.error.message}\n`);
@@ -181,11 +182,12 @@ function syncPullThenPush(hmemPath: string): void {
       if (!s.serverUrl || !s.token) continue;
       spawnSync("hmem-sync", [
         "pull", "--config", hmemSyncConfig(hmemPath),
+        "--hmem-path", hmemPath,
         "--server-url", s.serverUrl, "--token", s.token,
       ], { env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32" });
     }
   } else {
-    spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath)], {
+    spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath], {
       env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32",
     });
   }
@@ -200,12 +202,13 @@ function syncPush(hmemPath: string): void {
       if (!s.serverUrl || !s.token) continue;
       const child = spawn("hmem-sync", [
         "push", "--config", hmemSyncConfig(hmemPath),
+        "--hmem-path", hmemPath,
         "--server-url", s.serverUrl, "--token", s.token,
       ], { env: { ...process.env }, shell: process.platform === "win32", stdio: "ignore", detached: true });
       child.unref();
     }
   } else {
-    const child = spawn("hmem-sync", ["push", "--config", hmemSyncConfig(hmemPath)], {
+    const child = spawn("hmem-sync", ["push", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath], {
       env: { ...process.env }, shell: process.platform === "win32", stdio: "ignore", detached: true,
     });
     child.unref();
