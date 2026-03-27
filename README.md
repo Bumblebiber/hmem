@@ -14,6 +14,8 @@ The result? An AI that starts a new session and *already knows* your projects, y
 
 **With hmem:**
 - **5k tokens** loads a complete overview of 300+ memories spanning months of work
+- **Gets more efficient over time** — as your memory grows, the bulk read algorithm gets *better*, not worse. New entries push older, less relevant ones into title-only mode. 1,000 entries cost barely more tokens than 100.
+- **Original context preserved** — nothing is summarized away or compressed. Every detail you stored is still there at full fidelity, accessible on demand. Level 1 is a summary, but Levels 2-5 hold the complete original text, word for word.
 - **Drill on demand** — the AI only fetches details when it actually needs them
 - **Cross-device** — encrypted sync means your laptop, PC, and server share the same brain
 - **Cross-tool** — works with Claude Code, Gemini CLI, Cursor, Windsurf, OpenCode, Cline
@@ -259,13 +261,13 @@ Push/pull goes to all servers. Use during migration or for redundant backup.
 
 ### Announcements
 
-Broadcast urgent messages to all synced devices:
+Broadcast urgent messages to all synced AI agents across all devices:
 
 ```bash
 npx hmem-sync announce --message "Server URL changing — update your config!"
 ```
 
-All devices see the announcement on next sync pull.
+Every agent on every device sees the announcement on its next sync pull. Use for config changes, server migrations, or coordination across your fleet of AI instances.
 
 ---
 
