@@ -156,6 +156,7 @@ One-line description
 		Dependencies / Related projects (links to other P/T/D)
 	Deployment — build, CI/CD, npm publish, server config
 	Known issues — current bugs/limitations (links to E-entries)
+	Bugs — active, reproducible bugs (L3: symptom + cause, L4: reproduction steps)
 	Protocol — session log, chronological, one-liner + links to O-entries
 	Open tasks — current TODOs (links to T-entries)
 	Ideas — feature ideas, brainstorming (L3: short description, L4: implementation details)
