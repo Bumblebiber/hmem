@@ -1120,6 +1120,21 @@ server.tool(
           }
         }
 
+        // Check for P-entries that need migration to standard schema
+        let migrationHint = "";
+        if (!id && !prefix && !search && !time_around && isBulkListing) {
+          const STANDARD_L2 = ["overview", "codebase", "usage", "context", "deployment", "known issues", "protocol", "open tasks"];
+          const oldPEntries = entries.filter(e =>
+            e.prefix === "P" && !e.obsolete && !e.irrelevant && e.children && e.children.length > 0 &&
+            !e.children.some(c => STANDARD_L2.some(cat => (c.content || c.title || "").toLowerCase().startsWith(cat)))
+          );
+          if (oldPEntries.length > 0) {
+            migrationHint = `\n⚠ P-ENTRY MIGRATION: ${oldPEntries.length} project(s) use old format: ${oldPEntries.map(e => e.id).join(", ")}.\n` +
+              `Standard schema (R0009): Overview → Codebase → Usage → Context → Deployment → Known issues → Protocol → Open tasks.\n` +
+              `Create new entry with write_memory(prefix="P", force=true), then mark old one obsolete.\n\n`;
+          }
+        }
+
         const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
           `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}${modeInfo}${cacheInfo}${tokenInfo}${staleHint}\n`;
 
@@ -1128,7 +1143,7 @@ server.tool(
         return {
           content: [{
             type: "text" as const,
-            text: corruptionWarning + projectWarning + newSinceSection + header + "\n" + output + (isBulkListing && (sessionCache.readCount <= 1 || sessionCache.size === 0) ? REMINDER_HINT : ""),
+            text: corruptionWarning + projectWarning + migrationHint + newSinceSection + header + "\n" + output + (isBulkListing && (sessionCache.readCount <= 1 || sessionCache.size === 0) ? REMINDER_HINT : ""),
           }],
         };
       } finally {
