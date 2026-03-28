@@ -21,6 +21,8 @@ interface CacheEntry {
 export class SessionCache {
   private cache = new Map<string, CacheEntry>();
   private bulkReads = 0;
+  private _totalTokensDelivered = 0;
+  private _thresholdReached = false;
   private ttlHidden = 5 * 60 * 1000;      // 5 min — completely hidden
   private ttlNormal = 30 * 60 * 1000;     // 30 min — title-only → expired
   private ttlPromoted = 15 * 60 * 1000;   // 15 min — promoted title-only → expired
@@ -86,6 +88,29 @@ export class SessionCache {
     return this.cache.size;
   }
 
+  /** Add estimated tokens from a tool response output. */
+  addTokens(chars: number): void {
+    this._totalTokensDelivered += Math.round(chars / 4);
+  }
+
+  /** Cumulative tokens delivered this session. */
+  get totalTokensDelivered(): number {
+    return this._totalTokensDelivered;
+  }
+
+  /**
+   * Check if threshold is crossed. Returns true only ONCE per threshold crossing
+   * (resets after clear/reset). This prevents spamming the warning.
+   */
+  checkThreshold(threshold: number): boolean {
+    if (threshold <= 0 || this._thresholdReached) return false;
+    if (this._totalTokensDelivered >= threshold) {
+      this._thresholdReached = true;
+      return true;
+    }
+    return false;
+  }
+
   /**
    * Clear all tracked entries and reset bulk read counter.
    * After reset, the next bulk read behaves like the first read of a new session.
@@ -93,6 +118,8 @@ export class SessionCache {
   reset(): void {
     this.cache.clear();
     this.bulkReads = 0;
+    this._totalTokensDelivered = 0;
+    this._thresholdReached = false;
   }
 
   /** Remove expired entries (past main TTL). */

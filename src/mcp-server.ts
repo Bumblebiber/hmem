@@ -222,6 +222,30 @@ log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfi
 // Session-scoped cache — persists across tool calls within this MCP connection
 const sessionCache = new SessionCache();
 
+const CONTEXT_THRESHOLD_WARNING = "\n\n⚠ CONTEXT THRESHOLD REACHED (~{tokens}k tokens delivered this session).\n" +
+  "Recommended: flush_context to save current work, then /clear to reset conversation.\n" +
+  "After /clear, use load_project to restore project context.";
+
+const CACHE_RESET_SIGNAL = "/tmp/hmem-cache-reset-signal";
+
+/** Track tokens in a tool response and append threshold warning if needed. */
+function trackTokens<T extends { content: { type: "text"; text: string }[]; isError?: boolean }>(result: T): T {
+  // Check for /clear signal from hook
+  if (fs.existsSync(CACHE_RESET_SIGNAL)) {
+    try { fs.unlinkSync(CACHE_RESET_SIGNAL); } catch {}
+    sessionCache.reset();
+    log("Session cache reset via /clear signal");
+  }
+  if (result.isError) return result;
+  const text = result.content.map(c => c.text).join("");
+  sessionCache.addTokens(text.length);
+  if (sessionCache.checkThreshold(hmemConfig.contextTokenThreshold)) {
+    const tokK = Math.round(sessionCache.totalTokensDelivered / 1000);
+    result.content[result.content.length - 1].text += CONTEXT_THRESHOLD_WARNING.replace("{tokens}", String(tokK));
+  }
+  return result;
+}
+
 // ---- Server ----
 const server = new McpServer({
   name: "hmem",
@@ -667,14 +691,14 @@ server.tool(
         log(`flush_context: ${result.id} (${levels} levels, ${tags.join(" ")})`);
 
         syncPush(hmemPath);
-        return {
+        return trackTokens({
           content: [{
             type: "text" as const,
             text: `Context saved: ${result.id} (${levels} levels)\n` +
               `Title: ${l1}\nTags: ${tags.join(" ")}` +
               (links?.length ? `\nLinks: ${links.join(", ")}` : ""),
           }],
-        };
+        });
       } finally {
         hmemStore.close();
       }
@@ -950,9 +974,9 @@ server.tool(
 
           log(`read_memory [${storeLabel}]: context_for=${context_for}, ${totalRelated} related (${linked.length} linked, ${dedupedTagRelated.length} tag-related), ~${fmtTok(outputTokens)} tokens`);
 
-          return {
+          return trackTokens({
             content: [{ type: "text" as const, text: corruptionWarning + finalOutput }],
-          };
+          });
         }
 
         const effectiveDepth = depth || (id ? 2 : 1);
@@ -1123,6 +1147,20 @@ server.tool(
           }
         }
 
+        // Inject recent O-entries (session logs) on bulk reads when none are cached
+        let recentOSection = "";
+        if (isBulkListing && storeName === "personal" && hmemConfig.recentOEntries > 0) {
+          const cachedOIds = [...(cachedIds || []), ...(hiddenIds || [])].filter(id => id.startsWith("O"));
+          if (cachedOIds.length === 0) {
+            const recentO = hmemStore.getRecentOEntries(hmemConfig.recentOEntries);
+            if (recentO.length > 0) {
+              const oLines = recentO.map(o => `  ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
+              recentOSection = `\nRecent sessions:\n${oLines.join("\n")}\n`;
+              sessionCache.registerDelivered(recentO.map(o => o.id));
+            }
+          }
+        }
+
         // Check for P-entries that need migration to standard schema
         let migrationHint = "";
         if (!id && !prefix && !search && !time_around && isBulkListing) {
@@ -1143,12 +1181,12 @@ server.tool(
 
         log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole}${cacheInfo})`);
 
-        return {
+        return trackTokens({
           content: [{
             type: "text" as const,
-            text: corruptionWarning + projectWarning + migrationHint + newSinceSection + header + "\n" + output + (isBulkListing && (sessionCache.readCount <= 1 || sessionCache.size === 0) ? REMINDER_HINT : ""),
+            text: corruptionWarning + projectWarning + migrationHint + newSinceSection + header + "\n" + output + recentOSection + (isBulkListing && (sessionCache.readCount <= 1 || sessionCache.size === 0) ? REMINDER_HINT : ""),
           }],
-        };
+        });
       } finally {
         hmemStore.close();
       }
@@ -1472,13 +1510,19 @@ server.tool(
         if (e.children) {
           for (const child of (e.children as MemoryNode[]).filter(c => !c.irrelevant)) {
             const cId = child.id.replace(e.id, "");
+            const isOverview = child.seq === 1; // .1 = Overview node
             lines.push(`  ${cId}  ${child.title || child.content.substring(0, 60)}`);
-            // Show L3 children as compact titles (the briefing level)
             if (child.children && child.children.length > 0) {
               for (const gc of child.children.filter((g: any) => !g.irrelevant)) {
                 const gcId = gc.id.replace(e.id, "");
-                const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
-                lines.push(`    ${gcId}  ${gcTitle}`);
+                if (isOverview) {
+                  // Overview: show full L3 content
+                  lines.push(`    ${gcId}  ${gc.content}`);
+                } else {
+                  // Other L2 nodes: compact titles only
+                  const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
+                  lines.push(`    ${gcId}  ${gcTitle}`);
+                }
                 // L4 hint
                 if (gc.child_count && gc.child_count > 0) {
                   lines.push(`      [+${gc.child_count} → ${gc.id}]`);
@@ -1524,6 +1568,25 @@ server.tool(
           }
         }
 
+        // Inject recent O-entries linked to this project
+        if (hmemConfig.recentOEntries > 0) {
+          const recentO = hmemStore.getRecentOEntries(hmemConfig.recentOEntries, id);
+          const cachedIds = sessionCache.getCachedIds();
+          const hiddenIds = sessionCache.getHiddenIds();
+          const uncached = recentO.filter(o => !cachedIds.has(o.id) && !hiddenIds.has(o.id));
+          const cachedCount = recentO.length - uncached.length;
+          if (uncached.length > 0 || cachedCount > 0) {
+            lines.push("  Recent sessions:");
+            for (const o of uncached) {
+              lines.push(`    ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
+            }
+            if (cachedCount > 0) {
+              lines.push(`    (${cachedCount} cached entries already in context)`);
+            }
+            sessionCache.registerDelivered(recentO.map(o => o.id));
+          }
+        }
+
         const output = lines.join("\n");
         const outputTokens = Math.round(output.length / 4);
         const totalStats = hmemStore.stats();
@@ -1536,12 +1599,12 @@ server.tool(
         const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
         if (storeName === "personal") syncPush(hmemPath);
 
-        return {
+        return trackTokens({
           content: [{
             type: "text" as const,
             text: `✓ Project ${id} activated.${tokenInfo}\n\n${output}`,
           }],
-        };
+        });
       } finally {
         hmemStore.close();
       }

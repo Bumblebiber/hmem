@@ -88,6 +88,17 @@ export interface HmemConfig {
    * "auto" = spawn a Haiku subagent that saves directly (no user interaction).
    */
   checkpointMode: "remind" | "auto";
+  /**
+   * Number of recent O-entries (session logs) to inject at startup and on load_project.
+   * Set to 0 to disable. Default: 10.
+   */
+  recentOEntries: number;
+  /**
+   * Token threshold for context clear recommendation.
+   * When cumulative hmem output exceeds this, the agent is told to flush + /clear.
+   * Set to 0 to disable. Default: 100000.
+   */
+  contextTokenThreshold: number;
   /** Sync configuration — single server or array for multi-server redundancy. */
   sync?: SyncConfigBlock | SyncConfigBlock[];
 }
@@ -155,6 +166,8 @@ export const DEFAULT_CONFIG: HmemConfig = {
   prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
   checkpointInterval: 20,
   checkpointMode: "remind" as const,
+  recentOEntries: 10,
+  contextTokenThreshold: 100_000,
   bulkReadV2: {
     topAccessCount: 3,
     topNewestCount: 5,
@@ -205,6 +218,8 @@ export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
       prefixes: config.prefixes,
       prefixDescriptions: config.prefixDescriptions,
       bulkReadV2: config.bulkReadV2,
+      recentOEntries: config.recentOEntries,
+      contextTokenThreshold: config.contextTokenThreshold,
     },
   };
 
@@ -223,7 +238,7 @@ export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
 
 /** Known memory config keys — used to detect unified vs flat format. */
 const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
-  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN"]);
+  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "contextTokenThreshold"]);
 
 /**
  * Load hmem.config.json from projectDir.
@@ -259,6 +274,8 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     if (typeof memoryRaw.maxTitleChars === "number" && memoryRaw.maxTitleChars >= 10 && memoryRaw.maxTitleChars <= 120) cfg.maxTitleChars = memoryRaw.maxTitleChars;
     if (typeof memoryRaw.checkpointInterval === "number" && memoryRaw.checkpointInterval >= 0) cfg.checkpointInterval = memoryRaw.checkpointInterval;
     if (memoryRaw.checkpointMode === "remind" || memoryRaw.checkpointMode === "auto") cfg.checkpointMode = memoryRaw.checkpointMode;
+    if (typeof memoryRaw.recentOEntries === "number" && memoryRaw.recentOEntries >= 0) cfg.recentOEntries = memoryRaw.recentOEntries;
+    if (typeof memoryRaw.contextTokenThreshold === "number" && memoryRaw.contextTokenThreshold >= 0) cfg.contextTokenThreshold = memoryRaw.contextTokenThreshold;
 
     // Prefixes: merge user-defined with defaults (user can override or add)
     if (memoryRaw.prefixes && typeof memoryRaw.prefixes === "object" && !Array.isArray(memoryRaw.prefixes)) {

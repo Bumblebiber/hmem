@@ -15,6 +15,8 @@
 export class SessionCache {
     cache = new Map();
     bulkReads = 0;
+    _totalTokensDelivered = 0;
+    _thresholdReached = false;
     ttlHidden = 5 * 60 * 1000; // 5 min — completely hidden
     ttlNormal = 30 * 60 * 1000; // 30 min — title-only → expired
     ttlPromoted = 15 * 60 * 1000; // 15 min — promoted title-only → expired
@@ -73,6 +75,27 @@ export class SessionCache {
     get size() {
         return this.cache.size;
     }
+    /** Add estimated tokens from a tool response output. */
+    addTokens(chars) {
+        this._totalTokensDelivered += Math.round(chars / 4);
+    }
+    /** Cumulative tokens delivered this session. */
+    get totalTokensDelivered() {
+        return this._totalTokensDelivered;
+    }
+    /**
+     * Check if threshold is crossed. Returns true only ONCE per threshold crossing
+     * (resets after clear/reset). This prevents spamming the warning.
+     */
+    checkThreshold(threshold) {
+        if (threshold <= 0 || this._thresholdReached)
+            return false;
+        if (this._totalTokensDelivered >= threshold) {
+            this._thresholdReached = true;
+            return true;
+        }
+        return false;
+    }
     /**
      * Clear all tracked entries and reset bulk read counter.
      * After reset, the next bulk read behaves like the first read of a new session.
@@ -80,6 +103,8 @@ export class SessionCache {
     reset() {
         this.cache.clear();
         this.bulkReads = 0;
+        this._totalTokensDelivered = 0;
+        this._thresholdReached = false;
     }
     /** Remove expired entries (past main TTL). */
     prune() {

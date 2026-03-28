@@ -47,6 +47,10 @@ export const DEFAULT_CONFIG = {
     maxTitleChars: 50,
     accessCountTopN: 5,
     prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
+    checkpointInterval: 20,
+    checkpointMode: "remind",
+    recentOEntries: 10,
+    contextTokenThreshold: 100_000,
     bulkReadV2: {
         topAccessCount: 3,
         topNewestCount: 5,
@@ -92,6 +96,8 @@ export function saveHmemConfig(projectDir, config) {
             prefixes: config.prefixes,
             prefixDescriptions: config.prefixDescriptions,
             bulkReadV2: config.bulkReadV2,
+            recentOEntries: config.recentOEntries,
+            contextTokenThreshold: config.contextTokenThreshold,
         },
     };
     if (config.sync) {
@@ -109,7 +115,7 @@ export function saveHmemConfig(projectDir, config) {
 }
 /** Known memory config keys — used to detect unified vs flat format. */
 const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
-    "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN"]);
+    "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "contextTokenThreshold"]);
 /**
  * Load hmem.config.json from projectDir.
  * Unknown keys are ignored. Missing keys fall back to defaults.
@@ -142,6 +148,14 @@ export function loadHmemConfig(projectDir) {
             cfg.accessCountTopN = memoryRaw.accessCountTopN;
         if (typeof memoryRaw.maxTitleChars === "number" && memoryRaw.maxTitleChars >= 10 && memoryRaw.maxTitleChars <= 120)
             cfg.maxTitleChars = memoryRaw.maxTitleChars;
+        if (typeof memoryRaw.checkpointInterval === "number" && memoryRaw.checkpointInterval >= 0)
+            cfg.checkpointInterval = memoryRaw.checkpointInterval;
+        if (memoryRaw.checkpointMode === "remind" || memoryRaw.checkpointMode === "auto")
+            cfg.checkpointMode = memoryRaw.checkpointMode;
+        if (typeof memoryRaw.recentOEntries === "number" && memoryRaw.recentOEntries >= 0)
+            cfg.recentOEntries = memoryRaw.recentOEntries;
+        if (typeof memoryRaw.contextTokenThreshold === "number" && memoryRaw.contextTokenThreshold >= 0)
+            cfg.contextTokenThreshold = memoryRaw.contextTokenThreshold;
         // Prefixes: merge user-defined with defaults (user can override or add)
         if (memoryRaw.prefixes && typeof memoryRaw.prefixes === "object" && !Array.isArray(memoryRaw.prefixes)) {
             const merged = { ...DEFAULT_PREFIXES };

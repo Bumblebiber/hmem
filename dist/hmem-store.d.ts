@@ -50,6 +50,8 @@ export interface MemoryEntry {
     irrelevant?: boolean;
     /** True if this entry is actively relevant (root-only). When any entry in a prefix has active=1, only active entries of that prefix are expanded in bulk reads. */
     active?: boolean;
+    /** ISO timestamp of last modification (write/update/append). Used for sync status. */
+    updated_at?: string;
     /** True if this entry was already delivered in a previous bulk read (session cache). */
     suppressed?: boolean;
     /**
@@ -57,7 +59,7 @@ export interface MemoryEntry {
      * 'favorite' = favorite flag set, 'access' = top-N by access_count.
      * Rendered as [♥] or [★] in output.
      */
-    promoted?: "access" | "favorite" | "subnode";
+    promoted?: "access" | "favorite" | "subnode" | "task";
     /**
      * In bulk reads: number of direct children NOT shown (only the latest child is included).
      * undefined = ID-based read (all direct children shown as usual).
@@ -255,6 +257,15 @@ export declare class HmemStore {
      */
     importFromHmem(sourcePath: string, dryRun?: boolean): ImportResult;
     private _doImport;
+    /**
+     * Get the most recent O-entries (session logs), optionally filtered by project link.
+     * Returns entries ordered by created_at DESC (newest first).
+     */
+    getRecentOEntries(limit: number, linkedTo?: string): {
+        id: string;
+        title: string;
+        created_at: string;
+    }[];
     /**
      * Get statistics about the memory store.
      */

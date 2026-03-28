@@ -25,6 +25,11 @@ switch (command) {
         await logExchange();
         break;
     }
+    case "context-inject": {
+        const { contextInject } = await import("./cli-context-inject.js");
+        await contextInject();
+        break;
+    }
     case "version":
     case "--version":
     case "-v":
@@ -38,6 +43,7 @@ Usage:
   hmem init           Install hmem for AI coding tools (interactive or with flags)
   hmem update-skills  Copy/update skill files to detected AI tools
   hmem log-exchange   Log a chat exchange to active O-entry (called by Stop hook)
+  hmem context-inject Output compressed context for re-injection after /clear
   hmem version        Show version
 
 Environment variables (for serve):

@@ -74,6 +74,27 @@ export interface HmemConfig {
         accessMin?: number;
         accessMax?: number;
     };
+    /**
+     * Number of messages between automatic save reminders (checkpoint hook).
+     * Set to 0 to disable. Default: 20.
+     */
+    checkpointInterval: number;
+    /**
+     * Checkpoint mode: "remind" = inject additionalContext reminder (default),
+     * "auto" = spawn a Haiku subagent that saves directly (no user interaction).
+     */
+    checkpointMode: "remind" | "auto";
+    /**
+     * Number of recent O-entries (session logs) to inject at startup and on load_project.
+     * Set to 0 to disable. Default: 10.
+     */
+    recentOEntries: number;
+    /**
+     * Token threshold for context clear recommendation.
+     * When cumulative hmem output exceeds this, the agent is told to flush + /clear.
+     * Set to 0 to disable. Default: 100000.
+     */
+    contextTokenThreshold: number;
     /** Sync configuration — single server or array for multi-server redundancy. */
     sync?: SyncConfigBlock | SyncConfigBlock[];
 }

@@ -15,6 +15,8 @@
 export declare class SessionCache {
     private cache;
     private bulkReads;
+    private _totalTokensDelivered;
+    private _thresholdReached;
     private ttlHidden;
     private ttlNormal;
     private ttlPromoted;
@@ -36,6 +38,15 @@ export declare class SessionCache {
     get readCount(): number;
     /** Number of entries currently in the cache. */
     get size(): number;
+    /** Add estimated tokens from a tool response output. */
+    addTokens(chars: number): void;
+    /** Cumulative tokens delivered this session. */
+    get totalTokensDelivered(): number;
+    /**
+     * Check if threshold is crossed. Returns true only ONCE per threshold crossing
+     * (resets after clear/reset). This prevents spamming the warning.
+     */
+    checkThreshold(threshold: number): boolean;
     /**
      * Clear all tracked entries and reset bulk read counter.
      * After reset, the next bulk read behaves like the first read of a new session.

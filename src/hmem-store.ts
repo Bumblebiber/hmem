@@ -1770,6 +1770,28 @@ export class HmemStore {
   }
 
   /**
+   * Get the most recent O-entries (session logs), optionally filtered by project link.
+   * Returns entries ordered by created_at DESC (newest first).
+   */
+  getRecentOEntries(limit: number, linkedTo?: string): { id: string; title: string; created_at: string }[] {
+    if (limit <= 0) return [];
+    if (linkedTo) {
+      // Filter O-entries whose links JSON contains the project ID
+      return this.db.prepare(
+        `SELECT id, title, created_at FROM memories
+         WHERE prefix = 'O' AND seq > 0 AND obsolete != 1 AND irrelevant != 1
+           AND links LIKE ?
+         ORDER BY created_at DESC LIMIT ?`
+      ).all(`%"${linkedTo}"%`, limit) as { id: string; title: string; created_at: string }[];
+    }
+    return this.db.prepare(
+      `SELECT id, title, created_at FROM memories
+       WHERE prefix = 'O' AND seq > 0 AND obsolete != 1 AND irrelevant != 1
+       ORDER BY created_at DESC LIMIT ?`
+    ).all(limit) as { id: string; title: string; created_at: string }[];
+  }
+
+  /**
    * Get statistics about the memory store.
    */
   stats(): { total: number; byPrefix: Record<string, number>; totalChars: number; staleCount: number } {

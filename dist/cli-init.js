@@ -477,6 +477,99 @@ export async function runInit(args = []) {
             saveHmemConfig(absMemDir, { ...DEFAULT_CONFIG });
             console.log(`\n  [ok] Config: ${hmemConfigPath}`);
         }
+        // Step 8: Install auto-memory hooks (Claude Code only)
+        if (selectedTools.includes("claude-code")) {
+            const hookChoice = await askChoice("Install auto-memory hooks? (Claude Code only)\n" +
+                "  This adds a hook that automatically loads your memory at session start\n" +
+                "  and reminds the agent to save knowledge every 20 messages.", ["Yes — install hooks", "No — I'll set them up manually"]);
+            if (hookChoice === 0) {
+                const hooksDir = path.join(HOME, ".claude", "hooks");
+                fs.mkdirSync(hooksDir, { recursive: true });
+                // Write the hook script
+                const hookScript = `#!/bin/bash
+# hmem memory hook (installed by hmem init):
+# - First message: remind agent to call read_memory()
+# - Every N messages: remind agent to save knowledge (configurable)
+# - Config: checkpointInterval (default 20, 0=off), checkpointMode ("remind"|"auto")
+# - Subagents are skipped (they have parentUuid set)
+
+INPUT=$(cat)
+SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -z "$SESSION_ID" ] && SESSION_ID="global"
+
+# Skip subagents
+IS_SUBAGENT=$(echo "$INPUT" | grep -o '"parentUuid":"[^"]*"' | head -1)
+[ -n "$IS_SUBAGENT" ] && exit 0
+
+INTERVAL=20
+MODE="remind"
+for CFG in "$HOME/.hmem/hmem.config.json" "$HOME/.hmem/Agents/*/hmem.config.json"; do
+  if [ -f "$CFG" ]; then
+    VAL=$(grep -o '"checkpointInterval":[0-9]*' "$CFG" 2>/dev/null | head -1 | cut -d: -f2)
+    [ -n "$VAL" ] && INTERVAL=$VAL
+    MVAL=$(grep -o '"checkpointMode":"[^"]*"' "$CFG" 2>/dev/null | head -1 | cut -d'"' -f4)
+    [ -n "$MVAL" ] && MODE=$MVAL
+    break
+  fi
+done
+
+COUNTER_FILE="/tmp/claude-hmem-counter-\${SESSION_ID}"
+if [ -f "$COUNTER_FILE" ]; then COUNT=$(cat "$COUNTER_FILE"); else COUNT=0; fi
+COUNT=$((COUNT + 1))
+echo "$COUNT" > "$COUNTER_FILE"
+
+if [ "$COUNT" -eq 1 ]; then
+  cat <<'HOOK_EOF'
+{
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "IMPORTANT: This is the first message of the session. Before responding, call read_memory() (no parameters) to load your L1 memory overview. Do this silently."
+  }
+}
+HOOK_EOF
+elif [ "$INTERVAL" -gt 0 ] && [ $((COUNT % INTERVAL)) -eq 0 ]; then
+  cat <<'HOOK_EOF'
+{
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "CHECKPOINT: AFTER responding to this message, you MUST save new knowledge from this session via write_memory or append_memory."
+  }
+}
+HOOK_EOF
+fi
+`;
+                const hookPath = path.join(hooksDir, "hmem-startup.sh");
+                fs.writeFileSync(hookPath, hookScript, { mode: 0o755 });
+                console.log(`\n  [ok] Hook script: ${hookPath}`);
+                // Add hook to settings.json
+                const settingsPath = path.join(HOME, ".claude", "settings.json");
+                let settings = {};
+                try {
+                    settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+                }
+                catch { }
+                if (!settings.hooks)
+                    settings.hooks = {};
+                if (!settings.hooks.UserPromptSubmit)
+                    settings.hooks.UserPromptSubmit = [];
+                // Check if hook already exists
+                const hasHook = settings.hooks.UserPromptSubmit.some((h) => h.hooks?.some((hh) => hh.command?.includes("hmem-startup")));
+                if (!hasHook) {
+                    settings.hooks.UserPromptSubmit.push({
+                        hooks: [{
+                                type: "command",
+                                command: hookPath,
+                                timeout: 5,
+                            }],
+                    });
+                    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+                    console.log(`  [ok] Hook registered in: ${settingsPath}`);
+                }
+                else {
+                    console.log(`  [ok] Hook already registered in settings.json`);
+                }
+            }
+        }
         console.log(`\n  Done! Restart your AI tool(s) to activate hmem.\n`);
         console.log(`  Memory directory: ${absMemDir}`);
         console.log(`\n  Install skills (slash commands):\n`);
