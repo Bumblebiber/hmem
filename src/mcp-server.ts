@@ -1511,6 +1511,19 @@ server.tool(
           }
         } catch { /* findContext may fail on empty/new entries */ }
 
+        // Inject R-entries (rules) — always shown at project load
+        const ruleEntries = hmemStore.read({
+          prefix: "R",
+          depth: 1,
+          agentRole: (ROLE || "worker") as AgentRole,
+        }).filter(r => !r.obsolete && !r.irrelevant);
+        if (ruleEntries.length > 0) {
+          lines.push("  Rules:");
+          for (const r of ruleEntries) {
+            lines.push(`    ${r.id}  ${r.title}`);
+          }
+        }
+
         const output = lines.join("\n");
         const outputTokens = Math.round(output.length / 4);
         const totalStats = hmemStore.stats();
