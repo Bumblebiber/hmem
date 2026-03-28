@@ -27,6 +27,10 @@ It automatically:
 4. Asks the user what to sync (push, pull, merge, or skip)
 5. Verifies the result
 
+**Custom / Self-hosted servers:** The `--server-url` flag accepts any hmem-sync compatible
+server, not just the default. Examples: `https://yourdomain.com/hmem-sync` for a self-hosted
+instance, or `http://localhost:3100` for a local development server.
+
 For non-interactive use:
 ```bash
 # New account
@@ -34,6 +38,9 @@ npx hmem-sync connect --user-id myname --passphrase "pass" --hmem-path ~/.hmem/ 
 
 # Existing account
 npx hmem-sync connect --user-id myname --passphrase "pass" --token abc123... --hmem-path ~/.hmem/ --agent-id DEVELOPER
+
+# Custom server
+npx hmem-sync connect --server-url http://localhost:3100 --user-id myname --passphrase "pass" --hmem-path ~/.hmem/ --agent-id DEVELOPER
 ```
 
 The legacy `setup` and `restore` commands still work for backwards compatibility.
@@ -104,10 +111,10 @@ The user needs these values on their other devices:
 - **Token** — from `.hmem-sync-token`
 - **Passphrase** — the one they chose in Step 2
 
-Show the user where these files are:
+Show the user where these files are (adjust AGENT_ID to match your `HMEM_AGENT_ID`):
 ```bash
-cat $(dirname $(echo $HMEM_PROJECT_DIR)/Agents/*//*.hmem)/.hmem-sync-config.json
-cat $(dirname $(echo $HMEM_PROJECT_DIR)/Agents/*//*.hmem)/.hmem-sync-token
+cat "$HMEM_PROJECT_DIR/Agents/$HMEM_AGENT_ID/.hmem-sync-config.json"
+cat "$HMEM_PROJECT_DIR/Agents/$HMEM_AGENT_ID/.hmem-sync-token"
 ```
 
 ---
@@ -250,3 +257,9 @@ Config files are always stored next to the .hmem file:
 .hmem-sync-token        — auth token (chmod 600, never commit)
 .hmem-sync.json         — sync state (last push/pull timestamps)
 ```
+
+## Multi-Server Sync
+
+For redundancy, you can configure multiple servers in `hmem.config.json` as an array.
+hmem-sync will push to and pull from all configured servers, so data survives if one
+server goes down. See the hmem-sync README for the exact schema.

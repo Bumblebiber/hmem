@@ -1,191 +1,141 @@
 ---
 name: hmem-config
 description: >
-  View and change hmem settings, including sync configuration. Use when the user
-  types /hmem-config or asks to change memory settings, adjust parameters, configure
-  hmem, or set up / manage hmem-sync for cross-device synchronization.
+  View and change hmem memory settings, hooks, sync, and checkpoint configuration.
+  Use this skill whenever the user types /hmem-config, asks to change memory settings,
+  adjust parameters, tune bulk-read behavior, configure auto-checkpoints, manage
+  hmem-sync, or troubleshoot memory-related issues. Also trigger when the user asks
+  things like "how often does auto-save fire", "why is my context so large",
+  "change checkpoint to auto", "how many tokens does startup cost", or "set up sync".
 ---
 
 # hmem-config — View and Change Settings
 
-## Step 1 — Find the config file
+This skill guides you through reading, explaining, and updating hmem's configuration. The config controls how memory is stored, displayed, checkpointed, and synced across devices.
 
-The config file is `hmem.config.json` in the `HMEM_PROJECT_DIR` directory.
+## Locate and read the config
 
-Find it:
-```bash
-# Check the MCP environment variable first
-echo $HMEM_PROJECT_DIR
+The config lives at `hmem.config.json` inside the hmem project directory. With an agent ID, it's typically at `~/.hmem/Agents/<NAME>/hmem.config.json`. Without one, `~/.hmem/hmem.config.json`.
 
-# Common locations:
-# Global:  ~/.hmem/hmem.config.json
-# Project: ./hmem.config.json
-```
+Read the file directly — don't ask the user where it is. If it doesn't exist, offer to create one (only non-default values need to be specified).
 
-If the file does not exist, offer to create it with defaults (see Step 3).
-
-## Step 2 — Read and display current settings
-
-Read the file and show the user a clear table of current values vs. defaults:
-
-| Parameter | Current value | Default | What it does |
-|-----------|--------------|---------|--------------|
-| `maxL1Chars` | … | 120 | Max characters for Level 1 summaries (the one-liner shown at session start). Keep short — this is what the agent always sees. |
-| `maxLnChars` | … | 50000 | Max characters for deeper levels (L2–L5). Controls how much detail you can store per node. |
-| `maxDepth` | … | 5 | How many nesting levels are available (1–5). 5 is the maximum. |
-| `defaultReadLimit` | … | 100 | Max entries returned by a single `read_memory()` call. |
-| `maxTitleChars` | … | 50 | Max characters for entry titles (auto-extracted from first line). Shown in `titles_only` mode and as navigation labels. |
-| `accessCountTopN` | … | 5 | Top-N most-accessed entries always get L2 inlined in bulk reads ("organic favorites"). These are shown with a [★] marker. Set to 0 to disable. |
-| `prefixes` | … | P,L,T,E,D,M,S,N,H,R | (P)roject, (L)esson, (T)ask, (E)rror, (D)ecision, (M)ilestone, (S)kill, (N)avigator, (H)uman. Custom prefixes merged with defaults. |
-| `prefixDescriptions` | … | (see below) | Human-readable descriptions for each prefix category, used as group headers in bulk reads. |
-| `bulkReadV2.topAccessCount` | … | 3 | Number of top-accessed entries to expand in V2 bulk reads. |
-| `bulkReadV2.topNewestCount` | … | 5 | Number of newest entries to expand in V2 bulk reads. |
-| `bulkReadV2.topObsoleteCount` | … | 3 | Number of obsolete entries to keep visible ("biggest mistakes"). |
-| `bulkReadV2.topSubnodeCount` | … | 3 | Number of entries with the most sub-nodes to always expand. Shown with `[≡]` marker. |
-
-### Bulk-Read Algorithm (V2.1)
-
-The bulk-read algorithm groups entries by prefix category and uses smart expansion:
-
-- **Expanded entries**: newest (top N), most-accessed (top N), and all favorites → show ALL L2 children + links
-- **[♥] Favorites**: always expanded, marked with [♥]
-- **[★] Top-accessed**: most-accessed entries per prefix, marked with [★]
-- **Obsolete entries**: top N by weighted score shown with `[!]`, rest hidden
-- **Per-prefix guarantee**: each category's youngest + most-accessed entry is always expanded
-- **Time-weighted scoring**: "most-accessed" uses `access_count / log2(age_in_days + 2)` — newer entries with fewer accesses can outrank older ones. This prevents old entries from dominating just because they had more time to accumulate accesses.
-
-**Compact title listing** — `read_memory(titles_only=true)`:
-- V2 selection still applies (only the important entries are shown)
-- But output is compact: one line per entry with `(N)` child count hints
-- Expanded entries (favorites, top-accessed) show their L2 children titles inline
-- Use for quick orientation or as a table of contents
-
-Tune via `bulkReadV2`:
-```json
-{
-  "bulkReadV2": {
-    "topAccessCount": 3,
-    "topNewestCount": 5,
-    "topObsoleteCount": 3,
-    "topSubnodeCount": 3
-  }
-}
-```
-
-### prefixDescriptions
-
-Default descriptions used as group headers in bulk reads:
+The config uses a unified format with a `"memory"` block and an optional `"sync"` block:
 
 ```json
 {
-  "prefixDescriptions": {
-    "P": "(P)roject experiences and summaries",
-    "L": "(L)essons learned and best practices",
-    "T": "(T)asks and work items",
-    "E": "(E)rrors encountered and their fixes",
-    "D": "(D)ecisions and their rationale",
-    "M": "(M)ilestones and achievements",
-    "S": "(S)kills and technical knowledge",
-    "N": "(N)avigation and context notes",
-    "H": "(H)uman — knowledge about the user",
-    "R": "(R)ules — user-defined rules and constraints"
-  }
+  "memory": { ... },
+  "sync": { ... }
 }
 ```
 
-Custom prefixes automatically get their name as the description. Override with explicit descriptions in config.
+## Show current settings
 
-## Step 3 — Ask the user what to change
+Present a table of current values vs. defaults. Only highlight values that differ from defaults — the user cares about what they've customized, not the full list.
 
-Ask the user which parameter(s) they want to adjust. For each one:
+### Core parameters
 
-1. Explain the tradeoff (e.g. higher `maxL1Chars` = more context at startup but wastes tokens)
-2. Show the current value and the recommended range
-3. Ask for the new value
-4. Validate the input (numbers must be positive integers, tiers must be valid JSON)
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `maxCharsPerLevel` | [200, 2500, 10000, 25000, 50000] | Character limits per tree level [L1–L5]. L1 is always loaded at startup, so keeping it short saves tokens across every session. L5 is raw data, rarely accessed. |
+| `maxDepth` | 5 | Tree depth (1–5). Most users need 5. Lower values save storage but lose granularity. |
+| `defaultReadLimit` | 100 | Max entries per bulk read. Lower = faster startup, higher = more complete overview. |
+| `maxTitleChars` | 50 | Auto-extracted title length. Titles are navigation labels — too short truncates meaning, too long wastes space. |
+| `accessCountTopN` | 5 | Entries with highest access count get [★] and auto-expand in bulk reads. These are "organic favorites" — the things the agent keeps coming back to. |
 
-**Recommended ranges:**
+### Checkpoint and session parameters (v5+)
 
-| Parameter | Min | Max | Notes |
-|-----------|-----|-----|-------|
-| `maxL1Chars` | 60 | 200 | Below 60: too terse. Above 200: wastes token budget at every spawn. |
-| `maxLnChars` | 1000 | 100000 | Higher = more detail possible, but rarely read. |
-| `maxDepth` | 2 | 5 | 3 is enough for most users. 5 for complex multi-agent setups. |
-| `defaultReadLimit` | 20 | 500 | Lower if startup feels slow. Higher if you have many entries. |
-| `maxTitleChars` | 20 | 100 | Below 30: titles truncated too aggressively. 50 is a good default. |
-| `accessCountTopN` | 0 | 20 | 0 = disabled. 5 is a good default. Raise if you have many frequently-accessed entries you want always visible. |
-| `bulkReadV2.topAccessCount` | 0 | 20 | How many most-accessed entries (by time-weighted score) get full expansion. |
-| `bulkReadV2.topNewestCount` | 0 | 20 | How many newest entries get full expansion. |
-| `bulkReadV2.topObsoleteCount` | 0 | 20 | How many obsolete entries stay visible in bulk reads. |
-| `bulkReadV2.topSubnodeCount` | 0 | 20 | How many entries with the most sub-nodes always get expanded. 0 = disabled. |
+These control the automatic knowledge extraction pipeline:
 
-**For custom prefixes:** Ask for a single letter + label (e.g. `R = Research`). Remind the user that custom prefixes are added on top of the defaults — they don't replace them.
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `checkpointMode` | `"remind"` | **`"auto"`** spawns a Haiku subagent in the background every N exchanges — it reads the conversation, extracts lessons/errors/decisions, and writes them via MCP tools. The main agent is never interrupted. **`"remind"`** injects a prompt asking the main agent to save manually — simpler but interrupts flow. |
+| `checkpointInterval` | 20 | Exchanges between checkpoints. Counted in the active O-entry, not per session — so 10 messages on your laptop + 10 on your server = checkpoint fires at 20. Set to 0 to disable. |
+| `recentOEntries` | 10 | How many recent session logs to show when loading a project. All entries include full user/agent exchanges (L4/L5), not just titles. Higher = more context but more tokens at project load. |
+| `contextTokenThreshold` | 100000 | When cumulative hmem output exceeds this, the agent is told to flush context and /clear. Prevents runaway token usage in long sessions. Set to 0 to disable. |
 
-## Step 4 — Write the updated config
+### Bulk-read tuning
 
-Write the updated `hmem.config.json`. Only include keys that differ from defaults — keep the file clean.
+The bulk-read algorithm decides which entries get expanded (full L2 detail) vs. compressed (title only). Most users don't need to touch these — the defaults work well up to ~500 entries.
 
-Then tell the user:
-- Which values were changed
-- That the change takes effect **immediately** — no restart needed
-- That `maxL1Chars` and `maxLnChars` only affect new entries written after the change (existing entries are not reformatted)
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `bulkReadV2.topNewestCount` | 5 | Newest entries expanded. Increase if you want more recent context at startup. |
+| `bulkReadV2.topAccessCount` | 3 | Most-accessed entries expanded (time-weighted: `access_count / log2(age_days + 2)`). |
+| `bulkReadV2.topObsoleteCount` | 3 | Obsolete entries kept visible — "biggest mistakes" are still worth seeing. |
+| `bulkReadV2.topSubnodeCount` | 3 | Entries with most children expanded. These tend to be the most detailed/important. |
 
----
+### Prefixes
 
-## Step 5 — hmem-sync Status (check automatically)
+Default: P, L, T, E, D, M, S, N, H, R, O, I. Custom prefixes are merged with defaults — they don't replace them. Each prefix can have a custom description used as group header in bulk reads.
 
-Check if hmem-sync is installed and configured. Run this check as part of every /hmem-config invocation.
+## Help the user make changes
 
-```bash
-# Check if hmem-sync is installed
-which hmem-sync 2>/dev/null || npx hmem-sync --help 2>/dev/null
+For each parameter the user wants to change:
+
+1. **Explain the tradeoff** in plain language — what gets better, what gets worse
+2. **Show the recommended range** (see below)
+3. **Validate** before writing — numbers must be positive, arrays must be valid JSON
+
+### Recommended ranges
+
+| Parameter | Range | Guidance |
+|-----------|-------|----------|
+| `maxCharsPerLevel[0]` (L1) | 60–300 | Below 60 is too terse for useful summaries. Above 300 wastes tokens on every bulk read — L1 is loaded at every session start. |
+| `maxCharsPerLevel[4]` (L5) | 1000–100000 | Raw data storage. Higher allows more verbatim content but L5 is rarely loaded. |
+| `maxDepth` | 2–5 | 3 suffices for simple setups. 5 for multi-agent or complex projects. |
+| `checkpointMode` | `"auto"` or `"remind"` | Recommend `"auto"` — it's non-disruptive and produces better results because Haiku has MCP access to check for duplicates. |
+| `checkpointInterval` | 0–100 | 20 is a good balance. Lower = more frequent saves (more Haiku cost). 0 = disabled. |
+| `recentOEntries` | 0–20 | 10 is the sweet spot. Each entry with exchanges costs ~200-500 tokens in `load_project`. |
+| `contextTokenThreshold` | 0–500000 | 100k is recommended for most models. Increase for 1M-context models. |
+
+### Common recipes
+
+**"I want auto-checkpoints":**
+```json
+{ "memory": { "checkpointMode": "auto", "checkpointInterval": 20 } }
 ```
 
-### If hmem-sync is installed:
+**"Startup is too slow / uses too many tokens":**
+Reduce `recentOEntries` (e.g., 5), `bulkReadV2.topNewestCount` (e.g., 3), or `maxCharsPerLevel[0]` (e.g., 150).
 
-Check config and status:
-```bash
-npx hmem-sync status
+**"I have 500+ entries and bulk reads are noisy":**
+Increase `bulkReadV2.topAccessCount` and decrease `topNewestCount` — favor proven entries over new ones.
+
+## Write the updated config
+
+Write `hmem.config.json` with only non-default values. The config uses a `"memory"` wrapper:
+
+```json
+{
+  "memory": {
+    "checkpointMode": "auto"
+  },
+  "sync": { ... }
+}
 ```
 
-Show the user:
-| Setting | Value |
-|---------|-------|
-| Server URL | (from status output) |
-| User ID | (from status output) |
-| Last push | (timestamp or "never") |
-| Last pull | (timestamp or "never") |
-| Sync secrets | yes/no |
+After writing, tell the user:
+- Which values changed
+- Changes take effect **immediately** — no restart needed
+- `maxCharsPerLevel` only affects new entries (existing entries are not reformatted)
 
-Also check if `HMEM_SYNC_PASSPHRASE` is set in the MCP config (`.mcp.json` env block).
-If missing, warn: "Auto-sync is disabled. Add `HMEM_SYNC_PASSPHRASE` to your .mcp.json env to enable automatic push/pull on every read/write."
+## Check hmem-sync status
 
-### If hmem-sync is NOT installed:
+Run this check as part of every /hmem-config invocation.
 
-Tell the user:
+**If installed** (`which hmem-sync`): run `npx hmem-sync status` and show server URL, user ID, last push/pull timestamps, and whether `HMEM_SYNC_PASSPHRASE` is set in `.mcp.json` (needed for auto-sync).
 
-> **hmem-sync** enables zero-knowledge encrypted sync between devices. Your memories are encrypted client-side with AES-256-GCM before leaving your machine — the server only sees opaque blobs.
->
-> This lets you:
-> - Work on your PC, then continue on your laptop with full memory
-> - Back up your memories to a server you control
-> - Share memories between Claude Code, Gemini CLI, and OpenCode
->
-> Install: `npm install -g hmem-sync`
-> Setup: `npx hmem-sync setup` (first device) or `npx hmem-sync restore` (additional devices)
->
-> Want me to install it now?
-
-If the user says yes:
+**If not installed**: explain that hmem-sync enables zero-knowledge encrypted cross-device sync (AES-256-GCM, server sees only opaque blobs), and offer to install it:
 ```bash
 npm install -g hmem-sync
-npx hmem-sync setup
+npx hmem-sync connect
 ```
 
 ### Sync troubleshooting
 
-Common issues:
-- **"Config not found"** → run `npx hmem-sync setup` or `npx hmem-sync restore`
-- **401 Token verification failed** → passphrase has special characters that need shell escaping. Use `--passphrase` flag or set `HMEM_SYNC_PASSPHRASE` in .mcp.json env.
-- **0 entries after pull** → check `HMEM_AGENT_ID` matches between devices. Different agent IDs = different .hmem files.
-- **Updates always global**: `npm update -g hmem-sync` (NOT inside a project directory)
+| Problem | Fix |
+|---------|-----|
+| "Config not found" | Run `npx hmem-sync connect` |
+| 401 Token verification failed | Passphrase has special chars — set `HMEM_SYNC_PASSPHRASE` in .mcp.json env |
+| 0 entries after pull | `HMEM_AGENT_ID` must match between devices |
+| Update | `npm update -g hmem-sync` (always global, never inside a project) |

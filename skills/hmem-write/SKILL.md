@@ -330,7 +330,13 @@ Only use `write_memory` when:
 
 ## When to save?
 
-**Mandatory before terminating.** Only save what is still valuable in 6 months.
+**Checkpoint mode matters.** Check `checkpointMode` in hmem.config.json:
+
+- **`"auto"` (recommended):** A background Haiku subagent handles checkpoints automatically every N exchanges. It reads recent O-entry exchanges, calls `read_memory` to avoid duplicates, and writes L/D/E entries + handoff via MCP tools. **You do NOT need to write entries yourself** unless the user explicitly asks you to save something specific. The auto-checkpoint handles routine knowledge extraction.
+
+- **`"remind"`:** You will receive a CHECKPOINT reminder every N messages. When you see it, save key learnings yourself using `write_memory` / `append_memory`.
+
+**In both modes:** Only save what is still valuable in 6 months.
 
 | Save | Don't save |
 |------|-----------|

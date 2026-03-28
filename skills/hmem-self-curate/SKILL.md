@@ -39,11 +39,37 @@ Work through one prefix at a time. Load all entries of a prefix with full depth:
 read_memory(prefix="P", show_all=true)
 ```
 
-This bypasses V2 selection and session cache — every entry is expanded with L2+L3 children visible. Review each entry in the output directly — no need to drill into individual entries.
+This bypasses the bulk-read algorithm and session cache — every entry is expanded with L2+L3 children visible. Review each entry in the output directly — no need to drill into individual entries.
 
-**Order:** Start with the prefix that has the most entries (usually P), then move to L, E, D, etc.
+**Order:** Start with the prefix that has the most entries (usually P), then move to L, E, D, O, etc.
 
 If context overflows mid-prefix, continue with the remaining entries — your memory survives compression.
+
+---
+
+## O-Entries (Session Logs)
+
+O-entries accumulate automatically via the Stop hook — each session creates one. They provide session continuity when `load_project` reconstructs context for a project.
+
+**Curation rules for O-entries:**
+- **Keep recent ones** (last 2 weeks) — they give you and `load_project` context about what happened recently.
+- **Mark older ones irrelevant** once they no longer add value: `update_memory(id="O00XX", content="...", irrelevant=true)`
+- **Never mark recent O-entries obsolete** — they are not "wrong", just temporal.
+- Review O-entries last, after all other prefixes.
+
+---
+
+## Bulk Operations
+
+For large-scale curation across many entries, use the bulk tools instead of updating one by one:
+
+| Tool | Purpose |
+|------|---------|
+| `update_many(updates=[...])` | Batch-update multiple entries at once (content, flags, etc.) |
+| `tag_bulk(ids=[...], add_tags=[...], remove_tags=[...])` | Add or remove tags across many entries in one call |
+| `tag_rename(old_tag="...", new_tag="...")` | Rename a tag globally across all entries |
+
+These are especially useful when a curation pass reveals a pattern (e.g., 10 entries that all need the same tag added, or a batch of stale entries to mark irrelevant).
 
 ---
 
@@ -89,7 +115,7 @@ Look for entries covering the same topic (common with P entries). Merge them:
 
 1. Pick the **keeper** (the more complete one)
 2. Copy unique info from the duplicate: `append_memory(id="P0029", content="Session from duplicate\n\tDetail carried over")`
-3. **Delete** the duplicate: `delete_agent_memory(agent_name="YOUR_NAME", entry_id="P0031")`
+3. **Delete** the duplicate: `delete_agent_memory(agent_name=HMEM_AGENT_ID, entry_id="P0031")` — use the value of the `HMEM_AGENT_ID` environment variable as your agent name
 
 **Delete, don't mark irrelevant.** Irrelevant duplicates still show up with `show_all=true` and flood the context on future curation runs. True duplicates (entire content exists in the keeper) must be deleted to keep the memory clean.
 
@@ -148,5 +174,8 @@ Check `[♥]` markers in the output.
 | `update_memory(id, content, obsolete=true)` | Mark as wrong (needs [✓ID]) |
 | `append_memory(id, content)` | Merge info into keeper |
 | `move_memory(source_id, target_parent_id)` | Relocate misplaced sub-node (updates all refs) |
-| `delete_agent_memory(agent_name, entry_id)` | Delete true duplicates |
+| `delete_agent_memory(agent_name, entry_id)` | Delete true duplicates (use `HMEM_AGENT_ID` env var) |
+| `update_many(updates=[...])` | Batch-update multiple entries at once |
+| `tag_bulk(ids=[...], add_tags, remove_tags)` | Add/remove tags across many entries |
+| `tag_rename(old_tag, new_tag)` | Rename a tag globally |
 | `read_memory(show_obsolete=true, prefix="X")` | Review already-obsolete entries |

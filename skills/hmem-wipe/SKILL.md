@@ -1,49 +1,75 @@
 ---
 name: hmem-wipe
 description: >
-  Flush conversation context to hmem and prepare for /clear. Use when:
+  Prepare for /clear by optionally saving high-value knowledge. Use when:
   - User types /wipe
   - Context threshold warning appears (100k tokens)
   - User says "context aufräumen", "clear machen", "wipe"
-  Saves the current session, then instructs user to /clear for re-injection.
+  Handles pre-clear cleanup, then instructs user to /clear for automatic context restoration.
 ---
 
-# Wipe — Save & Clear Context
+# Wipe — Prepare & Clear Context
 
-You MUST follow these steps in order:
+Follow these steps in order.
 
-## Step 1: Save pending knowledge
+## Step 1: Optionally save high-value knowledge
 
-Save any unsaved insights from this session:
-- New lessons learned → `write_memory(prefix="L", ...)`
-- Project progress → `append_memory(id="P00XX.7", ...)` (Protocol node)
-- Decisions made → `write_memory(prefix="D", ...)`
-- Errors encountered → `write_memory(prefix="E", ...)`
+Check `checkpointMode` in hmem.config.json to decide what to do:
 
-Skip if you already saved recently (last checkpoint < 5 messages ago).
+### checkpointMode: "auto"
 
-## Step 2: Title O-entries
+The Haiku subagent already extracts L/D/E entries every 20 exchanges automatically.
+Skip manual writes unless you have **specific high-value knowledge** that:
+- Was discovered in the last few exchanges (too recent for the last auto-checkpoint)
+- Is critical enough that losing it would cost significant rework
+- Is NOT already covered by a recent auto-checkpoint
 
-Run the title script in the background — it spawns Haiku to title untitled O-entries:
+If nothing qualifies, proceed directly to Step 2.
 
-```bash
-/home/bbbee/.claude/hooks/hmem-title-o-entries.sh &
-```
+### checkpointMode: "remind"
 
-## Step 3: Tell the user
+Manually save unsaved insights from this project context:
+- New lessons learned: `write_memory(prefix="L", ...)`
+- Project progress: `append_memory(id="P00XX.7", ...)` (Protocol node)
+- Decisions made: `write_memory(prefix="D", ...)`
+- Errors encountered: `write_memory(prefix="E", ...)`
+
+Skip if the last checkpoint was fewer than 5 messages ago.
+
+### Why gate on checkpointMode?
+
+Redundant writes waste tokens and create duplicates that clutter memory.
+Auto-checkpoints already call `read_memory` to deduplicate before writing —
+manual writes during wipe bypass that check and risk creating noise.
+
+## Step 2: Tell the user to /clear
+
+O-entries are auto-logged by the Stop hook — every exchange is already saved
+to the active project's O-entry. No need to manually create O-entries or call
+`flush_context` for conversation history.
 
 Reply with exactly:
 
-> Wissen gesichert, O-Titles werden im Hintergrund erstellt. Tippe jetzt `/clear` — der Hook injiziert automatisch den komprimierten Kontext.
+> Context ready for clear. Type `/clear` — the SessionStart hook will automatically restore your project context.
 
-Do NOT attempt to run /clear yourself — it's a built-in CLI command only the user can execute.
+Do NOT attempt to run /clear yourself — it is a built-in CLI command only the user can execute.
 
 ## What happens after /clear
 
 The `SessionStart[clear]` hook automatically:
 1. Resets the MCP session cache
-2. Injects the last 20 conversation messages from the transcript
+2. Injects recent conversation exchanges from the project's O-entry transcript
 3. Injects the active project briefing (overview expanded)
 4. Injects recent O-entry titles + rules
 
-The agent then has full context to continue working.
+The agent then calls `load_project` and has full context to continue working.
+No manual restoration needed.
+
+## Why this flow works
+
+- **O-entries are covered.** The Stop hook logs every exchange to the active
+  project's O-entry. Wipe does not need to handle conversation history.
+- **Checkpoints are covered (auto mode).** The Haiku subagent extracts knowledge
+  every 20 exchanges. Wipe only needs to catch the tail end, if anything.
+- **Context restoration is covered.** The SessionStart[clear] hook handles
+  re-injection automatically. The agent just needs the user to type /clear.
