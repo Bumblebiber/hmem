@@ -565,13 +565,23 @@ export async function runInit(args: string[] = []): Promise<void> {
         const hookScript = `#!/bin/bash
 # hmem memory hook (installed by hmem init):
 # - First message: remind agent to call read_memory()
-# - Every 20 messages: remind agent to save new knowledge
+# - Every N messages: remind agent to save new knowledge
+# - N = checkpointInterval from hmem.config.json (default: 20, 0 = disabled)
 
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
 [ -z "$SESSION_ID" ] && SESSION_ID="global"
-COUNTER_FILE="/tmp/claude-hmem-counter-\${SESSION_ID}"
 
+INTERVAL=20
+for CFG in "$HOME/.hmem/hmem.config.json" "$HOME/.hmem/Agents/*/hmem.config.json"; do
+  if [ -f "$CFG" ]; then
+    VAL=$(grep -o '"checkpointInterval":[0-9]*' "$CFG" 2>/dev/null | head -1 | cut -d: -f2)
+    [ -n "$VAL" ] && INTERVAL=$VAL
+    break
+  fi
+done
+
+COUNTER_FILE="/tmp/claude-hmem-counter-\${SESSION_ID}"
 if [ -f "$COUNTER_FILE" ]; then COUNT=$(cat "$COUNTER_FILE"); else COUNT=0; fi
 COUNT=$((COUNT + 1))
 echo "$COUNT" > "$COUNTER_FILE"
@@ -585,7 +595,7 @@ if [ "$COUNT" -eq 1 ]; then
   }
 }
 HOOK_EOF
-elif [ $((COUNT % 20)) -eq 0 ]; then
+elif [ "$INTERVAL" -gt 0 ] && [ $((COUNT % INTERVAL)) -eq 0 ]; then
   cat <<'HOOK_EOF'
 {
   "hookSpecificOutput": {

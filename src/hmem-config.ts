@@ -78,6 +78,11 @@ export interface HmemConfig {
     accessMin?: number;
     accessMax?: number;
   };
+  /**
+   * Number of messages between automatic save reminders (checkpoint hook).
+   * Set to 0 to disable. Default: 20.
+   */
+  checkpointInterval: number;
   /** Sync configuration — single server or array for multi-server redundancy. */
   sync?: SyncConfigBlock | SyncConfigBlock[];
 }
@@ -143,6 +148,7 @@ export const DEFAULT_CONFIG: HmemConfig = {
   maxTitleChars: 50,
   accessCountTopN: 5,
   prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
+  checkpointInterval: 20,
   bulkReadV2: {
     topAccessCount: 3,
     topNewestCount: 5,
@@ -245,6 +251,7 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     if (typeof memoryRaw.defaultReadLimit === "number" && memoryRaw.defaultReadLimit > 0) cfg.defaultReadLimit = memoryRaw.defaultReadLimit;
     if (typeof memoryRaw.accessCountTopN === "number" && memoryRaw.accessCountTopN >= 0) cfg.accessCountTopN = memoryRaw.accessCountTopN;
     if (typeof memoryRaw.maxTitleChars === "number" && memoryRaw.maxTitleChars >= 10 && memoryRaw.maxTitleChars <= 120) cfg.maxTitleChars = memoryRaw.maxTitleChars;
+    if (typeof memoryRaw.checkpointInterval === "number" && memoryRaw.checkpointInterval >= 0) cfg.checkpointInterval = memoryRaw.checkpointInterval;
 
     // Prefixes: merge user-defined with defaults (user can override or add)
     if (memoryRaw.prefixes && typeof memoryRaw.prefixes === "object" && !Array.isArray(memoryRaw.prefixes)) {
