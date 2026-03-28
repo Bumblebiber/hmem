@@ -1131,7 +1131,18 @@ server.tool(
             const projectList = projects.length > 0
               ? projects.map(e => `  ${e.id}  ${e.title}`).join("\n")
               : "  (no projects yet — create one with write_memory(prefix=\"P\", content=\"Name | Status | Stack | Description\", tags=[...]))";
-            return {
+            // Inject recent O-entries even without active project (global, no project filter)
+            let recentOHint = "";
+            if (hmemConfig.recentOEntries > 0) {
+              const recentO = hmemStore.getRecentOEntries(hmemConfig.recentOEntries);
+              if (recentO.length > 0) {
+                const oLines = recentO.map(o => `  ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
+                recentOHint = `\nRecent sessions:\n${oLines.join("\n")}\n`;
+                sessionCache.registerDelivered(recentO.map(o => o.id));
+              }
+            }
+
+            return trackTokens({
               content: [{
                 type: "text" as const,
                 text: `⚠ ACTION REQUIRED: No project is active.\n\n` +
@@ -1141,9 +1152,9 @@ server.tool(
                   `  write_memory(prefix="P", content="Name | Status | Stack | Description", tags=["#project"])\n\n` +
                   `Available projects:\n${projectList}\n\n` +
                   `Session logs (O-entries) will be linked to the active project.\n` +
-                  `Memory data is withheld until a project is activated.`,
+                  `Memory data is withheld until a project is activated.` + recentOHint,
               }],
-            };
+            });
           }
         }
 
