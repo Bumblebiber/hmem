@@ -30,6 +30,11 @@ switch (command) {
         await contextInject();
         break;
     }
+    case "checkpoint": {
+        const { checkpoint } = await import("./cli-checkpoint.js");
+        await checkpoint();
+        break;
+    }
     case "version":
     case "--version":
     case "-v":
@@ -44,6 +49,7 @@ Usage:
   hmem update-skills  Copy/update skill files to detected AI tools
   hmem log-exchange   Log a chat exchange to active O-entry (called by Stop hook)
   hmem context-inject Output compressed context for re-injection after /clear
+  hmem checkpoint     Extract knowledge from recent exchanges via Haiku (background)
   hmem version        Show version
 
 Environment variables (for serve):

@@ -480,13 +480,19 @@ export async function runInit(args = []) {
         // Step 8: Install auto-memory hooks (Claude Code only)
         if (selectedTools.includes("claude-code")) {
             const hookChoice = await askChoice("Install auto-memory hooks? (Claude Code only)\n" +
-                "  This adds a hook that automatically loads your memory at session start\n" +
-                "  and reminds the agent to save knowledge every 20 messages.", ["Yes — install hooks", "No — I'll set them up manually"]);
+                "  This adds hooks for:\n" +
+                "  - Session start: remind agent to call read_memory()\n" +
+                "  - Every N messages: remind agent to save knowledge (configurable)\n" +
+                "  - Every response: log user/agent exchanges to session history (O-entries)\n" +
+                "  - After /clear: re-inject project context automatically\n" +
+                "  - Async: auto-title untitled session logs via Haiku", ["Yes — install hooks", "No — I'll set them up manually"]);
             if (hookChoice === 0) {
                 const hooksDir = path.join(HOME, ".claude", "hooks");
                 fs.mkdirSync(hooksDir, { recursive: true });
-                // Write the hook script
-                const hookScript = `#!/bin/bash
+                // Resolve hmem binary path (npx or global)
+                const hmemBin = "hmem";
+                // --- Hook 1: UserPromptSubmit (startup + checkpoint reminder) ---
+                const startupScript = `#!/bin/bash
 # hmem memory hook (installed by hmem init):
 # - First message: remind agent to call read_memory()
 # - Every N messages: remind agent to save knowledge (configurable)
@@ -505,9 +511,9 @@ INTERVAL=20
 MODE="remind"
 for CFG in "$HOME/.hmem/hmem.config.json" "$HOME/.hmem/Agents/*/hmem.config.json"; do
   if [ -f "$CFG" ]; then
-    VAL=$(grep -o '"checkpointInterval":[0-9]*' "$CFG" 2>/dev/null | head -1 | cut -d: -f2)
+    VAL=$(grep -o '"checkpointInterval" *: *[0-9]*' "$CFG" 2>/dev/null | head -1 | grep -o '[0-9]*$')
     [ -n "$VAL" ] && INTERVAL=$VAL
-    MVAL=$(grep -o '"checkpointMode":"[^"]*"' "$CFG" 2>/dev/null | head -1 | cut -d'"' -f4)
+    MVAL=$(grep -o '"checkpointMode" *: *"[^"]*"' "$CFG" 2>/dev/null | head -1 | grep -o '"[^"]*"$' | tr -d '"')
     [ -n "$MVAL" ] && MODE=$MVAL
     break
   fi
@@ -527,7 +533,8 @@ if [ "$COUNT" -eq 1 ]; then
   }
 }
 HOOK_EOF
-elif [ "$INTERVAL" -gt 0 ] && [ $((COUNT % INTERVAL)) -eq 0 ]; then
+elif [ "$MODE" = "remind" ] && [ "$INTERVAL" -gt 0 ] && [ $((COUNT % INTERVAL)) -eq 0 ]; then
+  # Remind mode only — auto mode is handled by Stop hook (hmem log-exchange + hmem checkpoint)
   cat <<'HOOK_EOF'
 {
   "hookSpecificOutput": {
@@ -538,10 +545,111 @@ elif [ "$INTERVAL" -gt 0 ] && [ $((COUNT % INTERVAL)) -eq 0 ]; then
 HOOK_EOF
 fi
 `;
-                const hookPath = path.join(hooksDir, "hmem-startup.sh");
-                fs.writeFileSync(hookPath, hookScript, { mode: 0o755 });
-                console.log(`\n  [ok] Hook script: ${hookPath}`);
-                // Add hook to settings.json
+                // --- Hook 2: Stop — log-exchange (synchronous, every response) ---
+                const logExchangeScript = `#!/bin/bash
+# hmem Stop hook (installed by hmem init):
+# Logs every user/agent exchange to the active O-entry (session history).
+# Reads Claude Code's Stop hook JSON from stdin and pipes it to hmem log-exchange.
+# Also handles checkpoint reminders (every N messages, configurable).
+
+export HMEM_PROJECT_DIR="\${HMEM_PROJECT_DIR:-$HOME/.hmem}"
+
+# Auto-detect agent ID from Agents/ directory (first agent found)
+if [ -z "$HMEM_AGENT_ID" ]; then
+  for D in "$HMEM_PROJECT_DIR"/Agents/*/; do
+    [ -d "$D" ] && export HMEM_AGENT_ID="\\$(basename "$D")" && break
+  done
+fi
+
+# Skip if hmem is not installed
+command -v ${hmemBin} >/dev/null 2>&1 || exit 0
+
+# Pass stdin through to hmem log-exchange (it reads the hook JSON)
+exec ${hmemBin} log-exchange
+`;
+                // --- Hook 3: Stop — title O-entries (async, Haiku) ---
+                const titleScript = `#!/bin/bash
+# hmem Stop hook — async (installed by hmem init):
+# Generates titles for untitled O-entries using Haiku.
+# Finds O-entries titled "unassigned", reads their first exchanges,
+# and asks Haiku for a one-line summary.
+
+export PATH="$HOME/.bun/bin:$HOME/.nvm/versions/node/v24.14.0/bin:$HOME/.local/bin:$PATH"
+export HOME="\${HOME:-/home/\$(whoami)}"
+
+# Detect hmem database path
+HMEM_DB=""
+for DB in "$HOME/.hmem/Agents/"*"/"*.hmem; do
+  [ -f "$DB" ] && HMEM_DB="$DB" && break
+done
+[ -z "$HMEM_DB" ] && exit 0
+
+# Find untitled O-entries
+UNTITLED=$(node -e "
+const D = require('better-sqlite3');
+const db = new D('$HMEM_DB', {readonly:true});
+const rows = db.prepare(\\"SELECT id FROM memories WHERE prefix = 'O' AND (title IS NULL OR title LIKE 'unassigned%' OR title = '') AND obsolete != 1\\").all();
+for (const r of rows) console.log(r.id);
+db.close();
+" 2>/dev/null)
+
+[ -z "$UNTITLED" ] && exit 0
+
+for OID in $UNTITLED; do
+  EXCHANGES=$(node -e "
+const D = require('better-sqlite3');
+const db = new D('$HMEM_DB', {readonly:true});
+const rows = db.prepare(\\"SELECT title, content FROM memory_nodes WHERE root_id = ? ORDER BY seq LIMIT 5\\").all('$OID');
+for (const r of rows) {
+  const text = (r.title || r.content || '').substring(0, 80).replace(/\\n/g, ' ');
+  if (text.trim()) console.log(text);
+}
+db.close();
+" 2>/dev/null)
+
+  [ -z "$EXCHANGES" ] && continue
+
+  TITLE=\$(claude -p --model haiku "Generate a concise one-line title (max 50 chars) summarizing this session. Reply with ONLY the title, nothing else. Topics discussed:
+\$EXCHANGES" 2>/dev/null | head -1 | tr -d '"' | cut -c1-50)
+
+  [ -z "$TITLE" ] && continue
+
+  node -e "
+const D = require('better-sqlite3');
+const db = new D('$HMEM_DB');
+db.prepare('UPDATE memories SET title = ? WHERE id = ?').run('\$TITLE', '$OID');
+db.close();
+" 2>/dev/null
+
+done
+`;
+                // --- Hook 4: SessionStart[clear] — context inject ---
+                const contextInjectScript = `#!/bin/bash
+# hmem SessionStart hook (installed by hmem init):
+# Re-injects project context after /clear.
+# Reads session JSON from stdin and outputs additionalContext with project state.
+
+export HMEM_PROJECT_DIR="\${HMEM_PROJECT_DIR:-$HOME/.hmem}"
+
+# Skip if hmem is not installed
+command -v ${hmemBin} >/dev/null 2>&1 || exit 0
+
+# Pass stdin through to hmem context-inject
+exec ${hmemBin} context-inject
+`;
+                // Write all hook scripts
+                const hooks = [
+                    { name: "hmem-startup.sh", content: startupScript },
+                    { name: "hmem-log-exchange.sh", content: logExchangeScript },
+                    { name: "hmem-title-o-entries.sh", content: titleScript },
+                    { name: "hmem-context-inject.sh", content: contextInjectScript },
+                ];
+                for (const h of hooks) {
+                    const p = path.join(hooksDir, h.name);
+                    fs.writeFileSync(p, h.content, { mode: 0o755 });
+                    console.log(`\n  [ok] Hook script: ${p}`);
+                }
+                // Register hooks in settings.json
                 const settingsPath = path.join(HOME, ".claude", "settings.json");
                 let settings = {};
                 try {
@@ -550,23 +658,51 @@ fi
                 catch { }
                 if (!settings.hooks)
                     settings.hooks = {};
+                // Helper: check if a hook command is already registered
+                const hasHookCmd = (event, match) => (settings.hooks[event] || []).some((h) => h.hooks?.some((hh) => hh.command?.includes(match)));
+                let changed = false;
+                // UserPromptSubmit — startup + checkpoint
                 if (!settings.hooks.UserPromptSubmit)
                     settings.hooks.UserPromptSubmit = [];
-                // Check if hook already exists
-                const hasHook = settings.hooks.UserPromptSubmit.some((h) => h.hooks?.some((hh) => hh.command?.includes("hmem-startup")));
-                if (!hasHook) {
+                if (!hasHookCmd("UserPromptSubmit", "hmem-startup")) {
                     settings.hooks.UserPromptSubmit.push({
-                        hooks: [{
-                                type: "command",
-                                command: hookPath,
-                                timeout: 5,
-                            }],
+                        hooks: [{ type: "command", command: path.join(hooksDir, "hmem-startup.sh"), timeout: 5 }],
                     });
+                    changed = true;
+                }
+                // Stop — log-exchange (synchronous)
+                if (!settings.hooks.Stop)
+                    settings.hooks.Stop = [];
+                if (!hasHookCmd("Stop", "hmem-log-exchange")) {
+                    // Insert at beginning so it runs before title hook
+                    settings.hooks.Stop.unshift({
+                        hooks: [{ type: "command", command: path.join(hooksDir, "hmem-log-exchange.sh"), timeout: 10 }],
+                    });
+                    changed = true;
+                }
+                // Stop — title O-entries (async)
+                if (!hasHookCmd("Stop", "hmem-title-o-entries")) {
+                    settings.hooks.Stop.push({
+                        hooks: [{ type: "command", command: path.join(hooksDir, "hmem-title-o-entries.sh"), timeout: 30, async: true }],
+                    });
+                    changed = true;
+                }
+                // SessionStart[clear] — context inject
+                if (!settings.hooks.SessionStart)
+                    settings.hooks.SessionStart = [];
+                if (!hasHookCmd("SessionStart", "hmem-context-inject")) {
+                    settings.hooks.SessionStart.push({
+                        matcher: "clear",
+                        hooks: [{ type: "command", command: path.join(hooksDir, "hmem-context-inject.sh"), timeout: 10 }],
+                    });
+                    changed = true;
+                }
+                if (changed) {
                     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
-                    console.log(`  [ok] Hook registered in: ${settingsPath}`);
+                    console.log(`  [ok] All hooks registered in: ${settingsPath}`);
                 }
                 else {
-                    console.log(`  [ok] Hook already registered in settings.json`);
+                    console.log(`  [ok] All hooks already registered in settings.json`);
                 }
             }
         }

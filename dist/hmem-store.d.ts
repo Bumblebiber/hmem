@@ -267,6 +267,16 @@ export declare class HmemStore {
         created_at: string;
     }[];
     /**
+     * Get the last N exchanges (user message + agent response) from an O-entry.
+     * Exchange structure: L2 = title, L4 (X.1) = user message, L5 (X.1.1) = agent response.
+     * Returns newest first.
+     */
+    getOEntryExchanges(oEntryId: string, limit: number): {
+        seq: number;
+        userText: string;
+        agentText: string;
+    }[];
+    /**
      * Get statistics about the memory store.
      */
     stats(): {
@@ -405,6 +415,17 @@ export declare class HmemStore {
     /** Count L2 children of a root entry (direct children only). */
     countDirectChildren(rootId: string): number;
     getActiveO(): string;
+    /** Get the active O-entry ID without creating one. Returns null if none active. */
+    getActiveOId(): string | null;
+    /** Get the active project entry. Returns null if none active. */
+    getActiveProject(): {
+        id: string;
+        title: string;
+    } | null;
+    /** Find a child node by content/title pattern. Returns node ID or null. */
+    findChildNode(parentId: string, pattern: string, depth?: number): string | null;
+    /** Find a child node of a root entry by content/title pattern. */
+    findRootChildNode(rootId: string, pattern: string, depth: number): string | null;
     bumpAccess(id: string): void;
     private bumpNodeAccess;
     /**

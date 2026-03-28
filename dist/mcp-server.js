@@ -238,6 +238,40 @@ function trackTokens(result) {
     }
     return result;
 }
+/**
+ * Format recent O-entries block: latest O-entry with full exchanges, rest as titles.
+ * @param store - HmemStore instance
+ * @param limit - total O-entries to show
+ * @param exchangeCount - number of exchanges to show from the latest O-entry
+ * @param linkedTo - optional project ID filter
+ * @returns formatted string + list of O-entry IDs for cache registration
+ */
+function formatRecentOEntries(store, limit, exchangeCount, linkedTo, expandAll) {
+    if (limit <= 0)
+        return { text: "", ids: [] };
+    const recentO = store.getRecentOEntries(limit, linkedTo);
+    if (recentO.length === 0)
+        return { text: "", ids: [] };
+    const lines = ["Recent sessions:"];
+    const ids = recentO.map(o => o.id);
+    for (let i = 0; i < recentO.length; i++) {
+        const o = recentO[i];
+        lines.push(`  ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
+        // Expand exchanges: all entries when expandAll, otherwise only latest
+        if (expandAll || i === 0) {
+            const exLimit = expandAll && i > 0 ? Math.min(exchangeCount, 5) : exchangeCount;
+            const exchanges = store.getOEntryExchanges(o.id, exLimit);
+            for (const ex of exchanges) {
+                const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+                const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+                lines.push(`    USER: ${userShort}`);
+                if (agentShort)
+                    lines.push(`    AGENT: ${agentShort}`);
+            }
+        }
+    }
+    return { text: lines.join("\n"), ids };
+}
 // ---- Server ----
 const server = new McpServer({
     name: "hmem",
@@ -960,7 +994,16 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                     const projectList = projects.length > 0
                         ? projects.map(e => `  ${e.id}  ${e.title}`).join("\n")
                         : "  (no projects yet — create one with write_memory(prefix=\"P\", content=\"Name | Status | Stack | Description\", tags=[...]))";
-                    return {
+                    // Inject recent O-entries even without active project (global, no project filter)
+                    let recentOHint = "";
+                    if (hmemConfig.recentOEntries > 0) {
+                        const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10);
+                        if (text) {
+                            recentOHint = `\n${text}\n`;
+                            sessionCache.registerDelivered(ids);
+                        }
+                    }
+                    return trackTokens({
                         content: [{
                                 type: "text",
                                 text: `⚠ ACTION REQUIRED: No project is active.\n\n` +
@@ -970,9 +1013,9 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                                     `  write_memory(prefix="P", content="Name | Status | Stack | Description", tags=["#project"])\n\n` +
                                     `Available projects:\n${projectList}\n\n` +
                                     `Session logs (O-entries) will be linked to the active project.\n` +
-                                    `Memory data is withheld until a project is activated.`,
+                                    `Memory data is withheld until a project is activated.` + recentOHint,
                             }],
-                    };
+                    });
                 }
             }
             // Inject recent O-entries (session logs) on bulk reads when none are cached
@@ -980,11 +1023,10 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             if (isBulkListing && storeName === "personal" && hmemConfig.recentOEntries > 0) {
                 const cachedOIds = [...(cachedIds || []), ...(hiddenIds || [])].filter(id => id.startsWith("O"));
                 if (cachedOIds.length === 0) {
-                    const recentO = hmemStore.getRecentOEntries(hmemConfig.recentOEntries);
-                    if (recentO.length > 0) {
-                        const oLines = recentO.map(o => `  ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
-                        recentOSection = `\nRecent sessions:\n${oLines.join("\n")}\n`;
-                        sessionCache.registerDelivered(recentO.map(o => o.id));
+                    const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10);
+                    if (text) {
+                        recentOSection = `\n${text}\n`;
+                        sessionCache.registerDelivered(ids);
                     }
                 }
             }
@@ -1327,22 +1369,12 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                     lines.push(`    ${r.id}  ${r.title}`);
                 }
             }
-            // Inject recent O-entries linked to this project
+            // Inject recent O-entries linked to this project (full exchanges for all)
             if (hmemConfig.recentOEntries > 0) {
-                const recentO = hmemStore.getRecentOEntries(hmemConfig.recentOEntries, id);
-                const cachedIds = sessionCache.getCachedIds();
-                const hiddenIds = sessionCache.getHiddenIds();
-                const uncached = recentO.filter(o => !cachedIds.has(o.id) && !hiddenIds.has(o.id));
-                const cachedCount = recentO.length - uncached.length;
-                if (uncached.length > 0 || cachedCount > 0) {
-                    lines.push("  Recent sessions:");
-                    for (const o of uncached) {
-                        lines.push(`    ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
-                    }
-                    if (cachedCount > 0) {
-                        lines.push(`    (${cachedCount} cached entries already in context)`);
-                    }
-                    sessionCache.registerDelivered(recentO.map(o => o.id));
+                const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10, id, true);
+                if (text) {
+                    lines.push("  " + text.replace(/\n/g, "\n  "));
+                    sessionCache.registerDelivered(ids);
                 }
             }
             const output = lines.join("\n");

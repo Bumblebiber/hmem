@@ -15,6 +15,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { HmemStore, resolveHmemPath } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 
@@ -112,26 +113,31 @@ export async function logExchange(): Promise<void> {
     // appendExchange stores raw text without newline parsing
     store.appendExchange(activeOId, userMessage, input.last_assistant_message!);
 
-    // Periodic save nudge: per-session counter based on transcript path
-    const SAVE_INTERVAL = 20;
-    const sessionId = path.basename(input.transcript_path!, ".jsonl");
-    const counterDir = path.join(path.dirname(hmemPath), ".hmem-counters");
-    if (!fs.existsSync(counterDir)) fs.mkdirSync(counterDir, { recursive: true });
-    const counterPath = path.join(counterDir, `${sessionId}.count`);
-    let counter = 0;
-    try {
-      counter = parseInt(fs.readFileSync(counterPath, "utf8").trim(), 10) || 0;
-    } catch {}
-    counter++;
-    fs.writeFileSync(counterPath, String(counter), "utf8");
+    // Periodic checkpoint: count exchanges in active O-entry (project-based, not session-based)
+    const saveInterval = hmemConfig.checkpointInterval;
+    const checkpointMode = hmemConfig.checkpointMode;
 
-    if (counter > 0 && counter % SAVE_INTERVAL === 0) {
-      // Output JSON to stdout — Stop hook interprets this as "don't stop yet"
-      const nudge = {
-        decision: "block",
-        reason: `${counter} exchanges since last save. Write key learnings to memory using write_memory (L for lessons, E for errors, D for decisions) before continuing. Keep it brief — just the important stuff.`,
-      };
-      process.stdout.write(JSON.stringify(nudge));
+    if (saveInterval > 0) {
+      const exchangeCount = store.countDirectChildren(activeOId);
+
+      if (exchangeCount > 0 && exchangeCount % saveInterval === 0) {
+        if (checkpointMode === "auto") {
+          // Spawn background checkpoint — Haiku extracts L/D/E + handoff
+          const child = spawn("hmem", ["checkpoint"], {
+            detached: true,
+            stdio: "ignore",
+            env: { ...process.env, HMEM_PROJECT_DIR: projectDir, HMEM_AGENT_ID: agentId },
+          });
+          child.unref();
+        } else {
+          // "remind" mode: block agent and ask it to save manually
+          const nudge = {
+            decision: "block",
+            reason: `${exchangeCount} exchanges in this project session. Write key learnings to memory using write_memory (L for lessons, E for errors, D for decisions) before continuing. Keep it brief — just the important stuff.`,
+          };
+          process.stdout.write(JSON.stringify(nudge));
+        }
+      }
     }
   } catch (e) {
     console.error(`[hmem log-exchange] ${e}`);

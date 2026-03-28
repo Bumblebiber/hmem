@@ -157,25 +157,22 @@ export async function contextInject(): Promise<void> {
           }
         }
 
-        // 3. Recent O-entries linked to project (full exchanges for latest)
+        // 3. Recent O-entries linked to project (full exchanges for all)
         if (config.recentOEntries > 0) {
           const recentO = store.getRecentOEntries(config.recentOEntries, activeProject.id);
           if (recentO.length > 0) {
             lines.push(`\n  Recent sessions:`);
-            // Latest: show full exchanges
-            const latest = recentO[0];
-            lines.push(`    ${latest.id}  ${latest.created_at.substring(0, 10)}  ${latest.title}`);
-            const exchanges = store.getOEntryExchanges(latest.id, 10);
-            for (const ex of exchanges) {
-              const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
-              const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
-              lines.push(`      USER: ${userShort}`);
-              if (agentShort) lines.push(`      AGENT: ${agentShort}`);
-            }
-            // Rest: titles only
-            for (let i = 1; i < recentO.length; i++) {
+            for (let i = 0; i < recentO.length; i++) {
               const o = recentO[i];
               lines.push(`    ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
+              const exLimit = i === 0 ? 10 : 5;
+              const exchanges = store.getOEntryExchanges(o.id, exLimit);
+              for (const ex of exchanges) {
+                const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+                const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+                lines.push(`      USER: ${userShort}`);
+                if (agentShort) lines.push(`      AGENT: ${agentShort}`);
+              }
             }
           }
         }

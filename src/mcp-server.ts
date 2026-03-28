@@ -259,6 +259,7 @@ function formatRecentOEntries(
   limit: number,
   exchangeCount: number,
   linkedTo?: string,
+  expandAll?: boolean,
 ): { text: string; ids: string[] } {
   if (limit <= 0) return { text: "", ids: [] };
   const recentO = store.getRecentOEntries(limit, linkedTo);
@@ -267,23 +268,20 @@ function formatRecentOEntries(
   const lines: string[] = ["Recent sessions:"];
   const ids = recentO.map(o => o.id);
 
-  // Latest O-entry: show full exchanges
-  const latest = recentO[0];
-  lines.push(`  ${latest.id}  ${latest.created_at.substring(0, 10)}  ${latest.title}`);
-  const exchanges = store.getOEntryExchanges(latest.id, exchangeCount);
-  if (exchanges.length > 0) {
-    for (const ex of exchanges) {
-      const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
-      const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
-      lines.push(`    USER: ${userShort}`);
-      if (agentShort) lines.push(`    AGENT: ${agentShort}`);
-    }
-  }
-
-  // Remaining O-entries: titles only
-  for (let i = 1; i < recentO.length; i++) {
+  for (let i = 0; i < recentO.length; i++) {
     const o = recentO[i];
     lines.push(`  ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
+    // Expand exchanges: all entries when expandAll, otherwise only latest
+    if (expandAll || i === 0) {
+      const exLimit = expandAll && i > 0 ? Math.min(exchangeCount, 5) : exchangeCount;
+      const exchanges = store.getOEntryExchanges(o.id, exLimit);
+      for (const ex of exchanges) {
+        const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+        const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+        lines.push(`    USER: ${userShort}`);
+        if (agentShort) lines.push(`    AGENT: ${agentShort}`);
+      }
+    }
   }
 
   return { text: lines.join("\n"), ids };
@@ -1620,9 +1618,9 @@ server.tool(
           }
         }
 
-        // Inject recent O-entries linked to this project (full exchanges for latest)
+        // Inject recent O-entries linked to this project (full exchanges for all)
         if (hmemConfig.recentOEntries > 0) {
-          const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10, id);
+          const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10, id, true);
           if (text) {
             lines.push("  " + text.replace(/\n/g, "\n  "));
             sessionCache.registerDelivered(ids);

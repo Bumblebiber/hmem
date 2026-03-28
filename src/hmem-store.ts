@@ -2697,15 +2697,27 @@ export class HmemStore {
   }
 
   getActiveO(): string {
-    const row = this.db.prepare(
-      "SELECT id FROM memories WHERE prefix = 'O' AND active = 1 AND obsolete != 1 AND irrelevant != 1 LIMIT 1"
-    ).get() as { id: string } | undefined;
-    if (row) return row.id;
-
     // Find active project for context
     const activeProject = this.db.prepare(
       "SELECT id, title FROM memories WHERE prefix = 'P' AND active = 1 AND obsolete != 1 LIMIT 1"
     ).get() as { id: string; title: string } | undefined;
+
+    const row = this.db.prepare(
+      "SELECT id, links FROM memories WHERE prefix = 'O' AND active = 1 AND obsolete != 1 AND irrelevant != 1 LIMIT 1"
+    ).get() as { id: string; links: string | null } | undefined;
+
+    if (row) {
+      // Check if the active O-entry matches the active project
+      if (activeProject) {
+        const links = row.links ? JSON.parse(row.links) as string[] : [];
+        if (links.includes(activeProject.id)) return row.id;
+        // Project mismatch — deactivate old O-entry, create new one below
+        this.db.prepare("UPDATE memories SET active = 0, updated_at = ? WHERE id = ?")
+          .run(new Date().toISOString(), row.id);
+      } else {
+        return row.id; // No active project — keep using current O-entry
+      }
+    }
 
     const today = new Date().toISOString().substring(0, 10);
     const projectName = activeProject?.title?.split("|")[0]?.trim() ?? "unassigned";
@@ -2716,6 +2728,44 @@ export class HmemStore {
     this.db.prepare("UPDATE memories SET active = 1, updated_at = ? WHERE id = ?")
       .run(new Date().toISOString(), result.id);
     return result.id;
+  }
+
+  /** Get the active O-entry ID without creating one. Returns null if none active. */
+  getActiveOId(): string | null {
+    const row = this.db.prepare(
+      "SELECT id FROM memories WHERE prefix = 'O' AND active = 1 AND obsolete != 1 AND irrelevant != 1 LIMIT 1"
+    ).get() as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
+  /** Get the active project entry. Returns null if none active. */
+  getActiveProject(): { id: string; title: string } | null {
+    return (this.db.prepare(
+      "SELECT id, title FROM memories WHERE prefix = 'P' AND active = 1 AND obsolete != 1 LIMIT 1"
+    ).get() as { id: string; title: string } | undefined) ?? null;
+  }
+
+  /** Find a child node by content/title pattern. Returns node ID or null. */
+  findChildNode(parentId: string, pattern: string, depth?: number): string | null {
+    const depthClause = depth != null ? " AND depth = ?" : "";
+    const params: unknown[] = [parentId, `%${pattern}%`, `%${pattern}%`];
+    if (depth != null) params.push(depth);
+    const row = this.db.prepare(
+      `SELECT id FROM memory_nodes WHERE parent_id = ?
+       AND (LOWER(content) LIKE ? OR LOWER(title) LIKE ?)${depthClause}
+       LIMIT 1`
+    ).get(...params) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
+  /** Find a child node of a root entry by content/title pattern. */
+  findRootChildNode(rootId: string, pattern: string, depth: number): string | null {
+    const row = this.db.prepare(
+      `SELECT id FROM memory_nodes WHERE root_id = ? AND depth = ?
+       AND (LOWER(content) LIKE ? OR LOWER(title) LIKE ?)
+       LIMIT 1`
+    ).get(rootId, depth, `%${pattern}%`, `%${pattern}%`) as { id: string } | undefined;
+    return row?.id ?? null;
   }
 
   bumpAccess(id: string): void {
