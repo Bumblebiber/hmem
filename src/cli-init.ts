@@ -565,18 +565,26 @@ export async function runInit(args: string[] = []): Promise<void> {
         const hookScript = `#!/bin/bash
 # hmem memory hook (installed by hmem init):
 # - First message: remind agent to call read_memory()
-# - Every N messages: remind agent to save new knowledge
-# - N = checkpointInterval from hmem.config.json (default: 20, 0 = disabled)
+# - Every N messages: remind agent to save knowledge (configurable)
+# - Config: checkpointInterval (default 20, 0=off), checkpointMode ("remind"|"auto")
+# - Subagents are skipped (they have parentUuid set)
 
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
 [ -z "$SESSION_ID" ] && SESSION_ID="global"
 
+# Skip subagents
+IS_SUBAGENT=$(echo "$INPUT" | grep -o '"parentUuid":"[^"]*"' | head -1)
+[ -n "$IS_SUBAGENT" ] && exit 0
+
 INTERVAL=20
+MODE="remind"
 for CFG in "$HOME/.hmem/hmem.config.json" "$HOME/.hmem/Agents/*/hmem.config.json"; do
   if [ -f "$CFG" ]; then
     VAL=$(grep -o '"checkpointInterval":[0-9]*' "$CFG" 2>/dev/null | head -1 | cut -d: -f2)
     [ -n "$VAL" ] && INTERVAL=$VAL
+    MVAL=$(grep -o '"checkpointMode":"[^"]*"' "$CFG" 2>/dev/null | head -1 | cut -d'"' -f4)
+    [ -n "$MVAL" ] && MODE=$MVAL
     break
   fi
 done
@@ -591,7 +599,7 @@ if [ "$COUNT" -eq 1 ]; then
 {
   "hookSpecificOutput": {
     "hookEventName": "UserPromptSubmit",
-    "additionalContext": "IMPORTANT: This is the first message of the session. Before responding, call read_memory() (no parameters) to load your L1 memory overview. This ensures you have full context from prior sessions. Do this silently."
+    "additionalContext": "IMPORTANT: This is the first message of the session. Before responding, call read_memory() (no parameters) to load your L1 memory overview. Do this silently."
   }
 }
 HOOK_EOF
@@ -600,7 +608,7 @@ elif [ "$INTERVAL" -gt 0 ] && [ $((COUNT % INTERVAL)) -eq 0 ]; then
 {
   "hookSpecificOutput": {
     "hookEventName": "UserPromptSubmit",
-    "additionalContext": "CHECKPOINT: Save any new knowledge from this session (lessons, errors, decisions, progress) via write_memory or append_memory. Do this silently."
+    "additionalContext": "CHECKPOINT: AFTER responding to this message, you MUST save new knowledge from this session via write_memory or append_memory."
   }
 }
 HOOK_EOF

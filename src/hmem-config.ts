@@ -83,6 +83,11 @@ export interface HmemConfig {
    * Set to 0 to disable. Default: 20.
    */
   checkpointInterval: number;
+  /**
+   * Checkpoint mode: "remind" = inject additionalContext reminder (default),
+   * "auto" = spawn a Haiku subagent that saves directly (no user interaction).
+   */
+  checkpointMode: "remind" | "auto";
   /** Sync configuration — single server or array for multi-server redundancy. */
   sync?: SyncConfigBlock | SyncConfigBlock[];
 }
@@ -149,6 +154,7 @@ export const DEFAULT_CONFIG: HmemConfig = {
   accessCountTopN: 5,
   prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
   checkpointInterval: 20,
+  checkpointMode: "remind" as const,
   bulkReadV2: {
     topAccessCount: 3,
     topNewestCount: 5,
@@ -252,6 +258,7 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     if (typeof memoryRaw.accessCountTopN === "number" && memoryRaw.accessCountTopN >= 0) cfg.accessCountTopN = memoryRaw.accessCountTopN;
     if (typeof memoryRaw.maxTitleChars === "number" && memoryRaw.maxTitleChars >= 10 && memoryRaw.maxTitleChars <= 120) cfg.maxTitleChars = memoryRaw.maxTitleChars;
     if (typeof memoryRaw.checkpointInterval === "number" && memoryRaw.checkpointInterval >= 0) cfg.checkpointInterval = memoryRaw.checkpointInterval;
+    if (memoryRaw.checkpointMode === "remind" || memoryRaw.checkpointMode === "auto") cfg.checkpointMode = memoryRaw.checkpointMode;
 
     // Prefixes: merge user-defined with defaults (user can override or add)
     if (memoryRaw.prefixes && typeof memoryRaw.prefixes === "object" && !Array.isArray(memoryRaw.prefixes)) {
