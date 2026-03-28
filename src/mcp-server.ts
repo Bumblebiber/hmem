@@ -246,6 +246,49 @@ function trackTokens<T extends { content: { type: "text"; text: string }[]; isEr
   return result;
 }
 
+/**
+ * Format recent O-entries block: latest O-entry with full exchanges, rest as titles.
+ * @param store - HmemStore instance
+ * @param limit - total O-entries to show
+ * @param exchangeCount - number of exchanges to show from the latest O-entry
+ * @param linkedTo - optional project ID filter
+ * @returns formatted string + list of O-entry IDs for cache registration
+ */
+function formatRecentOEntries(
+  store: HmemStore,
+  limit: number,
+  exchangeCount: number,
+  linkedTo?: string,
+): { text: string; ids: string[] } {
+  if (limit <= 0) return { text: "", ids: [] };
+  const recentO = store.getRecentOEntries(limit, linkedTo);
+  if (recentO.length === 0) return { text: "", ids: [] };
+
+  const lines: string[] = ["Recent sessions:"];
+  const ids = recentO.map(o => o.id);
+
+  // Latest O-entry: show full exchanges
+  const latest = recentO[0];
+  lines.push(`  ${latest.id}  ${latest.created_at.substring(0, 10)}  ${latest.title}`);
+  const exchanges = store.getOEntryExchanges(latest.id, exchangeCount);
+  if (exchanges.length > 0) {
+    for (const ex of exchanges) {
+      const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+      const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+      lines.push(`    USER: ${userShort}`);
+      if (agentShort) lines.push(`    AGENT: ${agentShort}`);
+    }
+  }
+
+  // Remaining O-entries: titles only
+  for (let i = 1; i < recentO.length; i++) {
+    const o = recentO[i];
+    lines.push(`  ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
+  }
+
+  return { text: lines.join("\n"), ids };
+}
+
 // ---- Server ----
 const server = new McpServer({
   name: "hmem",
@@ -1134,11 +1177,10 @@ server.tool(
             // Inject recent O-entries even without active project (global, no project filter)
             let recentOHint = "";
             if (hmemConfig.recentOEntries > 0) {
-              const recentO = hmemStore.getRecentOEntries(hmemConfig.recentOEntries);
-              if (recentO.length > 0) {
-                const oLines = recentO.map(o => `  ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
-                recentOHint = `\nRecent sessions:\n${oLines.join("\n")}\n`;
-                sessionCache.registerDelivered(recentO.map(o => o.id));
+              const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10);
+              if (text) {
+                recentOHint = `\n${text}\n`;
+                sessionCache.registerDelivered(ids);
               }
             }
 
@@ -1163,11 +1205,10 @@ server.tool(
         if (isBulkListing && storeName === "personal" && hmemConfig.recentOEntries > 0) {
           const cachedOIds = [...(cachedIds || []), ...(hiddenIds || [])].filter(id => id.startsWith("O"));
           if (cachedOIds.length === 0) {
-            const recentO = hmemStore.getRecentOEntries(hmemConfig.recentOEntries);
-            if (recentO.length > 0) {
-              const oLines = recentO.map(o => `  ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
-              recentOSection = `\nRecent sessions:\n${oLines.join("\n")}\n`;
-              sessionCache.registerDelivered(recentO.map(o => o.id));
+            const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10);
+            if (text) {
+              recentOSection = `\n${text}\n`;
+              sessionCache.registerDelivered(ids);
             }
           }
         }
@@ -1579,22 +1620,12 @@ server.tool(
           }
         }
 
-        // Inject recent O-entries linked to this project
+        // Inject recent O-entries linked to this project (full exchanges for latest)
         if (hmemConfig.recentOEntries > 0) {
-          const recentO = hmemStore.getRecentOEntries(hmemConfig.recentOEntries, id);
-          const cachedIds = sessionCache.getCachedIds();
-          const hiddenIds = sessionCache.getHiddenIds();
-          const uncached = recentO.filter(o => !cachedIds.has(o.id) && !hiddenIds.has(o.id));
-          const cachedCount = recentO.length - uncached.length;
-          if (uncached.length > 0 || cachedCount > 0) {
-            lines.push("  Recent sessions:");
-            for (const o of uncached) {
-              lines.push(`    ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
-            }
-            if (cachedCount > 0) {
-              lines.push(`    (${cachedCount} cached entries already in context)`);
-            }
-            sessionCache.registerDelivered(recentO.map(o => o.id));
+          const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10, id);
+          if (text) {
+            lines.push("  " + text.replace(/\n/g, "\n  "));
+            sessionCache.registerDelivered(ids);
           }
         }
 

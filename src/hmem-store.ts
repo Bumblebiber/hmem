@@ -1776,7 +1776,6 @@ export class HmemStore {
   getRecentOEntries(limit: number, linkedTo?: string): { id: string; title: string; created_at: string }[] {
     if (limit <= 0) return [];
     if (linkedTo) {
-      // Filter O-entries whose links JSON contains the project ID
       return this.db.prepare(
         `SELECT id, title, created_at FROM memories
          WHERE prefix = 'O' AND seq > 0 AND obsolete != 1 AND irrelevant != 1
@@ -1789,6 +1788,36 @@ export class HmemStore {
        WHERE prefix = 'O' AND seq > 0 AND obsolete != 1 AND irrelevant != 1
        ORDER BY created_at DESC LIMIT ?`
     ).all(limit) as { id: string; title: string; created_at: string }[];
+  }
+
+  /**
+   * Get the last N exchanges (user message + agent response) from an O-entry.
+   * Exchange structure: L2 = title, L4 (X.1) = user message, L5 (X.1.1) = agent response.
+   * Returns newest first.
+   */
+  getOEntryExchanges(oEntryId: string, limit: number): { seq: number; userText: string; agentText: string }[] {
+    if (limit <= 0) return [];
+    // Get the last N L2 nodes (exchanges) by seq DESC
+    const l2Nodes = this.db.prepare(
+      `SELECT id, seq FROM memory_nodes WHERE root_id = ? AND depth = 2 ORDER BY seq DESC LIMIT ?`
+    ).all(oEntryId, limit) as { id: string; seq: number }[];
+
+    const exchanges: { seq: number; userText: string; agentText: string }[] = [];
+    for (const l2 of l2Nodes) {
+      const l4 = this.db.prepare(
+        `SELECT content FROM memory_nodes WHERE parent_id = ? AND depth = 4 LIMIT 1`
+      ).get(l2.id) as { content: string } | undefined;
+      const l5 = this.db.prepare(
+        `SELECT content FROM memory_nodes WHERE root_id = ? AND depth = 5 AND parent_id = ? LIMIT 1`
+      ).get(oEntryId, l2.id + ".1") as { content: string } | undefined;
+      exchanges.push({
+        seq: l2.seq,
+        userText: l4?.content || "",
+        agentText: l5?.content || "",
+      });
+    }
+    // Return in chronological order (oldest first)
+    return exchanges.reverse();
   }
 
   /**
