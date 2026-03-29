@@ -1625,18 +1625,30 @@ server.tool(
         lines.push(`${e.id}${syncTag}  ${e.title}`);
         if (e.level_1 && e.level_1 !== e.title) lines.push(`  ${e.level_1}`);
         if (e.children) {
+          const { withBody, withChildren } = hmemConfig.loadProjectExpand;
           for (const child of (e.children as MemoryNode[]).filter(c => !c.irrelevant)) {
             const cId = child.id.replace(e.id, "");
-            const isOverview = child.seq === 1; // .1 = Overview node
+            const expandBody = withBody.includes(child.seq);
+            const expandChildTitles = withChildren.includes(child.seq);
             lines.push(`  ${cId}  ${child.title || child.content.substring(0, 60)}`);
             if (child.children && child.children.length > 0) {
               for (const gc of child.children.filter((g: any) => !g.irrelevant)) {
                 const gcId = gc.id.replace(e.id, "");
-                if (isOverview) {
-                  // Overview: show full L3 content
-                  lines.push(`    ${gcId}  ${gc.content}`);
+                if (expandBody) {
+                  // Show L3 title + body content
+                  lines.push(`    ${gcId}  ${gc.title || gc.content.substring(0, 80)}`);
+                  if (gc.content && gc.content !== gc.title) {
+                    // Show body lines indented
+                    for (const bodyLine of gc.content.split("\n")) {
+                      lines.push(`      ${bodyLine}`);
+                    }
+                  }
+                } else if (expandChildTitles) {
+                  // Show all L3 children as titles
+                  const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
+                  lines.push(`    ${gcId}  ${gcTitle}`);
                 } else {
-                  // Other L2 nodes: compact titles only
+                  // Default: compact titles only
                   const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
                   lines.push(`    ${gcId}  ${gcTitle}`);
                 }

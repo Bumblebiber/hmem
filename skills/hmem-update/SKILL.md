@@ -75,6 +75,19 @@ cat ~/.claude/settings.json | grep -A5 hooks
 
 ---
 
+## Step 2c: Check load_project Display Config
+
+Since v5.1.8, `load_project` supports configurable section expansion:
+- `loadProjectExpand.withBody`: sections showing L3 title + body (default: `[1]` = Overview)
+- `loadProjectExpand.withChildren`: sections listing all L3 children as titles (default: `[6, 8]` = Bugs, Open Tasks)
+
+Check if the user has customized this in `hmem.config.json`. If not, inform them about the option:
+```json
+{ "memory": { "loadProjectExpand": { "withBody": [1], "withChildren": [6, 8] } } }
+```
+
+---
+
 ## Step 3: Entry Migration
 
 Some versions introduce new data formats. Check if migration is needed:

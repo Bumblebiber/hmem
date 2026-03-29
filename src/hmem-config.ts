@@ -99,6 +99,16 @@ export interface HmemConfig {
    * Set to 0 to disable. Default: 100000.
    */
   contextTokenThreshold: number;
+  /**
+   * load_project display configuration: which L2 sections to expand.
+   * withBody: L2 seq numbers whose L3 children show title + body (e.g. Overview)
+   * withChildren: L2 seq numbers whose L3 children are all listed as titles (e.g. Bugs, Open Tasks)
+   * Default: withBody=[1], withChildren=[6,8]
+   */
+  loadProjectExpand: {
+    withBody: number[];
+    withChildren: number[];
+  };
   /** Sync configuration — single server or array for multi-server redundancy. */
   sync?: SyncConfigBlock | SyncConfigBlock[];
 }
@@ -168,6 +178,10 @@ export const DEFAULT_CONFIG: HmemConfig = {
   checkpointMode: "remind" as const,
   recentOEntries: 10,
   contextTokenThreshold: 100_000,
+  loadProjectExpand: {
+    withBody: [1],       // .1 Overview: show L3 title + body
+    withChildren: [6, 8], // .6 Bugs, .8 Open Tasks: list all L3 children as titles
+  },
   bulkReadV2: {
     topAccessCount: 3,
     topNewestCount: 5,
@@ -238,7 +252,7 @@ export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
 
 /** Known memory config keys — used to detect unified vs flat format. */
 const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
-  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "contextTokenThreshold"]);
+  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "contextTokenThreshold", "loadProjectExpand"]);
 
 /**
  * Load hmem.config.json from projectDir.
@@ -276,6 +290,13 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     if (memoryRaw.checkpointMode === "remind" || memoryRaw.checkpointMode === "auto") cfg.checkpointMode = memoryRaw.checkpointMode;
     if (typeof memoryRaw.recentOEntries === "number" && memoryRaw.recentOEntries >= 0) cfg.recentOEntries = memoryRaw.recentOEntries;
     if (typeof memoryRaw.contextTokenThreshold === "number" && memoryRaw.contextTokenThreshold >= 0) cfg.contextTokenThreshold = memoryRaw.contextTokenThreshold;
+
+    // load_project expand config
+    if (memoryRaw.loadProjectExpand && typeof memoryRaw.loadProjectExpand === "object") {
+      const lpe = memoryRaw.loadProjectExpand;
+      if (Array.isArray(lpe.withBody) && lpe.withBody.every((n: unknown) => typeof n === "number")) cfg.loadProjectExpand.withBody = lpe.withBody;
+      if (Array.isArray(lpe.withChildren) && lpe.withChildren.every((n: unknown) => typeof n === "number")) cfg.loadProjectExpand.withChildren = lpe.withChildren;
+    }
 
     // Prefixes: merge user-defined with defaults (user can override or add)
     if (memoryRaw.prefixes && typeof memoryRaw.prefixes === "object" && !Array.isArray(memoryRaw.prefixes)) {
