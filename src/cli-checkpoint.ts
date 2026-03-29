@@ -133,7 +133,7 @@ export async function checkpoint(): Promise<void> {
       ? `\n## Previous checkpoint summaries (oldest first):\n\n${prevSummaryText}\n`
       : "";
 
-    const prompt = `Checkpoint agent: save NON-OBVIOUS insights from this session to hmem.
+    const prompt = `Checkpoint agent: save NON-OBVIOUS insights to hmem.
 
 Project: ${projectName} (${projectId}) | O-entry: ${activeOId}
 ${summarySection}
@@ -141,20 +141,20 @@ ${summarySection}
 
 ${formattedExchanges}
 
-**1. L/D/E entries** — non-obvious only (skip feature descriptions):
-- L (Lesson): Technical insight, e.g. "HMEM_AGENT_ID must be set in hook scripts or resolveHmemPath falls back to memory.hmem"
-- E (Error): Bug + root cause + fix
-- D (Decision): Architecture decision + rationale
-- Handoff: 2-3 sentences on state/next step → append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
+**1. L/D/E entries** — skip obvious feature descriptions, save only insights:
+- L: Technical lesson (e.g. "HMEM_AGENT_ID must be in hook env or wrong .hmem file is used")
+- E: Bug + root cause + fix
+- D: Architecture decision + rationale
+- Handoff → append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
 
 write_memory for L/D/E: tags 3-5, links=["${projectId}"]. Max 2-3 entries.
 
 **2. Rolling summary:**
 append_memory(id="${activeOId}", content="\\t[CP] ...")
 - Compress prior summaries to 1-2 sentences${prevSummaries.length > 0 ? " (shown above)" : ""}
-- Detail new exchanges; 3-8 sentences, factual, match project language
+- Detail new exchanges; 3-8 factual sentences, match project language
 
-Before writing: read_memory() first — avoid duplicates, extend with append_memory if similar exists. Always write the summary.`;
+read_memory() first — avoid duplicates, extend existing entries with append_memory. Always write the summary.`;
 
     // 7. Spawn Haiku with MCP access
     const allowedTools = [
