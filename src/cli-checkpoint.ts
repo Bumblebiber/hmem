@@ -139,7 +139,7 @@ Project: ${projectName} (${projectId}) | O-entry: ${activeOId}
 ${summarySection}
 ${formattedExchanges}
 
-**L/D/E** — non-obvious insights only:
+**L/D/E** (non-obvious only):
 - L: Root-cause lesson, e.g. "HMEM_AGENT_ID env missing → wrong .hmem path"
 - E: Bug + root cause + fix
 - D: Decision + rationale
@@ -148,8 +148,7 @@ ${formattedExchanges}
 write_memory for L/D/E: tags 3-5, links=["${projectId}"]. Max 2-3.
 
 **Summary:** append_memory(id="${activeOId}", content="\\t[CP] ...")
-- Compress prior summaries to 1-2 sentences${prevSummaries.length > 0 ? " (shown above)" : ""}
-- 3-8 factual sentences; detail exchanges, match project language
+- Prior summaries → 1-2 sentences${prevSummaries.length > 0 ? " (shown above)" : ""}; detail exchanges 3-8 sentences, match language
 
 read_memory() first; skip/extend duplicates. Always write summary.`;
 
