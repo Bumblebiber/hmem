@@ -320,6 +320,8 @@ const MIGRATIONS = [
   "ALTER TABLE memory_nodes ADD COLUMN updated_at TEXT",
   // Active flag: marks entries as currently relevant — non-active entries in same prefix shown title-only
   "ALTER TABLE memories ADD COLUMN active INTEGER DEFAULT 0",
+  // Links: JSON array of related entry IDs (cross-references between entries)
+  "ALTER TABLE memories ADD COLUMN links TEXT",
 ];
 
 // ---- HmemStore class ----
@@ -412,8 +414,10 @@ export class HmemStore {
     }
     const l1Limit = this.cfg.maxCharsPerLevel[0];
     const t = HmemStore.CHAR_LIMIT_TOLERANCE;
-    if (level1.length > l1Limit * t) {
-      throw new Error(`Level 1 exceeds ${l1Limit} character limit (${level1.length} chars). Keep L1 compact.`);
+    // Only check title length for the L1 limit — body lines (>) are stored separately
+    // and hidden in listings, so they don't affect display compactness
+    if (title.length > l1Limit * t) {
+      throw new Error(`Level 1 title exceeds ${l1Limit} character limit (${title.length} chars). Keep the title compact and move detail to body lines (> prefix) or L2 children.`);
     }
     for (const node of nodes) {
       // depth 2-5 → index 1-4

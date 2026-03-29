@@ -352,6 +352,30 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
       };
     }
 
+    // Auto-migrate legacy (flat) config to unified { memory: { ... } } format
+    if (!isUnified) {
+      try {
+        // Preserve any extra keys (sync, lastSeenVersion, etc.)
+        const migrated: Record<string, unknown> = {};
+        migrated.memory = {
+          maxCharsPerLevel: cfg.maxCharsPerLevel,
+          maxDepth: cfg.maxDepth,
+          defaultReadLimit: cfg.defaultReadLimit,
+          maxTitleChars: cfg.maxTitleChars,
+          accessCountTopN: cfg.accessCountTopN,
+          checkpointInterval: cfg.checkpointInterval,
+          checkpointMode: cfg.checkpointMode,
+          recentOEntries: cfg.recentOEntries,
+          contextTokenThreshold: cfg.contextTokenThreshold,
+        };
+        if (raw.sync) migrated.sync = raw.sync;
+        fs.writeFileSync(configPath, JSON.stringify(migrated, null, 2) + "\n", "utf-8");
+        console.error(`[hmem] Config auto-migrated to v5 format → hmem.config.json updated`);
+      } catch (migErr) {
+        console.error(`[hmem] Config migration failed: ${migErr}`);
+      }
+    }
+
     return cfg;
   } catch (e) {
     console.error(`[hmem] Failed to parse hmem.config.json: ${e}. Using defaults.`);

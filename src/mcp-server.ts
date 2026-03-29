@@ -1939,7 +1939,7 @@ server.tool(
   async () => {
     if (!isCurator()) {
       return {
-        content: [{ type: "text" as const, text: "ERROR: get_audit_queue is only available to the ceo/curator role." }],
+        content: [{ type: "text" as const, text: "ERROR: get_audit_queue is only available to the ceo/curator role. Set HMEM_AGENT_ROLE=ceo in your MCP server config to use curation tools." }],
         isError: true,
       };
     }
