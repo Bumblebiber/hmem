@@ -455,7 +455,7 @@ server.tool(
     links: z.array(z.string()).optional().describe(
       "Optional: IDs of related memories, e.g. ['P0001', 'L0005']"
     ),
-    favorite: z.boolean().optional().describe(
+    favorite: z.coerce.boolean().optional().describe(
       "Mark this entry as a favorite — shown with [♥] in bulk reads and always inlined with L2 detail. " +
       "Use for reference info you need to see every session, regardless of category."
     ),
@@ -463,7 +463,7 @@ server.tool(
       "Required hashtags for cross-cutting search (min 1, recommend 3+). " +
       "E.g. ['#hmem', '#curation']. Max 10, lowercase, must start with #. Shown after title in reads."
     ),
-    pinned: z.boolean().optional().describe(
+    pinned: z.coerce.boolean().optional().describe(
       "Mark this entry as pinned [P] (super-favorite). Pinned entries show full L2 content in bulk reads. " +
       "Use for reference entries you need to see in full every session."
     ),
@@ -473,7 +473,7 @@ server.tool(
     min_role: z.enum(["worker", "al", "pl", "ceo"]).default("worker").describe(
       "Minimum role to see this entry"
     ),
-    force: z.boolean().optional().describe(
+    force: z.coerce.boolean().optional().describe(
       "Force creation of a new root entry even if existing entries share tags. " +
       "Only use when you intentionally want a separate entry, not a child of an existing one."
     ),
@@ -602,15 +602,15 @@ server.tool(
     links: z.array(z.string()).optional().describe(
       "Optional: update linked entry IDs (root entries only). Replaces existing links."
     ),
-    obsolete: z.boolean().optional().describe(
+    obsolete: z.coerce.boolean().optional().describe(
       "Mark this root entry as no longer valid (root entries only). " +
       "Requires [✓ID] correction reference in content (e.g. 'Wrong — see [✓E0076]')."
     ),
-    favorite: z.boolean().optional().describe(
+    favorite: z.coerce.boolean().optional().describe(
       "Set or clear the [♥] favorite flag. Works on root entries and sub-nodes. " +
       "Root favorites are always shown with L2 detail in bulk reads."
     ),
-    irrelevant: z.boolean().optional().describe(
+    irrelevant: z.coerce.boolean().optional().describe(
       "Mark as irrelevant [-]. Works on root entries and sub-nodes. " +
       "No correction entry needed (unlike obsolete). Irrelevant entries/nodes are hidden from output."
     ),
@@ -618,11 +618,11 @@ server.tool(
       "Set tags on this entry/node. Replaces all existing tags. " +
       "Pass empty array [] to remove all tags. E.g. ['#hmem', '#curation']."
     ),
-    pinned: z.boolean().optional().describe(
+    pinned: z.coerce.boolean().optional().describe(
       "Set or clear the [P] pinned flag (root entries only). " +
       "Pinned entries show full L2 content in bulk reads (super-favorite)."
     ),
-    active: z.boolean().optional().describe(
+    active: z.coerce.boolean().optional().describe(
       "Mark this root entry as actively relevant [*] (root entries only). " +
       "When any entry in a prefix has active=true, only active entries of that prefix are shown with children in bulk reads. " +
       "Non-active entries in the same prefix are shown as title-only (no children)."
@@ -703,10 +703,10 @@ server.tool(
     "Example: update_many(ids=['T0005', 'T0012', 'L0044'], irrelevant=true)",
   {
     ids: z.array(z.string()).min(1).describe("List of entry/node IDs to update, e.g. ['T0005', 'T0012', 'L0044']"),
-    irrelevant: z.boolean().optional().describe("Mark all as irrelevant [-]"),
-    favorite: z.boolean().optional().describe("Set or clear [♥] favorite on all"),
-    active: z.boolean().optional().describe("Set or clear [*] active on all"),
-    pinned: z.boolean().optional().describe("Set or clear [P] pinned on all"),
+    irrelevant: z.coerce.boolean().optional().describe("Mark all as irrelevant [-]"),
+    favorite: z.coerce.boolean().optional().describe("Set or clear [♥] favorite on all"),
+    active: z.coerce.boolean().optional().describe("Set or clear [*] active on all"),
+    pinned: z.coerce.boolean().optional().describe("Set or clear [P] pinned on all"),
     store: z.enum(["personal", "company"]).default("personal"),
   },
   async ({ ids, irrelevant, favorite, active, pinned, store: storeName }) => {
@@ -930,15 +930,15 @@ server.tool(
     time: z.string().optional().describe("Time filter 'HH:MM' — filter entries by time of day"),
     period: z.string().optional().describe("Time window: '+4h' (after), '-2h' (before), '4h' (±4h symmetric), 'both' (±2h default)"),
     time_around: z.string().optional().describe("Reference entry ID — find entries created around the same time"),
-    show_obsolete: z.boolean().optional().describe("Include all obsolete entries (default: only top 3 most-accessed)"),
-    show_obsolete_path: z.boolean().optional().describe(
+    show_obsolete: z.coerce.boolean().optional().describe("Include all obsolete entries (default: only top 3 most-accessed)"),
+    show_obsolete_path: z.coerce.boolean().optional().describe(
       "When reading an obsolete entry by ID, show the full correction chain instead of just the final valid entry."
     ),
-    titles_only: z.boolean().optional().describe(
+    titles_only: z.coerce.boolean().optional().describe(
       "Compact title listing — shows all entries as ID + date + title, without V2 selection or children. " +
       "Like a table of contents. Combine with prefix to filter by category."
     ),
-    expand: z.boolean().optional().describe(
+    expand: z.coerce.boolean().optional().describe(
       "Expand full tree with complete node content (ID queries only). " +
       "Use to deep-dive into a project after a long break. " +
       "depth controls how deep (default: 5 = full tree). " +
@@ -953,10 +953,10 @@ server.tool(
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Source store: 'personal' or 'company'"
     ),
-    curator: z.boolean().optional().describe(
+    curator: z.coerce.boolean().optional().describe(
       "Set true to show full metadata (access counts, roles, dates). For curators only."
     ),
-    show_all: z.boolean().optional().describe(
+    show_all: z.coerce.boolean().optional().describe(
       "Curation mode: show ALL entries of the selected prefix with depth 3 children. " +
       "Bypasses V2 selection and session cache. Use with prefix filter for manageable output."
     ),
@@ -1403,7 +1403,7 @@ server.tool(
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Target store: 'personal' (your own memory) or 'company' (shared company store)"
     ),
-    dry_run: z.boolean().default(false).describe(
+    dry_run: z.coerce.boolean().default(false).describe(
       "Preview only — report what would happen without modifying the database"
     ),
   },
@@ -2092,14 +2092,14 @@ server.tool(
     min_role: z.enum(["worker", "al", "pl", "ceo"]).optional().describe(
       "Update access clearance (root entries only)."
     ),
-    obsolete: z.boolean().optional().describe(
+    obsolete: z.coerce.boolean().optional().describe(
       "Mark or unmark as obsolete (root entries only). " +
       "Obsolete entries stay in memory but are shown with [⚠ OBSOLETE]."
     ),
-    favorite: z.boolean().optional().describe(
+    favorite: z.coerce.boolean().optional().describe(
       "Set or clear the [♥] favorite flag (root entries only)."
     ),
-    irrelevant: z.boolean().optional().describe(
+    irrelevant: z.coerce.boolean().optional().describe(
       "Mark or unmark as irrelevant (root entries only). Irrelevant entries are hidden from bulk reads. No correction entry needed."
     ),
   },

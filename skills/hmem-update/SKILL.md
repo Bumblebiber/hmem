@@ -51,6 +51,30 @@ Check for new skills that weren't there before — inform the user about new cap
 
 ---
 
+## Step 2b: Verify Hooks
+
+Hooks are critical — without them, O-entries are never logged and auto-checkpoints never fire.
+
+Check the current hook configuration:
+```bash
+cat ~/.claude/settings.json | grep -A5 hooks
+```
+
+**Required hooks (for `checkpointMode: "auto"`):**
+- **UserPromptSubmit** — memory load + checkpoint reminder
+- **Stop** — exchange logging (`hmem log-exchange`) + O-entry title generation
+- **SessionStart[clear]** — context re-injection after `/clear`
+
+**If hooks are missing or empty (`hooks: {}`):**
+1. Inform the user: "Hooks are not configured — O-entries won't be logged and auto-checkpoints won't fire."
+2. Suggest: "Run `/hmem-config` to set up hooks, or run `hmem init` to re-initialize."
+
+**If hooks exist but reference old paths or scripts:**
+- Check that hook scripts exist and are executable
+- Verify they reference the current hmem installation path
+
+---
+
 ## Step 3: Entry Migration
 
 Some versions introduce new data formats. Check if migration is needed:
