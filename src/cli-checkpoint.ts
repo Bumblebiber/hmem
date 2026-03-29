@@ -140,7 +140,7 @@ ${summarySection}
 ${formattedExchanges}
 
 **L/D/E** — non-obvious insights only:
-- L: Lesson (root cause, not "feature X exists"), e.g. "HMEM_AGENT_ID env missing → wrong .hmem path"
+- L: Root-cause lesson, e.g. "HMEM_AGENT_ID env missing → wrong .hmem path"
 - E: Bug + root cause + fix
 - D: Decision + rationale
 - Handoff → append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
@@ -151,7 +151,7 @@ write_memory for L/D/E: tags 3-5, links=["${projectId}"]. Max 2-3.
 - Compress prior summaries to 1-2 sentences${prevSummaries.length > 0 ? " (shown above)" : ""}
 - 3-8 factual sentences; detail exchanges, match project language
 
-read_memory() first. Skip duplicates; extend existing via append_memory. Always write summary.`;
+read_memory() first; skip/extend duplicates. Always write summary.`;
 
     // 7. Spawn Haiku with MCP access
     const allowedTools = [
