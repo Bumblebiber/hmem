@@ -133,7 +133,7 @@ export async function checkpoint(): Promise<void> {
       ? `\n## Previous checkpoint summaries (oldest first):\n\n${prevSummaryText}\n`
       : "";
 
-    const prompt = `Checkpoint agent: save NON-OBVIOUS insights to hmem.
+    const prompt = `Checkpoint agent: extract non-obvious session insights → hmem.
 
 Project: ${projectName} (${projectId}) | O-entry: ${activeOId}
 ${summarySection}
@@ -141,17 +141,17 @@ ${summarySection}
 
 ${formattedExchanges}
 
-**L/D/E** — non-obvious insights only (not feature descriptions):
+**L/D/E** — non-obvious only (skip feature descriptions):
 - L: Lesson, e.g. "HMEM_AGENT_ID must be in hook env or wrong .hmem file is used"
 - E: Bug + root cause + fix
-- D: Architecture decision + rationale
+- D: Decision + rationale
 - Handoff → append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
 
 write_memory for L/D/E: tags 3-5, links=["${projectId}"]. Max 2-3.
 
 **Summary:** append_memory(id="${activeOId}", content="\\t[CP] ...")
 - Compress prior summaries to 1-2 sentences${prevSummaries.length > 0 ? " (shown above)" : ""}
-- Detail exchanges; 3-8 factual sentences, match project language
+- 3-8 factual sentences; detail exchanges, match project language
 
 read_memory() first. Skip duplicates; extend existing via append_memory. Always write summary.`;
 
