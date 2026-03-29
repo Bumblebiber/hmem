@@ -133,61 +133,31 @@ export async function checkpoint(): Promise<void> {
       ? `\n## Previous checkpoint summaries (oldest first):\n\n${prevSummaryText}\n`
       : "";
 
-    const prompt = `You are a background checkpoint agent. Your job is to extract valuable knowledge from a coding session and save it to long-term memory using the hmem MCP tools.
+    const prompt = `Background checkpoint agent: extract session insights, save to hmem.
 
-## Context
-
-Project: ${projectName} (${projectId})
-Active O-entry: ${activeOId}
+Project: ${projectName} (${projectId}) | O-entry: ${activeOId}
 ${summarySection}
-## New exchanges since last checkpoint (oldest first):
+## New exchanges (oldest first):
 
 ${formattedExchanges}
 
-## Your tasks
+## Task 1: L/D/E entries (NON-OBVIOUS only)
 
-### Task 1: Save insights (L/D/E entries)
+- **L** (Lesson): Technical insight — BAD: "Stop Hook logs exchanges" | GOOD: "HMEM_AGENT_ID must be set in hook scripts or resolveHmemPath falls back to memory.hmem"
+- **E** (Error): Bug + root cause + fix
+- **D** (Decision): Architecture decision + rationale
+- **Handoff**: 2-3 sentences on progress/next step → append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
 
-Analyze the conversation above and save NON-OBVIOUS insights to memory:
+write_memory for L/D/E: tags 3-5, links=["${projectId}"]. Max 2-3 entries.
 
-1. **Lessons (L)**: Technical insights, best practices discovered, "aha moments"
-   - BAD: "Stop Hook logs exchanges" (that's a feature description, not a lesson)
-   - GOOD: "HMEM_AGENT_ID must be set in hook scripts, otherwise resolveHmemPath falls back to memory.hmem instead of Agents/NAME/NAME.hmem"
+## Task 2: Rolling summary
 
-2. **Errors (E)**: Bugs encountered + root cause + fix
+append_memory(id="${activeOId}", content="\\t[CP] ...")
+- Compress prior summaries to 1-2 sentences${prevSummaries.length > 0 ? " (shown above)" : ""}
+- Detail new exchanges (discussed/built/decided)
+- 3-8 sentences, factual, match project language
 
-3. **Decisions (D)**: Architecture/design decisions + rationale
-
-4. **Handoff**: Update the project's Protocol section with current state
-   - 2-3 sentences: what was accomplished, what's in progress, next step
-   - Use: append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
-
-### Task 2: Write a rolling session summary
-
-Write a checkpoint summary that will help the next agent understand this session's progress. Use append_memory with the EXACT format:
-
-append_memory(id="${activeOId}", content="\\t[CP] Your summary here")
-
-The summary should:
-- Compress older checkpoint summaries into 1-2 sentences each${prevSummaries.length > 0 ? " (the previous summaries are shown above)" : ""}
-- Describe the new exchanges in more detail (what was discussed, decided, built)
-- Be 3-8 sentences total, factual, no fluff
-- Use the project's language (check existing entries)
-
-### Rules:
-- Use write_memory for L/D/E entries. Always include tags (3-5) and links=["${projectId}"]
-- Use append_memory to update the Protocol handoff (${projectId}.7)
-- Match the language of existing entries (check with read_memory first)
-- Skip L/D/E if nothing noteworthy — but ALWAYS write the checkpoint summary
-- Max 2-3 L/D/E entries. Quality over quantity
-- Each L1 must be a complete, self-contained sentence (~15-20 tokens)
-
-### Before writing:
-1. Call read_memory() to see existing entries — avoid duplicates
-2. Check if a similar L/D/E already exists before creating a new one
-3. If it does, use append_memory to extend it instead
-
-Now analyze and save.`;
+Before writing: read_memory() first — avoid duplicates, use append_memory to extend if similar exists. Always write the checkpoint summary.`;
 
     // 7. Spawn Haiku with MCP access
     const allowedTools = [
