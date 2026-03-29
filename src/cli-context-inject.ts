@@ -166,7 +166,7 @@ export async function contextInject(): Promise<void> {
               const o = recentO[i];
               lines.push(`    ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
               const exLimit = i === 0 ? 10 : 5;
-              const exchanges = store.getOEntryExchanges(o.id, exLimit);
+              const exchanges = store.getOEntryExchanges(o.id, exLimit, true);
               for (const ex of exchanges) {
                 const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
                 const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;

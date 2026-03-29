@@ -78,13 +78,21 @@ export async function logExchange() {
     // Guards
     if (input.stop_hook_active)
         process.exit(0);
+    if (process.env.HMEM_NO_SESSION === "1")
+        process.exit(0);
     if (!input.transcript_path || !input.last_assistant_message)
+        process.exit(0);
+    // Skip subagent sessions — their transcripts are in /tmp/claude-* task directories
+    // and contain MCP tool calls, not real user conversation
+    if (input.transcript_path && input.transcript_path.includes("/tasks/"))
         process.exit(0);
     const userMessage = readLastUserMessage(input.transcript_path);
     if (!userMessage)
         process.exit(0);
-    // Skip empty exchanges only
+    // Skip empty exchanges and internal hook prompts
     if (userMessage.length < 2)
+        process.exit(0);
+    if (userMessage.startsWith("Generate a concise one-line title"))
         process.exit(0);
     // Open hmem store
     const projectDir = process.env.HMEM_PROJECT_DIR || process.env.COUNCIL_PROJECT_DIR;

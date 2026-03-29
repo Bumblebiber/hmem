@@ -271,7 +271,8 @@ export declare class HmemStore {
      * Exchange structure: L2 = title, L4 (X.1) = user message, L5 (X.1.1) = agent response.
      * Returns newest first.
      */
-    getOEntryExchanges(oEntryId: string, limit: number): {
+    getOEntryExchanges(oEntryId: string, limit: number, skipSkillDialogs?: boolean): {
+        nodeId: string;
         seq: number;
         userText: string;
         agentText: string;
@@ -339,6 +340,8 @@ export declare class HmemStore {
     private validateTags;
     /** Replace all tags on an entry/node. Pass empty array to clear. */
     private setTags;
+    /** Add a single tag to an entry/node without removing existing tags. */
+    addTag(entryId: string, tag: string): void;
     /** Get tags for a single entry/node. */
     private fetchTags;
     /** Bulk-fetch tags for multiple IDs at once. */

@@ -609,7 +609,7 @@ db.close();
 
   [ -z "$EXCHANGES" ] && continue
 
-  TITLE=\$(claude -p --model haiku "Generate a concise one-line title (max 50 chars) summarizing this session. Reply with ONLY the title, nothing else. Topics discussed:
+  TITLE=\$(HMEM_NO_SESSION=1 claude -p --model haiku "Generate a concise one-line title (max 50 chars) summarizing this session. Reply with ONLY the title, nothing else. Topics discussed:
 \$EXCHANGES" 2>/dev/null | head -1 | tr -d '"' | cut -c1-50)
 
   [ -z "$TITLE" ] && continue

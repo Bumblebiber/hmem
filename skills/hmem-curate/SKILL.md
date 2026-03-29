@@ -94,14 +94,32 @@ fix_agent_memory(agent_name, "E0009", links=["P0001"])
 
 Don't over-link: only add links where the connection adds real navigational value, not just topical similarity.
 
-### Missing or poor titles
-Entries should have a meaningful title (~50 chars, configurable via `maxTitleChars`) for navigation. If an entry has no explicit title (auto-extracted from first `maxTitleChars` chars), check whether the auto-extracted title is useful. If it's truncated mid-word or vague, write a proper title:
+### Title/Body Quality (v5.1+)
 
-```
-fix_agent_memory(agent_name, id, content="Better Title\nOriginal L1 summary text")
-```
+Since v5.1, entries support explicit title/body separation via the `>` format. During curation:
 
-For child nodes, titles are always auto-extracted — no action needed.
+**Root entries (L1):**
+- Check if the auto-extracted title is meaningful. If it's truncated or vague, rewrite with explicit title + body:
+  ```
+  fix_agent_memory(agent_name, id, content="Clear navigation title\n> Original detailed L1 text that was too long for a title")
+  ```
+- Old entries without `>` still work — the title is auto-extracted from `level_1`. Only rewrite if the auto-title is genuinely bad.
+
+**Child nodes (L2+):**
+- Same principle: if a node has dense content, split into title + body:
+  ```
+  fix_agent_memory(agent_name, "L0003.2", content="Short node title\n> Detailed explanation\n> spanning multiple lines")
+  ```
+- Nodes with short, clear content don't need body separation — leave them as-is.
+
+**When to rewrite old entries:**
+- Auto-title is truncated mid-word or meaningless
+- Node has >200 chars of content crammed into one line
+- Content is valuable but hard to scan in listings (title = full text)
+
+**When NOT to rewrite:**
+- Title is already clear and navigable
+- Entry has low access count and marginal value (not worth the effort)
 
 ### Stale entries — auto-mark obsolete
 

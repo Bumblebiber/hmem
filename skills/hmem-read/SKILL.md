@@ -138,6 +138,21 @@ targeted search or a prefix overview instead.
 
 ---
 
+## Title vs. Body (v5.1+)
+
+Every node has a **title** (short navigation label) and an optional **body** (detail shown on drill-down). This affects what you see in different read modes:
+
+| Mode | Shows |
+|------|-------|
+| `titles_only=true` | Title only — compact table of contents |
+| Default (by ID) | Title + body for requested node, children as title-only |
+| `expand=true` | Title + body recursively for all nodes |
+| Bulk reads | Title only for L1, expanded entries show L2 titles |
+
+Entries written with the `>` body format have explicit title/body separation. Older entries without `>` show auto-extracted titles (~50 chars) — the full text is still accessible on drill-down.
+
+---
+
 ## Lazy Loading Protocol (subsequent reads)
 
 After the initial load, drill deeper with these patterns:

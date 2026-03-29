@@ -19,13 +19,30 @@ If the tool `write_memory` is not available:
 ```
 write_memory(
   prefix: "E",
-  content: "Short Title (~50 chars)\nL1 sentence — concise, understandable without context\n\tL2 detail (1 tab)\n\t\tL3 detail (2 tabs)\n\t\t\tL4 raw data (3 tabs — rarely needed)"
+  content: "Short Title (~50 chars)\n> L1 body — detailed explanation, can span multiple lines\n> second body line with more context\n\tL2 node title\n\t> L2 body text (supports newlines)\n\t> more L2 body\n\t\tL3 detail (2 tabs)\n\t\t\tL4 raw data (3 tabs — rarely needed)"
 )
 ```
 
-**Title convention:** The first non-indented line is the **title** (~50 chars, configurable via `maxTitleChars` in `hmem.config.json`) — a short label for navigation, like a chapter title. The second non-indented line is the L1 summary (full sentence). If only one non-indented line is provided, the title is auto-extracted from the first `maxTitleChars` characters.
+**Title + Body convention:** Every node has a **title** (short navigation label) and an optional **body** (detailed content loaded on drill-down).
 
-**Child node titles** are always auto-extracted from the first `maxTitleChars` characters of their content (or text before ` — ` if shorter). No explicit title needed for children.
+- **Title:** The first non-indented line (L1) or first line at a given indent level (L2+). ~50 chars, like a chapter title.
+- **Body:** Lines starting with `> ` at the same indent level. Joined with newlines. Shown only when the node is drilled into, not in listings.
+- **Backward-compatible:** Without `> ` lines, the full text is stored as `content` and the title is auto-extracted from the first `maxTitleChars` characters (existing behavior).
+
+**L1 example with body:**
+```
+Short Error Title
+> SQLite connection failed because .mcp.json used a relative path.
+> The fix was to use an absolute path in the HMEM_PROJECT_DIR env var.
+	Details about reproduction
+	> Steps: 1. Set HMEM_PROJECT_DIR=./hmem  2. Run hmem serve  3. Observe SQLITE_CANTOPEN
+```
+
+**L1 example without body (old format, still works):**
+```
+SQLite connection failed due to wrong path in .mcp.json
+	Fix: use absolute path in env var
+```
 
 **Indentation:** 1 tab = 1 level. Alternatively: 2 or 4 spaces per level (auto-detected).
 **Warning:** A tab at the start of any line always means "go one level deeper" — it is structural, not content. If you need to store code or text that contains leading tabs, use spaces instead.
@@ -167,13 +184,13 @@ The MCP server validates that L2 nodes start with one of these names. Minimum fo
 ```
 write_memory(
   prefix="P",
-  content="WeatherBot | New | Python/Discord.py | GH: user/weatherbot | Discord bot for weather forecasts\n\tOverview\n\t\tCurrent state — scaffolding done, no commands yet\n\t\tGoals — daily/hourly forecasts via slash commands, multi-city\n\t\tArchitecture — Discord slash command → OpenWeatherMap API → formatted embed\n\t\tEnvironment — /home/user/weatherbot, python bot.py, needs DISCORD_TOKEN + WEATHER_API_KEY\n\tCodebase\n\t\tEntry point — bot.py, start: python bot.py\n\t\tCore modules\n\t\t\tweather_cog.py — WeatherCog(Cog); fetch_forecast(city: str) → discord.Embed\n\t\t\tformatter.py — format_embed(data: dict) → discord.Embed\n\t\tHelpers / Utilities\n\t\t\tapi_client.py — get_weather(city: str) → dict; wraps HTTP to OpenWeatherMap\n\t\tConfig / Constants — .env: DISCORD_TOKEN, WEATHER_API_KEY, DEFAULT_CITY\n\t\tTests — pytest, test_weather_cog.py (3 tests)\n\tUsage\n\t\tInstallation / Setup — pip install -r requirements.txt, cp .env.example .env\n\t\tCLI / API — /weather <city>, /forecast <city> (planned)\n\tContext\n\t\tInitiator — personal project, Mar 2026\n\t\tTarget audience — personal Discord server\n\t\tDependencies — discord.py, OpenWeatherMap API, aiohttp\n\tOpen tasks\n\t\tImplement /forecast command for multi-day view\n\t\tAdd city autocomplete",
+  content="WeatherBot | New | Python/Discord.py | GH: user/weatherbot\n> Discord bot for weather forecasts — slash commands for current weather and multi-day forecasts\n\tOverview\n\t\tCurrent state\n\t\t> Scaffolding done, no commands yet. Bot connects to Discord but has no slash commands registered.\n\t\tGoals\n\t\t> Daily/hourly forecasts via slash commands, multi-city support, embed formatting\n\t\tArchitecture\n\t\t> Discord slash command → OpenWeatherMap API → formatted embed. Single-file cog pattern.\n\t\tEnvironment\n\t\t> /home/user/weatherbot, python bot.py, needs DISCORD_TOKEN + WEATHER_API_KEY in .env\n\tCodebase\n\t\tEntry point — bot.py, start: python bot.py\n\t\tCore modules\n\t\t\tweather_cog.py — WeatherCog(Cog); fetch_forecast(city: str) → discord.Embed\n\t\t\tformatter.py — format_embed(data: dict) → discord.Embed\n\t\tHelpers / Utilities\n\t\t\tapi_client.py — get_weather(city: str) → dict; wraps HTTP to OpenWeatherMap\n\t\tConfig / Constants — .env: DISCORD_TOKEN, WEATHER_API_KEY, DEFAULT_CITY\n\t\tTests — pytest, test_weather_cog.py (3 tests)\n\tUsage\n\t\tInstallation / Setup — pip install -r requirements.txt, cp .env.example .env\n\t\tCLI / API — /weather <city>, /forecast <city> (planned)\n\tContext\n\t\tInitiator — personal project, Mar 2026\n\t\tTarget audience — personal Discord server\n\t\tDependencies — discord.py, OpenWeatherMap API, aiohttp\n\tOpen tasks\n\t\tImplement /forecast command\n\t\t> Multi-day view with daily highs/lows and weather icons per day\n\t\tAdd city autocomplete",
   tags=["#discord", "#python", "#weather", "#bot"],
   links=[]
 )
 ```
 
-Note: L2 nodes use 1 tab, L3 uses 2 tabs, L4 uses 3 tabs. Each module under "Core modules" is an L4 node with signature + purpose. Skip empty sections — no need for placeholder text.
+Note: L2 nodes use 1 tab, L3 uses 2 tabs, L4 uses 3 tabs. Use `> ` for body text that should be hidden in listings but shown on drill-down. Skip empty sections — no need for placeholder text.
 
 ### Marking entries as favorites
 
@@ -234,22 +251,22 @@ write_memory(
 
 ---
 
-## Title + L1 Quality Rules
+## Title + Body Quality Rules
 
 **Title:** Short navigation label, ~50 chars (configurable via `maxTitleChars`). Think "chapter title in a book".
 - Good: `"hmem.py Performance: Bulk-Queries statt N+1"`, `"Ghost Wakeup Bug in msg-router.ts"`
 - Bad: `"Fixed a bug"`, `"Important lesson"` (too vague)
 
-**L1:** One complete, informative sentence — ~15–20 tokens.
+**Body (via `>` lines):** Detailed explanation — full sentences, multiline OK. Shown on drill-down, hidden in listings.
 - Must be understandable without any context
-- Not "Fixed a bug" — instead "SQLite connection failed due to wrong path in .mcp.json"
+- Not "Fixed a bug" — instead explain root cause, fix, and impact
 
-**With explicit title (recommended):**
+**With title + body (recommended):**
 ```
-write_memory(prefix="L", content="hmem.py Performance\nAlle Nodes in 2 Bulk-Queries laden, nicht pro Entry einzeln\n\tload_nodes() pro Entry = N+1 SQLite-Connections")
+write_memory(prefix="L", content="hmem.py Performance: Bulk-Queries statt N+1\n> Alle Nodes in 2 Bulk-Queries laden, nicht pro Entry einzeln.\n> Vorher: load_nodes() pro Entry = N+1 SQLite-Connections.\n\tImplementation detail\n\t> Changed read() to batch-fetch all nodes for visible entries in one query")
 ```
 
-**Without explicit title (auto-extracted):**
+**Without body (simple entries, backward-compatible):**
 ```
 write_memory(prefix="E", content="SQLite connection failed due to wrong path in .mcp.json\n\tFix: use absolute path in env var")
 ```
@@ -370,13 +387,14 @@ Use when: the wording is wrong, outdated, or needs clarification.
 Appends new child nodes under an existing root or node. Existing children are preserved.
 
 Content indentation is **relative to the parent** — 0 tabs = direct child of `id`.
+Body lines (`> `) work the same as in `write_memory`.
 
 ```
 append_memory(
   id="L0003",
-  content="New finding discovered later\n\tSub-detail about it"
+  content="New finding discovered later\n> Detailed explanation of what was found and why it matters.\n> This can span multiple lines.\n\tSub-detail about it"
 )
-# → adds L0003.N (L2) and L0003.N.1 (L3)
+# → adds L0003.N (L2 with title + body) and L0003.N.1 (L3)
 
 append_memory(
   id="L0003.2",

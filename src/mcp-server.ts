@@ -274,7 +274,7 @@ function formatRecentOEntries(
     // Expand exchanges: all entries when expandAll, otherwise only latest
     if (expandAll || i === 0) {
       const exLimit = expandAll && i > 0 ? Math.min(exchangeCount, 5) : exchangeCount;
-      const exchanges = store.getOEntryExchanges(o.id, exLimit);
+      const exchanges = store.getOEntryExchanges(o.id, exLimit, true);
       for (const ex of exchanges) {
         const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
         const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
@@ -373,6 +373,8 @@ server.tool(
     "  Level 3: 2 tabs — even more detail\n" +
     "  Level 4: 3 tabs — fine-grained detail\n" +
     "  Level 5: 4 tabs — raw context/data\n" +
+    "Use > lines for body text (shown on drill-down, hidden in listings):\n" +
+    "  Title line\\n> Body line 1\\n> Body line 2\\n\\tChild title\\n\\t> Child body\n" +
     "The system auto-assigns an ID and timestamp. " +
     `Use prefix to categorize: ${prefixList}.\n\n` +
     "Store types:\n" +
@@ -382,11 +384,13 @@ server.tool(
       `Memory category: ${prefixList}`
     ),
     content: z.string().min(3).describe(
-      "The memory content. Use tab indentation for depth levels. Example:\n" +
-        "Built the Council Dashboard for Althing Inc.\n" +
-        "\tMy role was frontend architecture with React + Vite\n" +
-        "\t\tShadcnUI for components, SSE for real-time updates\n" +
-        "\t\t\tAuth was tricky — EventSource can't send custom headers"
+      "The memory content. Use tab indentation for depth levels. Use > for body text (hidden in listings, shown on drill-down).\n" +
+        "Example:\n" +
+        "Council Dashboard for Althing Inc.\n" +
+        "> Built a real-time dashboard with React + Vite. ShadcnUI for components, SSE for live updates.\n" +
+        "\tFrontend architecture\n" +
+        "\t> React + Vite, ShadcnUI components, SSE for real-time updates\n" +
+        "\t\tAuth was tricky — EventSource can't send custom headers"
     ),
     links: z.array(z.string()).optional().describe(
       "Optional: IDs of related memories, e.g. ['P0001', 'L0005']"
@@ -519,9 +523,11 @@ server.tool(
   "update_memory",
   "Update the text of an existing memory entry or sub-node (your own personal memory). " +
     "Only modifies the text at the specified ID — children are preserved unchanged.\n\n" +
+    "Supports > body format: 'New title\\n> Body line 1\\n> Body line 2' splits into title (shown in listings) + body (shown on drill-down).\n\n" +
     "Use cases:\n" +
     "- Correct outdated wording: update_memory(id='L0003', content='corrected summary')\n" +
-    "- Fix a sub-node: update_memory(id='L0003.2', content='corrected detail')\n" +
+    "- Add title/body split: update_memory(id='L0003', content='Short title\\n> Detailed body text')\n" +
+    "- Fix a sub-node: update_memory(id='L0003.2', content='node title\\n> node body')\n" +
     "- Mark as obsolete: FIRST write the correction, THEN update with [✓ID] reference:\n" +
     "  1. write_memory(prefix='E', content='Correct fix is...') → E0076\n" +
     "  2. update_memory(id='E0042', content='Wrong — see [✓E0076]', obsolete=true)\n" +
@@ -759,10 +765,11 @@ server.tool(
     "Use this to extend an existing entry with additional detail without overwriting it.\n\n" +
     "Content uses tab indentation relative to the parent:\n" +
     "  0 tabs = direct child of id\n" +
-    "  1 tab  = grandchild, etc.\n\n" +
+    "  1 tab  = grandchild, etc.\n" +
+    "Use > for body text: 'Node title\\n> Body shown on drill-down\\n\\tChild node'\n\n" +
     "Examples:\n" +
-    "  append_memory(id='L0003', content='New finding\\n\\tSub-detail') " +
-      "→ adds L2 node + L3 child\n" +
+    "  append_memory(id='L0003', content='New finding\\n> Detailed explanation\\n\\tSub-detail') " +
+      "→ adds L2 node (with title + body) + L3 child\n" +
     "  append_memory(id='L0003.2', content='Extra note') " +
       "→ adds L3 node under the L2 node L0003.2",
   {
@@ -1618,9 +1625,10 @@ server.tool(
           }
         }
 
-        // Inject recent O-entries linked to this project (full exchanges for all)
+        // Inject the most recent O-entry linked to this project with last N exchanges
+        // Purpose: seamless continuation of the previous session's conversation
         if (hmemConfig.recentOEntries > 0) {
-          const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10, id, true);
+          const { text, ids } = formatRecentOEntries(hmemStore, 1, hmemConfig.recentOEntries, id, true);
           if (text) {
             lines.push("  " + text.replace(/\n/g, "\n  "));
             sessionCache.registerDelivered(ids);
@@ -1976,7 +1984,11 @@ server.tool(
         const favTag = e.favorite ? " [♥]" : "";
         lines.push(`[${e.id}] ${date}${role}${favTag}${obsoleteTag}${irrelevantTag}${access}`);
         lines.push(`  ${e.title}`);
-        if (e.level_1 !== e.title) lines.push(`  ${e.level_1}`);
+        if (e.level_1 && e.level_1 !== e.title) {
+          for (const bodyLine of e.level_1.split("\n")) {
+            lines.push(`  ${bodyLine}`);
+          }
+        }
         if (e.children && e.children.length > 0) {
           for (const child of e.children as MemoryNode[]) {
             const indent = "  ".repeat(child.depth - 1);
@@ -2414,9 +2426,11 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
     } else {
       lines.push(`${e.id}  ${e.title}${tagStr}`);
     }
-    // Node drilldown: show full content below title
-    if (hasDetail && e.level_1 !== e.title) {
-      lines.push(`  ${e.level_1}`);
+    // Node drilldown: show body below title
+    if (e.level_1 && e.level_1 !== e.title) {
+      for (const bodyLine of e.level_1.split("\n")) {
+        lines.push(`  ${bodyLine}`);
+      }
     }
   } else {
     if (curator) {
@@ -2440,9 +2454,11 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
       const syncTag = syncThreshold && e.updated_at && e.updated_at <= syncThreshold ? " ✓" : "";
       lines.push(`${e.id}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}${syncTag}  ${e.title}${tagStr}`);
     }
-    // Show full level_1 content below title when entry is expanded/drilled
-    if (hasDetail && e.level_1 !== e.title) {
-      lines.push(`  ${e.level_1}`);
+    // Show body below title when entry is drilled into
+    if (e.level_1 && e.level_1 !== e.title) {
+      for (const bodyLine of e.level_1.split("\n")) {
+        lines.push(`  ${bodyLine}`);
+      }
     }
   }
 
@@ -2566,18 +2582,25 @@ function renderChildrenFormatted(lines: string[], children: MemoryNode[], curato
 function renderChildrenExpanded(lines: string[], children: MemoryNode[], curator: boolean, rootId?: string): void {
   for (const child of children) {
     const indent = "  ".repeat(child.depth - 1);
+    const bodyIndent = indent + "  ";
     const fav = nodeMarkers(child);
     const compactId = rootId ? child.id.replace(rootId, "") : child.id;
     const visibleGrandchildren = child.children?.filter(c => !c.irrelevant);
     const hasLoadedChildren = visibleGrandchildren && visibleGrandchildren.length > 0;
     const isBoundary = !hasLoadedChildren && (child.child_count ?? 0) > 0;
+    const hasBody = child.content && child.content !== child.title;
 
     if (hasLoadedChildren) {
-      // Inner node: full content + recurse
+      // Inner node: title + body + recurse
       if (curator) {
-        lines.push(`${indent}[${child.id}]${fav} ${child.content}`);
+        lines.push(`${indent}[${child.id}]${fav} ${child.title}`);
       } else {
-        lines.push(`${indent}${compactId}${fav}  ${child.content}`);
+        lines.push(`${indent}${compactId}${fav}  ${child.title}`);
+      }
+      if (hasBody) {
+        for (const bodyLine of child.content.split("\n")) {
+          lines.push(`${bodyIndent}${bodyLine}`);
+        }
       }
       renderChildrenExpanded(lines, visibleGrandchildren, curator, rootId);
     } else if (isBoundary) {
@@ -2589,11 +2612,16 @@ function renderChildrenExpanded(lines: string[], children: MemoryNode[], curator
         lines.push(`${indent}${compactId}${fav}  ${child.title}${hint}`);
       }
     } else {
-      // Leaf node (no children at all): full content
+      // Leaf node: title + body
       if (curator) {
-        lines.push(`${indent}[${child.id}]${fav} ${child.content}`);
+        lines.push(`${indent}[${child.id}]${fav} ${child.title}`);
       } else {
-        lines.push(`${indent}${compactId}${fav}  ${child.content}`);
+        lines.push(`${indent}${compactId}${fav}  ${child.title}`);
+      }
+      if (hasBody) {
+        for (const bodyLine of child.content.split("\n")) {
+          lines.push(`${bodyIndent}${bodyLine}`);
+        }
       }
     }
   }

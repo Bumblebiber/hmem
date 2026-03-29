@@ -1478,16 +1478,26 @@ export class HmemStore {
      * Exchange structure: L2 = title, L4 (X.1) = user message, L5 (X.1.1) = agent response.
      * Returns newest first.
      */
-    getOEntryExchanges(oEntryId, limit) {
+    getOEntryExchanges(oEntryId, limit, skipSkillDialogs = false) {
         if (limit <= 0)
             return [];
         // Get the last N L2 nodes (exchanges) by seq DESC
-        const l2Nodes = this.db.prepare(`SELECT id, seq FROM memory_nodes WHERE root_id = ? AND depth = 2 ORDER BY seq DESC LIMIT ?`).all(oEntryId, limit);
+        let l2Nodes;
+        if (skipSkillDialogs) {
+            // Exclude exchanges tagged with #skill-dialog
+            l2Nodes = this.db.prepare(`SELECT id, seq FROM memory_nodes WHERE root_id = ? AND depth = 2
+         AND id NOT IN (SELECT entry_id FROM memory_tags WHERE tag = '#skill-dialog')
+         ORDER BY seq DESC LIMIT ?`).all(oEntryId, limit);
+        }
+        else {
+            l2Nodes = this.db.prepare(`SELECT id, seq FROM memory_nodes WHERE root_id = ? AND depth = 2 ORDER BY seq DESC LIMIT ?`).all(oEntryId, limit);
+        }
         const exchanges = [];
         for (const l2 of l2Nodes) {
             const l4 = this.db.prepare(`SELECT content FROM memory_nodes WHERE parent_id = ? AND depth = 4 LIMIT 1`).get(l2.id);
             const l5 = this.db.prepare(`SELECT content FROM memory_nodes WHERE root_id = ? AND depth = 5 AND parent_id = ? LIMIT 1`).get(oEntryId, l2.id + ".1");
             exchanges.push({
+                nodeId: l2.id,
                 seq: l2.seq,
                 userText: l4?.content || "",
                 agentText: l5?.content || "",
@@ -1574,8 +1584,26 @@ export class HmemStore {
                 if (trimmed.length > nodeLimit * HmemStore.CHAR_LIMIT_TOLERANCE) {
                     throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
                 }
-                sets.push("content = ?", "title = ?");
-                params.push(trimmed, this.autoExtractTitle(trimmed));
+                // Parse > body lines: first non-> line = title, > lines = body (content)
+                const lines = trimmed.split("\n");
+                const titleLines = [];
+                const bodyLines = [];
+                for (const line of lines) {
+                    if (line.startsWith("> ") || line === ">") {
+                        bodyLines.push(line.replace(/^> ?/, ""));
+                    }
+                    else {
+                        titleLines.push(line);
+                    }
+                }
+                if (bodyLines.length > 0) {
+                    sets.push("content = ?", "title = ?");
+                    params.push(bodyLines.join("\n"), titleLines.join(" ").trim());
+                }
+                else {
+                    sets.push("content = ?", "title = ?");
+                    params.push(trimmed, this.autoExtractTitle(trimmed));
+                }
             }
             if (favorite !== undefined) {
                 sets.push("favorite = ?");
@@ -1618,39 +1646,41 @@ export class HmemStore {
         }
         else {
             // Root entry in memories
-            // If content has tab-indented children, split L1 from children
-            if (trimmed && (trimmed.includes("\n\t") || trimmed.includes("\n "))) {
-                // Extract L1 (non-indented lines) and child content (indented lines)
+            if (trimmed) {
+                // Split into title lines, body lines (> prefix), and child lines (indented)
                 const lines = trimmed.split("\n");
-                const l1Lines = [];
+                const titleLines = [];
+                const bodyLines = [];
                 const childLines = [];
                 for (const line of lines) {
                     if (line.startsWith("\t") || (line.length > 0 && line[0] === " " && line.trimStart() !== line)) {
                         childLines.push(line);
                     }
+                    else if (line.startsWith("> ") || line === ">") {
+                        bodyLines.push(line.replace(/^> ?/, ""));
+                    }
                     else {
-                        l1Lines.push(line);
+                        titleLines.push(line);
                     }
                 }
-                const l1Text = l1Lines.join(" | ").trim();
+                const hasBody = bodyLines.length > 0;
+                const hasChildren = childLines.length > 0;
+                const titleText = titleLines.join(" | ").trim();
+                const l1Text = hasBody ? bodyLines.join("\n") : titleText;
+                const newTitle = hasBody ? titleText : this.autoExtractTitle(titleText);
                 const l1Limit = this.cfg.maxCharsPerLevel[0];
-                if (l1Text.length > l1Limit * HmemStore.CHAR_LIMIT_TOLERANCE) {
+                // For body mode, check body length against a generous limit (L2-level)
+                // For non-body mode, check title against L1 limit
+                if (!hasBody && l1Text.length > l1Limit * HmemStore.CHAR_LIMIT_TOLERANCE) {
                     throw new Error(`Level 1 exceeds ${l1Limit} character limit (${l1Text.length} chars). Keep L1 compact.`);
                 }
                 // Update L1
                 const updateTs = new Date().toISOString();
-                const newTitle = this.autoExtractTitle(l1Text);
                 this.db.prepare("UPDATE memories SET level_1 = ?, title = ?, updated_at = ? WHERE id = ?")
                     .run(l1Text, newTitle, updateTs, id);
                 // Append children via appendChildren (handles seq numbering correctly)
-                if (childLines.length > 0) {
+                if (hasChildren) {
                     this.appendChildren(id, childLines.join("\n"));
-                }
-            }
-            else if (trimmed) {
-                const l1Limit = this.cfg.maxCharsPerLevel[0];
-                if (trimmed.length > l1Limit * HmemStore.CHAR_LIMIT_TOLERANCE) {
-                    throw new Error(`Level 1 exceeds ${l1Limit} character limit (${trimmed.length} chars). Keep L1 compact.`);
                 }
             }
             // Obsolete enforcement: require [✓ID] correction reference
@@ -1688,10 +1718,6 @@ export class HmemStore {
             }
             const sets = [];
             const params = [];
-            if (trimmed) {
-                sets.push("level_1 = ?", "title = ?");
-                params.push(trimmed, this.autoExtractTitle(trimmed));
-            }
             if (links !== undefined) {
                 sets.push("links = ?");
                 params.push(links.length > 0 ? JSON.stringify(links) : null);
@@ -1743,12 +1769,11 @@ export class HmemStore {
                 }
             }
             if (sets.length === 0) {
-                // Only tags to update — no SQL UPDATE needed
+                // No flag updates — but content may have been updated above (> body parsing)
                 if (tags !== undefined) {
                     this.setTags(id, tags.length > 0 ? this.validateTags(tags) : []);
-                    return true;
                 }
-                return false;
+                return !!trimmed || tags !== undefined;
             }
             sets.push("updated_at = ?");
             params.push(new Date().toISOString());
@@ -1807,7 +1832,7 @@ export class HmemStore {
         const topLevelIds = [];
         this.db.transaction(() => {
             for (const node of nodes) {
-                insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, this.autoExtractTitle(node.content), node.content, timestamp, timestamp);
+                insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.title, node.content, timestamp, timestamp);
                 if (node.parent_id === parentId)
                     topLevelIds.push(node.id);
             }
@@ -1920,6 +1945,10 @@ export class HmemStore {
         for (const tag of tags) {
             insert.run(entryId, tag);
         }
+    }
+    /** Add a single tag to an entry/node without removing existing tags. */
+    addTag(entryId, tag) {
+        this.db.prepare("INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)").run(entryId, tag);
     }
     /** Get tags for a single entry/node. */
     fetchTags(entryId) {
@@ -2561,7 +2590,8 @@ export class HmemStore {
         const seqAtParent = new Map();
         const lastIdAtDepth = new Map();
         const nodes = [];
-        const l1Lines = [];
+        const l1Title = [];
+        const l1Body = [];
         // Auto-detect space indentation unit: use first indented line (if no tabs present)
         const rawLines = content.split("\n").map(l => l.trimEnd()).filter(Boolean);
         let spaceUnit = 4;
@@ -2591,8 +2621,30 @@ export class HmemStore {
                 depth = spaceTabs > 0 ? Math.min(spaceTabs, 4) + 1 : 1;
             }
             const text = trimmedEnd.trim();
+            // Body line detection: "> " prefix marks body text for the preceding node
+            const isBodyLine = text.startsWith("> ") || text === ">";
+            const bodyText = isBodyLine ? text.replace(/^> ?/, "") : "";
             if (depth === 1) {
-                l1Lines.push(text);
+                if (isBodyLine) {
+                    l1Body.push(bodyText);
+                }
+                else {
+                    l1Title.push(text);
+                }
+                continue;
+            }
+            if (isBodyLine) {
+                // Append body to the last node at this depth
+                const lastNode = nodes.length > 0 ? nodes[nodes.length - 1] : null;
+                if (lastNode && lastNode.depth === depth) {
+                    // If content was just the title (no body yet), start fresh body
+                    if (lastNode.content === lastNode.title) {
+                        lastNode.content = bodyText;
+                    }
+                    else {
+                        lastNode.content += "\n" + bodyText;
+                    }
+                }
                 continue;
             }
             // L2+: determine parent and generate compound ID
@@ -2601,18 +2653,29 @@ export class HmemStore {
             seqAtParent.set(parentId, seq);
             const nodeId = `${parentId}.${seq}`;
             lastIdAtDepth.set(depth, nodeId);
-            nodes.push({ id: nodeId, parent_id: parentId, depth, seq, content: text, title: this.autoExtractTitle(text) });
+            nodes.push({ id: nodeId, parent_id: parentId, depth, seq, content: text, title: text });
         }
-        // Title: first L1 line (explicit). Content: remaining L1 lines joined.
-        // If only 1 L1 line: title is auto-extracted, level1 = full line.
+        // Backward-compatible: nodes without body lines get autoExtractTitle fallback
+        for (const node of nodes) {
+            if (node.content === node.title) {
+                // No body was added — old format: content = full text, title = auto-extracted
+                node.title = this.autoExtractTitle(node.content);
+            }
+            // else: body was added — title stays as explicit title text
+        }
+        // L1: first non-body line = title, body lines = level1
         let title;
         let level1;
-        if (l1Lines.length >= 2) {
-            title = l1Lines[0];
-            level1 = l1Lines.slice(1).join(" | ");
+        if (l1Body.length > 0) {
+            title = l1Title[0] ?? "";
+            level1 = l1Body.join("\n");
+        }
+        else if (l1Title.length >= 2) {
+            title = l1Title[0];
+            level1 = l1Title.slice(1).join(" | ");
         }
         else {
-            level1 = l1Lines[0] ?? "";
+            level1 = l1Title[0] ?? "";
             title = this.autoExtractTitle(level1);
         }
         return { title, level1, nodes };
@@ -2659,6 +2722,21 @@ export class HmemStore {
             const absDepth = parentDepth + 1 + relDepth;
             if (absDepth > maxAbsDepth)
                 continue; // silently skip beyond max depth
+            // Body line detection: "> " prefix marks body text for the preceding node
+            const isBodyLine = text.startsWith("> ") || text === ">";
+            if (isBodyLine) {
+                const bodyText = text.replace(/^> ?/, "");
+                const lastNode = nodes.length > 0 ? nodes[nodes.length - 1] : null;
+                if (lastNode && lastNode.depth === absDepth) {
+                    if (lastNode.content === lastNode.title) {
+                        lastNode.content = bodyText;
+                    }
+                    else {
+                        lastNode.content += "\n" + bodyText;
+                    }
+                }
+                continue;
+            }
             const myParentId = relDepth === 0
                 ? parentId
                 : (lastIdAtRelDepth.get(relDepth - 1) ?? parentId);
@@ -2666,7 +2744,13 @@ export class HmemStore {
             seqAtParent.set(myParentId, seq);
             const nodeId = `${myParentId}.${seq}`;
             lastIdAtRelDepth.set(relDepth, nodeId);
-            nodes.push({ id: nodeId, parent_id: myParentId, depth: absDepth, seq, content: text });
+            nodes.push({ id: nodeId, parent_id: myParentId, depth: absDepth, seq, content: text, title: text });
+        }
+        // Backward-compatible: nodes without body lines get autoExtractTitle fallback
+        for (const node of nodes) {
+            if (node.content === node.title) {
+                node.title = this.autoExtractTitle(node.content);
+            }
         }
         return nodes;
     }

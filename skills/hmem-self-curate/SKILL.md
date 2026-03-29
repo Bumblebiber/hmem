@@ -1,6 +1,6 @@
 ---
 name: hmem-self-curate
-description: Curate your own memory. Systematically review entries — mark obsolete, irrelevant, or favorite. Run periodically to keep memory clean.
+description: Curate your own memory. Systematically review entries — mark obsolete, irrelevant, or favorite. Run periodically to keep memory clean. Use when asked to "aufräumen", "clean up memory", "alte Einträge prüfen", "memory review", "Speicher bereinigen", "curate", "tidy up", or when memory_health() shows issues.
 ---
 
 # Self-Curation: Review Your Own Memory
@@ -49,13 +49,12 @@ If context overflows mid-prefix, continue with the remaining entries — your me
 
 ## O-Entries (Session Logs)
 
-O-entries accumulate automatically via the Stop hook — each session creates one. They provide session continuity when `load_project` reconstructs context for a project.
+O-entries accumulate automatically via the Stop hook — each session creates one per project. `load_project` only injects the **last session's exchanges** (not all O-entries), so old O-entries don't pollute context.
 
 **Curation rules for O-entries:**
-- **Keep recent ones** (last 2 weeks) — they give you and `load_project` context about what happened recently.
-- **Mark older ones irrelevant** once they no longer add value: `update_memory(id="O00XX", content="...", irrelevant=true)`
-- **Never mark recent O-entries obsolete** — they are not "wrong", just temporal.
-- Review O-entries last, after all other prefixes.
+- **Leave them alone.** Old O-entries don't cause harm — they're excluded from bulk reads and `load_project` only shows the most recent one.
+- **Don't mark them irrelevant or obsolete** — they serve as historical record and can be useful for checkpoint agents extracting L/D/E.
+- **Skip O-entries during curation.** Focus your time on L, E, D, P entries where curation has real impact.
 
 ---
 
@@ -73,6 +72,16 @@ These are especially useful when a curation pass reveals a pattern (e.g., 10 ent
 
 ---
 
+## Title Quality Check
+
+Since v5.1, every node has a **title** (short navigation label, ~50 chars) and an optional **body** (detailed content shown on drill-down). During curation, check whether titles are good navigation labels:
+
+- **Vague title?** Update it: `update_memory(id="L0003", content="Better, specific title")`
+- **Title = full content?** Old entries without `>` body lines have `title = autoExtract(content)`. If the content is valuable but the title is truncated gibberish, rewrite the title to be a clear summary.
+- **Long content in a leaf node?** Consider whether it would benefit from title/body separation — though this requires rewriting via the `>` format (write new entry + mark old obsolete).
+
+---
+
 ## For Each Entry: Decide and Act
 
 | Decision | Action |
@@ -81,7 +90,7 @@ These are especially useful when a curation pass reveals a pattern (e.g., 10 ent
 | Important reference I need every session | `update_memory(id="X", content="...", favorite=true)` |
 | Outdated — a better entry exists | Mark obsolete (see below) |
 | Just noise — not wrong, but irrelevant | `update_memory(id="X", content="...", irrelevant=true)` |
-| L1 wording is vague or misleading | `update_memory(id="X", content="Better wording")` |
+| Title is vague or misleading | `update_memory(id="X", content="Better wording")` |
 | Sub-node has valuable reference info | `update_memory(id="X.N", content="...", favorite=true)` |
 
 ---
@@ -115,9 +124,9 @@ Look for entries covering the same topic (common with P entries). Merge them:
 
 1. Pick the **keeper** (the more complete one)
 2. Copy unique info from the duplicate: `append_memory(id="P0029", content="Session from duplicate\n\tDetail carried over")`
-3. **Delete** the duplicate: `delete_agent_memory(agent_name=HMEM_AGENT_ID, entry_id="P0031")` — use the value of the `HMEM_AGENT_ID` environment variable as your agent name
+3. Mark the duplicate obsolete with a correction reference: `update_memory(id="P0031", content="Merged into [✓P0029]", obsolete=true)`
 
-**Delete, don't mark irrelevant.** Irrelevant duplicates still show up with `show_all=true` and flood the context on future curation runs. True duplicates (entire content exists in the keeper) must be deleted to keep the memory clean.
+**Note:** Only curators (ceo role) can delete entries via `delete_agent_memory`. As a worker agent, use `obsolete=true` with `[✓ID]` to point to the keeper. Obsolete entries are hidden from bulk reads and won't cause confusion.
 
 ---
 
@@ -174,7 +183,7 @@ Check `[♥]` markers in the output.
 | `update_memory(id, content, obsolete=true)` | Mark as wrong (needs [✓ID]) |
 | `append_memory(id, content)` | Merge info into keeper |
 | `move_memory(source_id, target_parent_id)` | Relocate misplaced sub-node (updates all refs) |
-| `delete_agent_memory(agent_name, entry_id)` | Delete true duplicates (use `HMEM_AGENT_ID` env var) |
+| `update_memory(id, content="Merged into [✓X]", obsolete=true)` | Mark duplicate as obsolete (point to keeper) |
 | `update_many(updates=[...])` | Batch-update multiple entries at once |
 | `tag_bulk(ids=[...], add_tags, remove_tags)` | Add/remove tags across many entries |
 | `tag_rename(old_tag, new_tag)` | Rename a tag globally |

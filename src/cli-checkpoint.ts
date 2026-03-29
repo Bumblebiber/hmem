@@ -90,14 +90,22 @@ export async function checkpoint(): Promise<void> {
     const projectName = activeProject?.title?.split("|")[0]?.trim() ?? "unknown";
     const projectId = activeProject?.id ?? "";
 
-    // 3. Format exchanges (generous limits — Haiku needs context)
+    // 3. Tag skill-dialog exchanges (brainstorming, debugging, TDD, etc.)
+    const skillMarker = "Base directory for this skill:";
+    for (const ex of exchanges) {
+      if (ex.userText.includes(skillMarker)) {
+        store.addTag(ex.nodeId, "#skill-dialog");
+      }
+    }
+
+    // 4. Format exchanges (generous limits — Haiku needs context)
     const formattedExchanges = exchanges.map((ex, i) => {
       const user = ex.userText.length > 800 ? ex.userText.substring(0, 800) + "..." : ex.userText;
       const agent = ex.agentText.length > 1200 ? ex.agentText.substring(0, 1200) + "..." : ex.agentText;
       return `--- Exchange ${i + 1} ---\nUSER: ${user}\nAGENT: ${agent}`;
     }).join("\n\n");
 
-    // 4. Close store before spawning subagent (avoid DB lock)
+    // 5. Close store before spawning subagent (avoid DB lock)
     store.close();
 
     // 5. Build MCP config for subagent
