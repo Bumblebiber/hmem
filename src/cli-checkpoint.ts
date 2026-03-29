@@ -133,7 +133,7 @@ export async function checkpoint(): Promise<void> {
       ? `\n## Previous checkpoint summaries (oldest first):\n\n${prevSummaryText}\n`
       : "";
 
-    const prompt = `Checkpoint agent: extract non-obvious session insights → hmem.
+    const prompt = `Checkpoint: extract non-obvious insights → hmem.
 
 Project: ${projectName} (${projectId}) | O-entry: ${activeOId}
 ${summarySection}
@@ -145,12 +145,12 @@ ${formattedExchanges}
 - D: Decision + rationale
 - Handoff → append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
 
-write_memory for L/D/E: tags 3-5, links=["${projectId}"]. Max 2-3.
+write_memory: tags 3-5, links=["${projectId}"]. Max 2-3.
 
-**Summary:** append_memory(id="${activeOId}", content="\\t[CP] ...")
+**Summary (always required):** append_memory(id="${activeOId}", content="\\t[CP] ...")
 - Prior summaries → 1-2 sentences${prevSummaries.length > 0 ? " (shown above)" : ""}; detail exchanges 3-8 sentences, match language
 
-read_memory() first; skip/extend duplicates. Always write summary.`;
+read_memory() first; skip/extend duplicates.`;
 
     // 7. Spawn Haiku with MCP access
     const allowedTools = [
