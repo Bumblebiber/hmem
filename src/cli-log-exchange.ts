@@ -66,6 +66,40 @@ function readLastUserMessage(transcriptPath: string): string | null {
   return null;
 }
 
+/** Read the last assistant message from the transcript (fallback when hook input lacks it). */
+function readLastAssistantMessage(transcriptPath: string): string | null {
+  if (!fs.existsSync(transcriptPath)) return null;
+
+  const stat = fs.statSync(transcriptPath);
+  const TAIL_BYTES = 2 * 1024 * 1024;
+  const start = Math.max(0, stat.size - TAIL_BYTES);
+
+  const fd = fs.openSync(transcriptPath, "r");
+  const buf = Buffer.alloc(Math.min(stat.size, TAIL_BYTES));
+  fs.readSync(fd, buf, 0, buf.length, start);
+  fs.closeSync(fd);
+
+  const content = buf.toString("utf8");
+  const lines = start > 0 ? content.substring(content.indexOf("\n") + 1).split("\n") : content.split("\n");
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.type === "assistant" && entry.message?.role === "assistant") {
+        const msg = entry.message.content;
+        if (typeof msg === "string") return msg;
+        if (Array.isArray(msg)) {
+          const text = msg.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n");
+          if (text) return text;
+        }
+      }
+    } catch { continue; }
+  }
+  return null;
+}
+
 /** Auto-extract a short title from text (first line, max 80 chars). */
 function extractTitle(text: string): string {
   const firstLine = text.split("\n")[0].trim().replace(/[<>\[\]]/g, "");
@@ -87,7 +121,14 @@ export async function logExchange(): Promise<void> {
   // Guards
   if (input.stop_hook_active) process.exit(0);
   if (process.env.HMEM_NO_SESSION === "1") process.exit(0);
-  if (!input.transcript_path || !input.last_assistant_message) process.exit(0);
+  if (!input.transcript_path) process.exit(0);
+
+  // Fallback: if last_assistant_message is missing (e.g. channel sessions),
+  // read it from the transcript
+  if (!input.last_assistant_message && input.transcript_path) {
+    input.last_assistant_message = readLastAssistantMessage(input.transcript_path) || "";
+  }
+  if (!input.last_assistant_message) process.exit(0);
 
   // Skip subagent sessions — their transcripts are in /tmp/claude-* task directories
   // and contain MCP tool calls, not real user conversation
