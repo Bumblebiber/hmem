@@ -223,8 +223,8 @@ log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfi
 const sessionCache = new SessionCache();
 
 const CONTEXT_THRESHOLD_WARNING = "\n\n⚠ CONTEXT THRESHOLD REACHED (~{tokens}k tokens delivered this session).\n" +
-  "Recommended: flush_context to save current work, then /clear to reset conversation.\n" +
-  "After /clear, use load_project to restore project context.";
+  "Tell the user to run /hmem-wipe — it saves key knowledge and prepares for /clear.\n" +
+  "Alternative: flush_context manually, then /clear, then load_project to restore context.";
 
 const CACHE_RESET_SIGNAL = "/tmp/hmem-cache-reset-signal";
 

@@ -121,13 +121,37 @@ Since v5.1, entries support explicit title/body separation via the `>` format. D
 - Title is already clear and navigable
 - Entry has low access count and marginal value (not worth the effort)
 
-### O-entry checkpoint summaries and skill-dialog tags (v5.1.2+)
+### P-Entry Standard-Schema (R0009)
 
-O-entries may contain two special tagged node types:
+All P-entries must follow the standard L2 structure (see R0009):
+`.1 Overview`, `.2 Codebase`, `.3 Usage`, `.4 Context`, `.5 Deployment`, `.6 Bugs`, `.7 Protocol`, `.8 Open tasks`, `.9 Ideas`
 
-- **`#checkpoint-summary`** nodes: Written by the auto-checkpoint (Haiku) as `[CP]` prefixed L3 nodes. These are rolling summaries that compress older exchanges. `load_project` shows the latest summary + only post-summary exchanges. **Do not mark these obsolete or modify them** — they are auto-generated and auto-consumed.
+During curation, check P-entries against this schema:
+- **Missing sections:** Add them using `append_agent_memory(agent_name, "P00XX", content="\tOverview\n\t\tCurrent state: ...")`
+- **Wrong order:** Flag and restructure — order is fixed per R0009
+- **Empty sections:** OK to omit, but if content exists it must be in the right section
+- **L1 body:** Should be a one-line project summary in format `Name | Status | Stack | Description`
 
-- **`#skill-dialog`** exchange nodes: Exchanges where a skill (brainstorming, TDD, debugging) was activated. These are filtered from `load_project` output but remain accessible via `read_memory(id=...)`. **Do not curate these** — they are correctly tagged and filtered automatically.
+### O-entry curation (v5.1.2+)
+
+O-entries may need curation for titles, tags, and summaries:
+
+**Titles:**
+- Old O-entries may have title "unassigned" or generic titles like "hmem-mcp". Fix with `fix_agent_memory(agent_name, id, content="Descriptive session title")`.
+- Good title: "Title/Body Separation design + v5.1.0 release". Bad: "hmem-mcp".
+
+**Tags:**
+- O-entries should have a `#session` tag and optionally topic tags (e.g. `#npm`, `#release`, `#refactor`).
+- Add missing tags: `fix_agent_memory(agent_name, id, tags=["#session", "#release"])`
+
+**Checkpoint summaries:**
+- O-entries with many exchanges (>10) should have a `[CP]` checkpoint summary. If missing, write one:
+  `append_agent_memory(agent_name, "O00XX", content="\t[CP] Factual 3-8 sentence summary of the session")`
+  Then tag it: the auto-tagger picks up `[CP]` prefixed nodes on the next checkpoint run.
+
+**Special tagged nodes — do not modify:**
+- **`#checkpoint-summary`** nodes: Auto-generated `[CP]` summaries. Leave as-is.
+- **`#skill-dialog`** exchange nodes: Skill activations filtered from `load_project`. Leave as-is.
 
 ### Stale entries — auto-mark obsolete
 
