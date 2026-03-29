@@ -219,6 +219,41 @@ function syncPush(hmemPath: string): void {
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
 log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth}`);
 
+// ---- Version upgrade detection ----
+import { createRequire } from "node:module";
+const _require = createRequire(import.meta.url);
+const PKG_VERSION: string = _require("../package.json").version;
+
+/** Check if hmem was upgraded since last session. Returns upgrade notice or empty string. */
+function checkVersionUpgrade(): string {
+  try {
+    const configPath = path.join(PROJECT_DIR, "hmem.config.json");
+    if (!fs.existsSync(configPath)) return "";
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const lastSeen = raw?.memory?.lastSeenVersion || raw?.lastSeenVersion;
+    if (!lastSeen) {
+      // First run with version tracking — save current version silently
+      saveLastSeenVersion(configPath, raw);
+      return "";
+    }
+    if (lastSeen !== PKG_VERSION) {
+      saveLastSeenVersion(configPath, raw);
+      return `\n\n⚠ hmem-mcp updated: v${lastSeen} → v${PKG_VERSION}. Run /hmem-update to apply post-update steps (skill sync, entry migration, schema enforcement).`;
+    }
+  } catch {}
+  return "";
+}
+
+function saveLastSeenVersion(configPath: string, raw: any): void {
+  try {
+    if (!raw.memory) raw.memory = {};
+    raw.memory.lastSeenVersion = PKG_VERSION;
+    fs.writeFileSync(configPath, JSON.stringify(raw, null, 2) + "\n", "utf8");
+  } catch {}
+}
+
+let versionUpgradeNotice = checkVersionUpgrade();
+
 // Session-scoped cache — persists across tool calls within this MCP connection
 const sessionCache = new SessionCache();
 
@@ -239,6 +274,11 @@ function trackTokens<T extends { content: { type: "text"; text: string }[]; isEr
   if (result.isError) return result;
   const text = result.content.map(c => c.text).join("");
   sessionCache.addTokens(text.length);
+  // One-time version upgrade notice (shown once per session)
+  if (versionUpgradeNotice) {
+    result.content[result.content.length - 1].text += versionUpgradeNotice;
+    versionUpgradeNotice = ""; // only show once
+  }
   if (sessionCache.checkThreshold(hmemConfig.contextTokenThreshold)) {
     const tokK = Math.round(sessionCache.totalTokensDelivered / 1000);
     result.content[result.content.length - 1].text += CONTEXT_THRESHOLD_WARNING.replace("{tokens}", String(tokK));
