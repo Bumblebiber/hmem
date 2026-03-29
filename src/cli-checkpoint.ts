@@ -137,12 +137,10 @@ export async function checkpoint(): Promise<void> {
 
 Project: ${projectName} (${projectId}) | O-entry: ${activeOId}
 ${summarySection}
-## Exchanges:
-
 ${formattedExchanges}
 
-**L/D/E** — non-obvious only (skip feature descriptions):
-- L: Lesson, e.g. "HMEM_AGENT_ID must be in hook env or wrong .hmem file is used"
+**L/D/E** — non-obvious insights only:
+- L: Lesson (root cause, not "feature X exists"), e.g. "HMEM_AGENT_ID env missing → wrong .hmem path"
 - E: Bug + root cause + fix
 - D: Decision + rationale
 - Handoff → append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
