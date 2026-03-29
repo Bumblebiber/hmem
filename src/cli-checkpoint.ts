@@ -98,65 +98,96 @@ export async function checkpoint(): Promise<void> {
       }
     }
 
-    // 4. Format exchanges (generous limits — Haiku needs context)
-    const formattedExchanges = exchanges.map((ex, i) => {
+    // 4. Get previous checkpoint summaries for rolling compression
+    const prevSummaries = store.getCheckpointSummaries(activeOId, 2);
+    const lastSummarySeq = prevSummaries.length > 0 ? prevSummaries[0].seq : 0;
+
+    // Only format exchanges AFTER the last summary (those are new)
+    const newExchanges = exchanges.filter(ex => ex.seq > lastSummarySeq);
+
+    // 5. Format exchanges (generous limits — Haiku needs context)
+    const formattedExchanges = newExchanges.map((ex, i) => {
       const user = ex.userText.length > 800 ? ex.userText.substring(0, 800) + "..." : ex.userText;
       const agent = ex.agentText.length > 1200 ? ex.agentText.substring(0, 1200) + "..." : ex.agentText;
-      return `--- Exchange ${i + 1} ---\nUSER: ${user}\nAGENT: ${agent}`;
+      return `--- Exchange ${i + 1} (${ex.nodeId}) ---\nUSER: ${user}\nAGENT: ${agent}`;
     }).join("\n\n");
 
-    // 5. Close store before spawning subagent (avoid DB lock)
+    // Format previous summaries for rolling compression
+    let prevSummaryText = "";
+    if (prevSummaries.length > 0) {
+      const parts = prevSummaries.reverse().map((s, i) => {
+        const label = i === prevSummaries.length - 1 ? "Most recent summary" : "Older summary";
+        return `[${label} — ${s.created_at.substring(0, 16)}]\n${s.content}`;
+      });
+      prevSummaryText = parts.join("\n\n");
+    }
+
+    // 6. Close store before spawning subagent (avoid DB lock)
     store.close();
 
     // 5. Build MCP config for subagent
     mcpConfigPath = buildMcpConfig(projectDir, agentId);
 
-    // 6. Build the prompt
+    // 7. Build the prompt
+    const summarySection = prevSummaryText
+      ? `\n## Previous checkpoint summaries (oldest first):\n\n${prevSummaryText}\n`
+      : "";
+
     const prompt = `You are a background checkpoint agent. Your job is to extract valuable knowledge from a coding session and save it to long-term memory using the hmem MCP tools.
 
 ## Context
 
 Project: ${projectName} (${projectId})
 Active O-entry: ${activeOId}
-
-## Recent conversation (oldest first):
+${summarySection}
+## New exchanges since last checkpoint (oldest first):
 
 ${formattedExchanges}
 
-## Your task
+## Your tasks
 
-Analyze the conversation above and save NON-OBVIOUS insights to memory. Follow these rules strictly:
+### Task 1: Save insights (L/D/E entries)
 
-### What to save (ONLY if present):
+Analyze the conversation above and save NON-OBVIOUS insights to memory:
+
 1. **Lessons (L)**: Technical insights, best practices discovered, "aha moments"
    - BAD: "Stop Hook logs exchanges" (that's a feature description, not a lesson)
    - GOOD: "HMEM_AGENT_ID must be set in hook scripts, otherwise resolveHmemPath falls back to memory.hmem instead of Agents/NAME/NAME.hmem"
 
 2. **Errors (E)**: Bugs encountered + root cause + fix
-   - GOOD: "TypeScript compile error: store.db is private — fixed by adding public helper methods getActiveOId(), getActiveProject(), findChildNode()"
 
 3. **Decisions (D)**: Architecture/design decisions + rationale
-   - GOOD: "Checkpoint uses claude -p --model haiku with --mcp-config for MCP tool access — alternative was direct DB writes but that produced low-quality entries without proper context"
 
 4. **Handoff**: Update the project's Protocol section with current state
    - 2-3 sentences: what was accomplished, what's in progress, next step
    - Use: append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
 
+### Task 2: Write a rolling session summary
+
+Write a checkpoint summary that will help the next agent understand this session's progress. Use append_memory with the EXACT format:
+
+append_memory(id="${activeOId}", content="\\t[CP] Your summary here")
+
+The summary should:
+- Compress older checkpoint summaries into 1-2 sentences each${prevSummaries.length > 0 ? " (the previous summaries are shown above)" : ""}
+- Describe the new exchanges in more detail (what was discussed, decided, built)
+- Be 3-8 sentences total, factual, no fluff
+- Use the project's language (check existing entries)
+
 ### Rules:
 - Use write_memory for L/D/E entries. Always include tags (3-5) and links=["${projectId}"]
 - Use append_memory to update the Protocol handoff (${projectId}.7)
 - Match the language of existing entries (check with read_memory first)
-- Skip if nothing noteworthy — don't write garbage entries
-- Max 2-3 entries total. Quality over quantity
+- Skip L/D/E if nothing noteworthy — but ALWAYS write the checkpoint summary
+- Max 2-3 L/D/E entries. Quality over quantity
 - Each L1 must be a complete, self-contained sentence (~15-20 tokens)
-- Title (~50 chars) should be specific, not vague
 
 ### Before writing:
 1. Call read_memory() to see existing entries — avoid duplicates
 2. Check if a similar L/D/E already exists before creating a new one
 3. If it does, use append_memory to extend it instead
 
-Now analyze the conversation and save what's worth keeping. If nothing is noteworthy, just say "Nothing to save." and exit.`;
+Now analyze and save.`;
 
     // 7. Spawn Haiku with MCP access
     const allowedTools = [
@@ -178,6 +209,19 @@ Now analyze the conversation and save what's worth keeping. If nothing is notewo
       ).trim();
 
       console.log(`[hmem checkpoint] Haiku: ${output.substring(0, 300)}`);
+
+      // Tag the checkpoint summary node that Haiku wrote via append_memory
+      // Haiku writes it as a [CP] prefixed L2 node under the O-entry
+      try {
+        const postStore = new HmemStore(hmemPath, config);
+        const tagged = postStore.tagNewCheckpointSummaries(activeOId);
+        if (tagged.length > 0) {
+          console.log(`[hmem checkpoint] Tagged checkpoint summaries: ${tagged.join(", ")}`);
+        }
+        postStore.close();
+      } catch (tagErr) {
+        console.error(`[hmem checkpoint] Failed to tag summary: ${tagErr}`);
+      }
     } catch (e: any) {
       const stdout = e.stdout?.toString()?.substring(0, 200) || "";
       console.error(`[hmem checkpoint] Failed (exit ${e.status}): ${stdout}`);

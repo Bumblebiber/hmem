@@ -273,13 +273,33 @@ function formatRecentOEntries(
     lines.push(`  ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
     // Expand exchanges: all entries when expandAll, otherwise only latest
     if (expandAll || i === 0) {
-      const exLimit = expandAll && i > 0 ? Math.min(exchangeCount, 5) : exchangeCount;
-      const exchanges = store.getOEntryExchanges(o.id, exLimit, true);
-      for (const ex of exchanges) {
-        const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
-        const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
-        lines.push(`    USER: ${userShort}`);
-        if (agentShort) lines.push(`    AGENT: ${agentShort}`);
+      // Check for checkpoint summaries — if present, show summary + only exchanges after it
+      const summaries = store.getCheckpointSummaries(o.id, 1);
+      if (summaries.length > 0) {
+        const summary = summaries[0];
+        lines.push(`    [Summary] ${summary.content}`);
+        // Show exchanges after the summary, but always at least 5
+        const allExchanges = store.getOEntryExchanges(o.id, exchangeCount, true);
+        const postSummary = allExchanges.filter(ex => ex.seq > summary.seq);
+        const minExchanges = 5;
+        const toShow = postSummary.length >= minExchanges
+          ? postSummary
+          : allExchanges.slice(-minExchanges);
+        for (const ex of toShow) {
+          const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+          const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+          lines.push(`    USER: ${userShort}`);
+          if (agentShort) lines.push(`    AGENT: ${agentShort}`);
+        }
+      } else {
+        const exLimit = expandAll && i > 0 ? Math.min(exchangeCount, 5) : exchangeCount;
+        const exchanges = store.getOEntryExchanges(o.id, exLimit, true);
+        for (const ex of exchanges) {
+          const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+          const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+          lines.push(`    USER: ${userShort}`);
+          if (agentShort) lines.push(`    AGENT: ${agentShort}`);
+        }
       }
     }
   }

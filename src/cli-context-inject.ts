@@ -165,13 +165,31 @@ export async function contextInject(): Promise<void> {
             for (let i = 0; i < recentO.length; i++) {
               const o = recentO[i];
               lines.push(`    ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
-              const exLimit = i === 0 ? 10 : 5;
-              const exchanges = store.getOEntryExchanges(o.id, exLimit, true);
-              for (const ex of exchanges) {
-                const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
-                const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
-                lines.push(`      USER: ${userShort}`);
-                if (agentShort) lines.push(`      AGENT: ${agentShort}`);
+              const summaries = store.getCheckpointSummaries(o.id, 1);
+              if (summaries.length > 0) {
+                const summary = summaries[0];
+                lines.push(`      [Summary] ${summary.content}`);
+                const allExchanges = store.getOEntryExchanges(o.id, 10, true);
+                const postSummary = allExchanges.filter(ex => ex.seq > summary.seq);
+                const minExchanges = 5;
+                const toShow = postSummary.length >= minExchanges
+                  ? postSummary
+                  : allExchanges.slice(-minExchanges);
+                for (const ex of toShow) {
+                  const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+                  const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+                  lines.push(`      USER: ${userShort}`);
+                  if (agentShort) lines.push(`      AGENT: ${agentShort}`);
+                }
+              } else {
+                const exLimit = i === 0 ? 10 : 5;
+                const exchanges = store.getOEntryExchanges(o.id, exLimit, true);
+                for (const ex of exchanges) {
+                  const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+                  const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+                  lines.push(`      USER: ${userShort}`);
+                  if (agentShort) lines.push(`      AGENT: ${agentShort}`);
+                }
               }
             }
           }

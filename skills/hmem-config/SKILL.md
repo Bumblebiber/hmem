@@ -83,9 +83,9 @@ For each parameter the user wants to change:
 | `maxCharsPerLevel[0]` (L1) | 60–300 | Below 60 is too terse for useful summaries. Above 300 wastes tokens on every bulk read — L1 is loaded at every session start. |
 | `maxCharsPerLevel[4]` (L5) | 1000–100000 | Raw data storage. Higher allows more verbatim content but L5 is rarely loaded. |
 | `maxDepth` | 2–5 | 3 suffices for simple setups. 5 for multi-agent or complex projects. |
-| `checkpointMode` | `"auto"` or `"remind"` | Recommend `"auto"` — it's non-disruptive and produces better results because Haiku has MCP access to check for duplicates. |
+| `checkpointMode` | `"auto"` or `"remind"` | Recommend `"auto"` — it's non-disruptive and produces better results because Haiku has MCP access to check for duplicates. Auto-checkpoints also write rolling summaries (`[CP]` nodes) and tag skill-dialog exchanges for filtering. |
 | `checkpointInterval` | 0–100 | 20 is a good balance. Lower = more frequent saves (more Haiku cost). 0 = disabled. |
-| `recentOEntries` | 0–20 | 10 is the sweet spot. Each entry with exchanges costs ~200-500 tokens in `load_project`. |
+| `recentOEntries` | 0–20 | 10 is the sweet spot. With checkpoint summaries, `load_project` shows summary + recent exchanges only — much more compact than raw exchange dumps. |
 | `contextTokenThreshold` | 0–500000 | 100k is recommended for most models. Increase for 1M-context models. |
 
 ### Common recipes

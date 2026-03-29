@@ -121,6 +121,14 @@ Since v5.1, entries support explicit title/body separation via the `>` format. D
 - Title is already clear and navigable
 - Entry has low access count and marginal value (not worth the effort)
 
+### O-entry checkpoint summaries and skill-dialog tags (v5.1.2+)
+
+O-entries may contain two special tagged node types:
+
+- **`#checkpoint-summary`** nodes: Written by the auto-checkpoint (Haiku) as `[CP]` prefixed L3 nodes. These are rolling summaries that compress older exchanges. `load_project` shows the latest summary + only post-summary exchanges. **Do not mark these obsolete or modify them** — they are auto-generated and auto-consumed.
+
+- **`#skill-dialog`** exchange nodes: Exchanges where a skill (brainstorming, TDD, debugging) was activated. These are filtered from `load_project` output but remain accessible via `read_memory(id=...)`. **Do not curate these** — they are correctly tagged and filtered automatically.
+
 ### Stale entries — auto-mark obsolete
 
 Entries older than 1 month with `access_count = 0` (no `(Nx accessed)` suffix in curator read) should be marked obsolete automatically.

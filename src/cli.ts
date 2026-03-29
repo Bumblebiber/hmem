@@ -45,9 +45,13 @@ switch (command) {
 
   case "version":
   case "--version":
-  case "-v":
-    console.log("hmem 1.1.0");
+  case "-v": {
+    const { createRequire } = await import("node:module");
+    const require = createRequire(import.meta.url);
+    const pkg = require("../package.json");
+    console.log(`hmem ${pkg.version}`);
     break;
+  }
 
   default:
     console.log(`hmem — Humanlike Memory for AI Agents

@@ -228,7 +228,16 @@ surface relevant O-entries when their tags match.
 
 **v5 checkpoint integration:** When `checkpointMode` is set to `"auto"`, a Haiku subagent
 reads recent O-entry exchanges at configurable intervals and automatically extracts
-L/D/E entries — saving lessons, decisions, and errors without interrupting the main agent.
+L/D/E entries + writes a rolling checkpoint summary (`[CP]` node tagged `#checkpoint-summary`).
+
+**What `load_project` shows:** For the latest O-entry, it displays:
+1. The most recent checkpoint summary (if available)
+2. Only raw exchanges AFTER the summary (minimum 5 exchanges guaranteed)
+3. Skill-dialog exchanges (brainstorming, TDD, etc.) are filtered out automatically
+
+This keeps `load_project` compact even for long sessions. To see the full unfiltered
+history, use `read_memory(id="O0042", expand=true)`.
+
 The `recentOEntries` config parameter (default: 10) controls how many recent O-entries
 `load_project` includes.
 

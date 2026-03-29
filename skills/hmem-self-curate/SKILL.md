@@ -49,7 +49,11 @@ If context overflows mid-prefix, continue with the remaining entries — your me
 
 ## O-Entries (Session Logs)
 
-O-entries accumulate automatically via the Stop hook — each session creates one per project. `load_project` only injects the **last session's exchanges** (not all O-entries), so old O-entries don't pollute context.
+O-entries accumulate automatically via the Stop hook — each session creates one per project. `load_project` injects the latest session's **checkpoint summary** (if available) plus the most recent raw exchanges.
+
+**Checkpoint summaries:** Auto-checkpoints write a `[CP]` prefixed summary node (tagged `#checkpoint-summary`) under the O-entry. These rolling summaries compress older exchanges so `load_project` stays compact. Older summaries are further compressed into 1-2 sentences by each new checkpoint.
+
+**Skill-dialog filtering:** Exchanges containing skill activations (brainstorming, TDD, debugging) are tagged `#skill-dialog` at the exchange-node level and automatically excluded from `load_project` / `/clear` output. The full content remains accessible via `read_memory(id="O0123")`.
 
 **Curation rules for O-entries:**
 - **Leave them alone.** Old O-entries don't cause harm — they're excluded from bulk reads and `load_project` only shows the most recent one.
