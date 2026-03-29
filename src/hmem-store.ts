@@ -2219,11 +2219,13 @@ export class HmemStore {
     const rootId = parentIsRoot ? parentId : parentId.split(".")[0];
     const timestamp = new Date().toISOString();
 
-    // Find next available seq
-    const maxSeq = parentIsRoot
-      ? (this.db.prepare("SELECT MAX(seq) as m FROM memory_nodes WHERE parent_id = ? AND depth = 2").get(parentId) as any)?.m ?? 0
-      : (this.db.prepare("SELECT MAX(seq) as m FROM memory_nodes WHERE parent_id = ?").get(parentId) as any)?.m ?? 0;
-    const seq = maxSeq + 1;
+    // Find next available seq — scan ALL nodes under this parent (any depth) to avoid
+    // ID collisions with checkpoint summaries or other nodes appended at different depths
+    const maxSeqRow = this.db.prepare(
+      `SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`
+    ).get(parentId + ".", parentId + ".%", parentId + ".%.%") as any;
+    const seq = (maxSeqRow?.m ?? 0) + 1;
 
     const title = this.autoExtractTitle(userText.split("\n")[0].replace(/[<>\[\]]/g, ""));
     const l2Id = `${parentId}.${seq}`;
@@ -2252,10 +2254,12 @@ export class HmemStore {
   appendCheckpointSummary(oEntryId: string, summaryText: string): string {
     this.guardCorrupted();
     const timestamp = new Date().toISOString();
-    const maxSeq = (this.db.prepare(
-      "SELECT MAX(seq) as m FROM memory_nodes WHERE parent_id = ? AND depth = 2"
-    ).get(oEntryId) as any)?.m ?? 0;
-    const seq = maxSeq + 1;
+    // Scan all direct children IDs (any depth) to avoid collisions with exchanges
+    const maxSeqRow = this.db.prepare(
+      `SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`
+    ).get(oEntryId + ".", oEntryId + ".%", oEntryId + ".%.%") as any;
+    const seq = (maxSeqRow?.m ?? 0) + 1;
     const nodeId = `${oEntryId}.${seq}`;
     const title = this.autoExtractTitle(summaryText);
 
