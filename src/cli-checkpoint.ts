@@ -137,24 +137,23 @@ export async function checkpoint(): Promise<void> {
 
 Project: ${projectName} (${projectId}) | O-entry: ${activeOId}
 ${summarySection}
-## Exchanges (oldest first):
+## Exchanges:
 
 ${formattedExchanges}
 
-**1. L/D/E entries** — skip obvious feature descriptions, save only insights:
-- L: Technical lesson (e.g. "HMEM_AGENT_ID must be in hook env or wrong .hmem file is used")
+**L/D/E** — non-obvious insights only (not feature descriptions):
+- L: Lesson, e.g. "HMEM_AGENT_ID must be in hook env or wrong .hmem file is used"
 - E: Bug + root cause + fix
 - D: Architecture decision + rationale
 - Handoff → append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
 
-write_memory for L/D/E: tags 3-5, links=["${projectId}"]. Max 2-3 entries.
+write_memory for L/D/E: tags 3-5, links=["${projectId}"]. Max 2-3.
 
-**2. Rolling summary:**
-append_memory(id="${activeOId}", content="\\t[CP] ...")
+**Summary:** append_memory(id="${activeOId}", content="\\t[CP] ...")
 - Compress prior summaries to 1-2 sentences${prevSummaries.length > 0 ? " (shown above)" : ""}
-- Detail new exchanges; 3-8 factual sentences, match project language
+- Detail exchanges; 3-8 factual sentences, match project language
 
-read_memory() first — avoid duplicates, extend existing entries with append_memory. Always write the summary.`;
+read_memory() first. Skip duplicates; extend existing via append_memory. Always write summary.`;
 
     // 7. Spawn Haiku with MCP access
     const allowedTools = [
