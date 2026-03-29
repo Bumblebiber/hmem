@@ -133,31 +133,28 @@ export async function checkpoint(): Promise<void> {
       ? `\n## Previous checkpoint summaries (oldest first):\n\n${prevSummaryText}\n`
       : "";
 
-    const prompt = `Background checkpoint agent: extract session insights, save to hmem.
+    const prompt = `Checkpoint agent: save NON-OBVIOUS insights from this session to hmem.
 
 Project: ${projectName} (${projectId}) | O-entry: ${activeOId}
 ${summarySection}
-## New exchanges (oldest first):
+## Exchanges (oldest first):
 
 ${formattedExchanges}
 
-## Task 1: L/D/E entries (NON-OBVIOUS only)
-
-- **L** (Lesson): Technical insight — BAD: "Stop Hook logs exchanges" | GOOD: "HMEM_AGENT_ID must be set in hook scripts or resolveHmemPath falls back to memory.hmem"
-- **E** (Error): Bug + root cause + fix
-- **D** (Decision): Architecture decision + rationale
-- **Handoff**: 2-3 sentences on progress/next step → append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
+**1. L/D/E entries** — non-obvious only (skip feature descriptions):
+- L (Lesson): Technical insight, e.g. "HMEM_AGENT_ID must be set in hook scripts or resolveHmemPath falls back to memory.hmem"
+- E (Error): Bug + root cause + fix
+- D (Decision): Architecture decision + rationale
+- Handoff: 2-3 sentences on state/next step → append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
 
 write_memory for L/D/E: tags 3-5, links=["${projectId}"]. Max 2-3 entries.
 
-## Task 2: Rolling summary
-
+**2. Rolling summary:**
 append_memory(id="${activeOId}", content="\\t[CP] ...")
 - Compress prior summaries to 1-2 sentences${prevSummaries.length > 0 ? " (shown above)" : ""}
-- Detail new exchanges (discussed/built/decided)
-- 3-8 sentences, factual, match project language
+- Detail new exchanges; 3-8 sentences, factual, match project language
 
-Before writing: read_memory() first — avoid duplicates, use append_memory to extend if similar exists. Always write the checkpoint summary.`;
+Before writing: read_memory() first — avoid duplicates, extend with append_memory if similar exists. Always write the summary.`;
 
     // 7. Spawn Haiku with MCP access
     const allowedTools = [
