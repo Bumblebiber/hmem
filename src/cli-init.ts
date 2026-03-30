@@ -49,8 +49,8 @@ const HOME = (process.env.WSL_DISTRO_NAME || process.env.WSLENV)
 const TOOLS: Record<string, ToolConfig> = {
   "claude-code": {
     name: "Claude Code",
-    globalDir: path.join(HOME, ".claude"),
-    globalFile: ".mcp.json",
+    globalDir: HOME,
+    globalFile: ".claude.json",
     projectDir: ".",
     projectFile: ".mcp.json",
     format: "standard",

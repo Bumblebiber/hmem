@@ -16,8 +16,8 @@ const HOME = (process.env.WSL_DISTRO_NAME || process.env.WSLENV)
 const TOOLS = {
     "claude-code": {
         name: "Claude Code",
-        globalDir: path.join(HOME, ".claude"),
-        globalFile: ".mcp.json",
+        globalDir: HOME,
+        globalFile: ".claude.json",
         projectDir: ".",
         projectFile: ".mcp.json",
         format: "standard",
@@ -581,6 +581,13 @@ export async function runInit(args = []) {
                 if (!hasHookCmd("Stop", "hmem log-exchange")) {
                     settings.hooks.Stop.unshift({
                         hooks: [{ type: "command", command: "hmem log-exchange", timeout: 10, async: true }],
+                    });
+                    changed = true;
+                }
+                // Stop — checkpoint (async, runs after log-exchange to extract knowledge)
+                if (!hasHookCmd("Stop", "hmem checkpoint")) {
+                    settings.hooks.Stop.push({
+                        hooks: [{ type: "command", command: "hmem checkpoint", timeout: 120, async: true }],
                     });
                     changed = true;
                 }
