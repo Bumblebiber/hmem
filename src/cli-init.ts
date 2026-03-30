@@ -663,6 +663,14 @@ export async function runInit(args: string[] = []): Promise<void> {
           changed = true;
         }
 
+        // Stop — checkpoint (async, runs after log-exchange to extract knowledge)
+        if (!hasHookCmd("Stop", "hmem checkpoint")) {
+          settings.hooks.Stop.push({
+            hooks: [{ type: "command", command: "hmem checkpoint", timeout: 120, async: true }],
+          });
+          changed = true;
+        }
+
         // SessionStart[clear] — context inject
         if (!settings.hooks.SessionStart) settings.hooks.SessionStart = [];
         if (!hasHookCmd("SessionStart", "hmem context-inject")) {

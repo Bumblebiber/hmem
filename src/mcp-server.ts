@@ -20,6 +20,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync, spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import { searchMemory } from "./memory-search.js";
@@ -249,7 +250,8 @@ function checkVersionUpgrade(): string {
 /** Auto-sync skill files on version upgrade. Runs hmem update-skills in background. */
 function autoSyncSkills(): void {
   try {
-    const child = spawn("hmem", ["update-skills"], {
+    const hmemBin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "cli.js");
+    const child = spawn(process.execPath, [hmemBin, "update-skills"], {
       detached: true, stdio: "ignore",
       env: { ...process.env },
     });

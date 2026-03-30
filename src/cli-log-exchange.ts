@@ -15,10 +15,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { HmemStore, resolveHmemPath } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const HMEM_BIN = path.resolve(__dirname, "../dist/cli.js");
 
 interface HookInput {
   transcript_path?: string;
@@ -180,7 +184,7 @@ export async function logExchange(): Promise<void> {
       if (exchangeCount > 0 && exchangeCount % saveInterval === 0) {
         if (checkpointMode === "auto") {
           // Spawn background checkpoint — Haiku extracts L/D/E + titles + P-updates
-          const child = spawn("hmem", ["checkpoint"], {
+          const child = spawn(process.execPath, [HMEM_BIN, "checkpoint"], {
             detached: true,
             stdio: "ignore",
             env: { ...process.env, HMEM_PROJECT_DIR: projectDir, HMEM_AGENT_ID: agentId },
