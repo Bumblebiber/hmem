@@ -150,6 +150,8 @@ write_memory: tags 3-5, links=["${projectId}"]. Max 2-3.
 **Summary (always required):** append_memory(id="${activeOId}", content="\\t[CP] ...")
 - Prior summaries → 1-2 sentences${prevSummaries.length > 0 ? " (shown above)" : ""}; detail exchanges 3-8 sentences, match language
 
+**Project relevance check:** Are these exchanges actually about ${projectName}? If the conversation drifted to a different topic or project, note this in the summary: "[DRIFT: topic X is unrelated to ${projectName}]". If ALL exchanges are off-topic, switch the active project: update_memory(id="P0000", content="Non-Project | Active | Default", active=true).
+
 read_memory() first; skip/extend duplicates.`;
 
     // 7. Spawn Haiku with MCP access
