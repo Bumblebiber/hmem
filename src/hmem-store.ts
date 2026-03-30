@@ -167,6 +167,8 @@ export interface ReadOptions {
   contextFor?: string;
   /** Minimum weighted tag score for context_for matches. Default: 4. Tier weights: rare(<=5)=3, medium(6-20)=2, common(>20)=1. */
   minTagScore?: number;
+  /** Bypass V2 selection, project gate, and session cache — return all matching rows directly. Used for explicit filters (after, before, prefix, tag, stale_days). */
+  directResults?: boolean;
 }
 
 export interface WriteResult {
@@ -932,6 +934,21 @@ export class HmemStore {
    */
   private readBulkV2(rows: any[], opts: ReadOptions): MemoryEntry[] {
     const v2 = this.cfg.bulkReadV2;
+
+    // Direct results mode: bypass V2 selection, project gate, session cache.
+    // Used for explicit filters (after, before, prefix, tag, stale_days) where the user
+    // expects ALL matching rows, not a curated V2 subset.
+    if (opts.directResults) {
+      const visibleRows = rows.filter(r => r.irrelevant !== 1);
+      const entries = visibleRows.map(r => {
+        const children = this.fetchChildren(r.id).filter(c => !c.irrelevant);
+        const entry = this.rowToEntry(r, children);
+        entry.expanded = true;
+        return entry;
+      });
+      this.assignBulkTags(entries);
+      return entries;
+    }
 
     // Step 0: Filter out irrelevant entries (never shown in bulk reads)
     // O-prefix excluded from unfiltered bulk reads (but shown when explicitly requested via prefix="O")
@@ -2800,9 +2817,11 @@ export class HmemStore {
       if (activeProject) {
         const links = row.links ? JSON.parse(row.links) as string[] : [];
         if (links.includes(activeProject.id)) return row.id;
-        // Project mismatch — deactivate old O-entry, create new one below
-        this.db.prepare("UPDATE memories SET active = 0, updated_at = ? WHERE id = ?")
-          .run(new Date().toISOString(), row.id);
+        // Project mismatch — deactivate old O-entry, mark irrelevant if ≤1 exchange
+        const childCount = this.countDirectChildren(row.id);
+        const irrelevant = childCount <= 1 ? 1 : 0;
+        this.db.prepare("UPDATE memories SET active = 0, irrelevant = ?, updated_at = ? WHERE id = ?")
+          .run(irrelevant, new Date().toISOString(), row.id);
       } else {
         return row.id; // No active project — keep using current O-entry
       }
@@ -2858,9 +2877,38 @@ export class HmemStore {
   }
 
   bumpAccess(id: string): void {
+    // Clear irrelevant flag on explicit read — if someone reads it, it matters
     this.db.prepare(
-      "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?"
+      "UPDATE memories SET access_count = access_count + 1, last_accessed = ?, irrelevant = 0 WHERE id = ?"
     ).run(new Date().toISOString(), id);
+  }
+
+  /**
+   * Auto-purge: physically delete irrelevant entries older than maxAgeDays.
+   * Only deletes entries where irrelevant=1 — entries rescued by bumpAccess survive.
+   * Returns the number of deleted entries.
+   */
+  purgeIrrelevant(maxAgeDays = 30): number {
+    const cutoff = new Date(Date.now() - maxAgeDays * 86400_000).toISOString();
+    const rows = this.db.prepare(
+      "SELECT id FROM memories WHERE irrelevant = 1 AND updated_at < ?"
+    ).all(cutoff) as { id: string }[];
+
+    if (rows.length === 0) return 0;
+
+    const deleteNodes = this.db.prepare("DELETE FROM memory_nodes WHERE root_id = ?");
+    const deleteRoot = this.db.prepare("DELETE FROM memories WHERE id = ?");
+    const deleteTags = this.db.prepare("DELETE FROM tags WHERE root_id = ?");
+
+    const purge = this.db.transaction(() => {
+      for (const { id } of rows) {
+        deleteNodes.run(id);
+        deleteTags.run(id);
+        deleteRoot.run(id);
+      }
+    });
+    purge();
+    return rows.length;
   }
 
   private bumpNodeAccess(id: string): void {

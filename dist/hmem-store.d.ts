@@ -161,6 +161,8 @@ export interface ReadOptions {
     contextFor?: string;
     /** Minimum weighted tag score for context_for matches. Default: 4. Tier weights: rare(<=5)=3, medium(6-20)=2, common(>20)=1. */
     minTagScore?: number;
+    /** Bypass V2 selection, project gate, and session cache — return all matching rows directly. Used for explicit filters (after, before, prefix, tag, stale_days). */
+    directResults?: boolean;
 }
 export interface WriteResult {
     id: string;
@@ -448,6 +450,12 @@ export declare class HmemStore {
     /** Find a child node of a root entry by content/title pattern. */
     findRootChildNode(rootId: string, pattern: string, depth: number): string | null;
     bumpAccess(id: string): void;
+    /**
+     * Auto-purge: physically delete irrelevant entries older than maxAgeDays.
+     * Only deletes entries where irrelevant=1 — entries rescued by bumpAccess survive.
+     * Returns the number of deleted entries.
+     */
+    purgeIrrelevant(maxAgeDays?: number): number;
     private bumpNodeAccess;
     /**
      * Follow the obsolete chain from an entry to its final valid correction.

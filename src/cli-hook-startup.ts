@@ -77,7 +77,9 @@ export async function hookStartup(): Promise<void> {
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
-        additionalContext: "IMPORTANT: This is the first message of the session. Before responding, call read_memory() (no parameters) to load your L1 memory overview. This ensures you have full context from prior sessions. Do this silently \u2014 do not mention it to the user.",
+        additionalContext: "IMPORTANT: This is the first message of the session. Load your memory context silently \u2014 do not mention it to the user.\n\n" +
+          "- If the user\u2019s message names a specific project (e.g. \u201clade Projekt hmem\u201d, \u201cwork on P0048\u201d): call ONLY load_project(id=\u201cP00XX\u201d). Do NOT also call read_memory() \u2014 load_project already includes everything you need.\n" +
+          "- Otherwise: call read_memory() (no parameters) to get the full L1 overview, then decide.",
       },
     }));
   } else if (mode === "remind" && interval > 0 && count % interval === 0) {

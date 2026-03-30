@@ -124,12 +124,12 @@ function syncPull(hmemPath: string): Array<{id: string, title: string, created_a
         "pull", "--config", hmemSyncConfig(hmemPath),
         "--hmem-path", hmemPath,
         "--server-url", s.serverUrl, "--token", s.token,
-      ], { env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32" });
+      ], { env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32", windowsHide: true });
       if (result.error) process.stderr.write(`hmem-sync pull error (${s.name ?? s.serverUrl}): ${result.error.message}\n`);
     }
   } else {
     const result = spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath], {
-      env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32",
+      env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32", windowsHide: true,
     });
     if (result.error) process.stderr.write(`hmem-sync pull error: ${result.error.message}\n`);
   }
@@ -184,11 +184,11 @@ function syncPullThenPush(hmemPath: string): void {
         "pull", "--config", hmemSyncConfig(hmemPath),
         "--hmem-path", hmemPath,
         "--server-url", s.serverUrl, "--token", s.token,
-      ], { env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32" });
+      ], { env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32", windowsHide: true });
     }
   } else {
     spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath], {
-      env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32",
+      env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32", windowsHide: true,
     });
   }
   lastPullAt = Date.now();
@@ -204,12 +204,12 @@ function syncPush(hmemPath: string): void {
         "push", "--config", hmemSyncConfig(hmemPath),
         "--hmem-path", hmemPath,
         "--server-url", s.serverUrl, "--token", s.token,
-      ], { env: { ...process.env }, shell: process.platform === "win32", stdio: "ignore", detached: true });
+      ], { env: { ...process.env }, shell: process.platform === "win32", stdio: "ignore", detached: true, windowsHide: true });
       child.unref();
     }
   } else {
     const child = spawn("hmem-sync", ["push", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath], {
-      env: { ...process.env }, shell: process.platform === "win32", stdio: "ignore", detached: true,
+      env: { ...process.env }, shell: process.platform === "win32", stdio: "ignore", detached: true, windowsHide: true,
     });
     child.unref();
   }
@@ -1090,7 +1090,8 @@ server.tool(
         const effectiveDepth = depth || (id ? 2 : 1);
 
         // Session cache: cached entries shown as titles in subsequent bulk reads
-        const isBulkListing = !id && !search && !time_around;
+        // Explicit filters (after, before, prefix, stale_days, tag) bypass V2 selection + cache
+        const isBulkListing = !id && !search && !time_around && !after && !before && !prefix && !stale_days && !tag;
         const useCache = isBulkListing && storeName === "personal" && !show_all;
         const cachedIds = useCache ? sessionCache.getCachedIds() : undefined;
         const hiddenIds = useCache ? sessionCache.getHiddenIds() : undefined;
@@ -1115,6 +1116,7 @@ server.tool(
           mode: isBulkListing ? effectiveMode : undefined,
           tag,
           staleDays: stale_days,
+          directResults: !isBulkListing && !id && !search && !time_around,
         });
 
         if (entries.length === 0) {
@@ -1652,13 +1654,20 @@ server.tool(
                   const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
                   lines.push(`    ${gcId}  ${gcTitle}`);
                 }
-                // L4 hint
-                if (gc.child_count && gc.child_count > 0) {
-                  lines.push(`      [+${gc.child_count} → ${gc.id}]`);
+                // L4 children titles (already loaded via depth=4)
+                if (gc.children && gc.children.length > 0) {
+                  const visibleL4 = gc.children.filter((l4: any) => !l4.irrelevant);
+                  for (const l4 of visibleL4) {
+                    const l4Id = l4.id.replace(e.id, "");
+                    const l4Title = l4.title || (l4.content?.length > 60 ? l4.content.substring(0, 60) + "…" : l4.content || "");
+                    lines.push(`      ${l4Id}  ${l4Title}`);
+                  }
+                } else if (gc.child_count && gc.child_count > 0) {
+                  lines.push(`      [+${gc.child_count}]`);
                 }
               }
             } else if (child.child_count && child.child_count > 0) {
-              lines.push(`    [+${child.child_count} → ${child.id}]`);
+              lines.push(`    [+${child.child_count}]`);
             }
           }
         }
@@ -1721,6 +1730,7 @@ server.tool(
           }
         } catch { /* conventions are optional */ }
 
+        const irrelevantTip = `Tip: update_memory(id, { irrelevant: true }) to hide noisy entries from future loads.`;
         const output = lines.join("\n");
         const outputTokens = Math.round(output.length / 4);
         const totalStats = hmemStore.stats();
@@ -1736,7 +1746,7 @@ server.tool(
         return trackTokens({
           content: [{
             type: "text" as const,
-            text: `✓ Project ${id} activated.${tokenInfo}\n\n${output}`,
+            text: `✓ Project ${id} activated.${tokenInfo}\n${irrelevantTip}\n\n${output}\n\n${irrelevantTip}`,
           }],
         });
       } finally {
@@ -2390,7 +2400,7 @@ function formatTitlesOnly(entries: MemoryEntry[], config: HmemConfig, curator: b
           lines.push(`  ${compactChildId}${cfav}  ${short}${grandchildren}`);
         }
         if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
-          lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
+          lines.push(`  [+${e.hiddenChildrenCount} more]`);
         }
         if (hiddenIrr > 0) {
           lines.push(`  (+${hiddenIrr} irrelevant hidden)`);
@@ -2562,7 +2572,7 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
     } else if (e.expanded && !expand) {
       renderChildrenFormatted(lines, visibleChildren, curator, rootId);
       if (e.hiddenChildrenCount && e.hiddenChildrenCount > 0) {
-        lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
+        lines.push(`  [+${e.hiddenChildrenCount} more]`);
       }
     } else if (e.hiddenChildrenCount !== undefined) {
       // Non-expanded bulk read: show only the latest visible child title
@@ -2571,7 +2581,7 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
         const fav = nodeMarkers(child);
         const compactChildId = child.id.replace(rootId, "");
         const hint = (child.child_count ?? 0) > 0
-          ? `  [+${child.child_count} → ${child.id}]`
+          ? `  [+${child.child_count}]`
           : "";
         if (curator) {
           lines.push(`  [${child.id}]${fav} ${child.title}${hint}`);
@@ -2580,7 +2590,7 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
         }
       }
       if (e.hiddenChildrenCount > 0) {
-        lines.push(`  [+${e.hiddenChildrenCount} more → ${e.id}]`);
+        lines.push(`  [+${e.hiddenChildrenCount} more]`);
       }
     } else {
       // ID-based read: show all direct children as titles
@@ -2649,7 +2659,7 @@ function renderChildrenFormatted(lines: string[], children: MemoryNode[], curato
     const ctags = formatTagSuffix(child.tags, curator);
     const compactId = rootId ? child.id.replace(rootId, "") : child.id;
     const hint = (child.child_count ?? 0) > 0
-      ? `  [+${child.child_count} → ${child.id}]`
+      ? `  [+${child.child_count}]`
       : "";
     if (curator) {
       lines.push(`${indent}[${child.id}]${fav} ${child.title}${ctags}${hint}`);
@@ -2691,7 +2701,7 @@ function renderChildrenExpanded(lines: string[], children: MemoryNode[], curator
       renderChildrenExpanded(lines, visibleGrandchildren, curator, rootId);
     } else if (isBoundary) {
       // Boundary: title only + child count hint
-      const hint = `  [+${child.child_count} → ${child.id}]`;
+      const hint = `  [+${child.child_count}]`;
       if (curator) {
         lines.push(`${indent}[${child.id}]${fav} ${child.title}${hint}`);
       } else {
@@ -2732,6 +2742,7 @@ function checkForUpdates(): void {
       stdio: ["ignore", "pipe", "ignore"],
       detached: true,
       shell: process.platform === "win32",
+      windowsHide: true,
     });
     child.unref();
     let out = "";

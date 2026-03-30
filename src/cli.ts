@@ -49,6 +49,12 @@ switch (command) {
     break;
   }
 
+  case "statusline": {
+    const { statusline } = await import("./cli-statusline.js");
+    await statusline();
+    break;
+  }
+
   case "version":
   case "--version":
   case "-v": {
@@ -70,6 +76,7 @@ Usage:
   hmem context-inject Output compressed context for re-injection after /clear
   hmem checkpoint     Extract knowledge from recent exchanges via Haiku (background)
   hmem hook-startup   UserPromptSubmit hook — counter, checkpoint reminders (cross-platform)
+  hmem statusline     Generate statusline for Claude Code (reads JSON from stdin)
   hmem version        Show version
 
 Environment variables (for serve):

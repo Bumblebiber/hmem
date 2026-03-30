@@ -152,6 +152,12 @@ export async function logExchange() {
     const hmemConfig = loadHmemConfig(path.dirname(hmemPath));
     const store = new HmemStore(hmemPath, hmemConfig);
     try {
+        // Auto-purge irrelevant entries older than 30 days (~1% chance per exchange to avoid overhead)
+        if (Math.random() < 0.01) {
+            const purged = store.purgeIrrelevant(30);
+            if (purged > 0)
+                console.error(`[hmem] purged ${purged} irrelevant entries`);
+        }
         // Find or create active O-entry
         const activeOId = store.getActiveO();
         // appendExchange stores raw text without newline parsing
