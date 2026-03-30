@@ -224,7 +224,7 @@ import { createRequire } from "node:module";
 const _require = createRequire(import.meta.url);
 const PKG_VERSION: string = _require("../package.json").version;
 
-/** Check if hmem was upgraded since last session. Returns upgrade notice or empty string. */
+/** Check if hmem was upgraded since last session. Auto-syncs skills and returns upgrade notice. */
 function checkVersionUpgrade(): string {
   try {
     const configPath = path.join(PROJECT_DIR, "hmem.config.json");
@@ -232,16 +232,30 @@ function checkVersionUpgrade(): string {
     const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
     const lastSeen = raw?.memory?.lastSeenVersion || raw?.lastSeenVersion;
     if (!lastSeen) {
-      // First run with version tracking — save current version silently
+      // First run with version tracking — save current version, sync skills silently
       saveLastSeenVersion(configPath, raw);
+      autoSyncSkills();
       return "";
     }
     if (lastSeen !== PKG_VERSION) {
       saveLastSeenVersion(configPath, raw);
-      return `\n\n⚠ hmem-mcp updated: v${lastSeen} → v${PKG_VERSION}. Run /hmem-update to apply post-update steps (skill sync, entry migration, schema enforcement).`;
+      autoSyncSkills();
+      return `\n\n⚠ hmem-mcp updated: v${lastSeen} → v${PKG_VERSION}. Skills have been auto-synced. Run /hmem-update for full post-update steps (entry migration, schema enforcement, config check).`;
     }
   } catch {}
   return "";
+}
+
+/** Auto-sync skill files on version upgrade. Runs hmem update-skills in background. */
+function autoSyncSkills(): void {
+  try {
+    const child = spawn("hmem", ["update-skills"], {
+      detached: true, stdio: "ignore",
+      env: { ...process.env },
+    });
+    child.unref();
+    log("Auto-syncing skills after version upgrade");
+  } catch {}
 }
 
 function saveLastSeenVersion(configPath: string, raw: any): void {
