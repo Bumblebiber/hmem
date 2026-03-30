@@ -187,22 +187,6 @@ export async function logExchange(): Promise<void> {
       }
     }
 
-    // Context size warning: check transcript file size as proxy for token usage
-    if (input.transcript_path) {
-      try {
-        const transcriptStat = fs.statSync(input.transcript_path);
-        const contextThreshold = hmemConfig.contextTokenThreshold || 100000;
-        // Rough heuristic: transcript JSON ≈ 3 bytes per token (includes JSON overhead, tool calls)
-        const estimatedTokens = Math.round(transcriptStat.size / 3);
-        if (estimatedTokens > contextThreshold) {
-          const tokensK = Math.round(estimatedTokens / 1000);
-          fs.writeFileSync("/tmp/hmem-context-warning", `${tokensK}k`);
-        } else {
-          // Clear flag if below threshold (e.g. after /clear)
-          try { fs.unlinkSync("/tmp/hmem-context-warning"); } catch {}
-        }
-      } catch {}
-    }
   } catch (e) {
     console.error(`[hmem log-exchange] ${e}`);
   } finally {

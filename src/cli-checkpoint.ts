@@ -173,7 +173,12 @@ Read the P-entry first: read_memory(id="${projectId}") to see current state befo
 ### 4. Checkpoint summary (REQUIRED)
 append_memory(id="${activeOId}", content="\\t[CP] ${prevSummaries.length > 0 ? "Prior: compressed. " : ""}3-8 sentence summary. Match conversation language.")
 
-### 5. Project relevance check
+### 5. Title the O-entry root
+If the O-entry root (${activeOId}) still has a generic title like "unassigned" or just the project name,
+give it a proper session title based on the checkpoint summary you just wrote:
+update_memory(id="${activeOId}", content="Session title summarizing key topics (max 60 chars)")
+
+### 6. Project relevance check
 Are these exchanges about ${projectName}? If conversation drifted to a different project, note "[DRIFT: topic X]" in the summary.
 
 ## Rules:

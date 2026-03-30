@@ -658,13 +658,12 @@ elif [ "$MODE" = "remind" ] && [ "$INTERVAL" -gt 0 ] && [ $((COUNT % INTERVAL)) 
   }
 }
 HOOK_EOF
-elif [ -f /tmp/hmem-context-warning ] && [ $((COUNT % 5)) -eq 0 ]; then
-  CTX_TOKENS=$(cat /tmp/hmem-context-warning 2>/dev/null)
-  cat <<HOOK_EOF
+elif [ "$COUNT" -ge 60 ] && [ $((COUNT % 5)) -eq 0 ]; then
+  cat <<'HOOK_EOF'
 {
   "hookSpecificOutput": {
     "hookEventName": "UserPromptSubmit",
-    "additionalContext": "CONTEXT WARNING: Estimated ~\${CTX_TOKENS} tokens in context window. Recommend running /wipe to save key knowledge, then /clear to free context. Performance degrades significantly beyond this point."
+    "additionalContext": "CONTEXT WARNING: This session has been running for a long time. Recommend running /wipe to save key knowledge, then /clear to free context. Performance degrades significantly in very long sessions."
   }
 }
 HOOK_EOF
