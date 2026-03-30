@@ -266,15 +266,17 @@ function resolveMcpServerPath(): string {
   return path.join(path.dirname(new URL(import.meta.url).pathname), "mcp-server.js");
 }
 
-function standardMcpEntry(projectDir: string): Record<string, unknown> {
+function standardMcpEntry(projectDir: string, agentId?: string): Record<string, unknown> {
+  const env: Record<string, string> = {
+    HMEM_PROJECT_DIR: projectDir,
+  };
+  if (agentId) env.HMEM_AGENT_ID = agentId;
   return {
     mcpServers: {
       hmem: {
         command: resolveNodePath(),
         args: [resolveMcpServerPath()],
-        env: {
-          HMEM_PROJECT_DIR: projectDir,
-        },
+        env,
       },
     },
   };
@@ -283,15 +285,17 @@ function standardMcpEntry(projectDir: string): Record<string, unknown> {
 /**
  * Generates the MCP config entry for OpenCode (different schema).
  */
-function opencodeMcpEntry(projectDir: string): Record<string, unknown> {
+function opencodeMcpEntry(projectDir: string, agentId?: string): Record<string, unknown> {
+  const env: Record<string, string> = {
+    HMEM_PROJECT_DIR: projectDir,
+  };
+  if (agentId) env.HMEM_AGENT_ID = agentId;
   return {
     mcp: {
       hmem: {
         type: "local",
         command: [resolveNodePath(), resolveMcpServerPath()],
-        environment: {
-          HMEM_PROJECT_DIR: projectDir,
-        },
+        environment: env,
         enabled: true,
         timeout: 30000,
       },
@@ -345,6 +349,7 @@ function parseInitFlags(args: string[]): Record<string, string> {
     else if (args[i] === "--tools" && args[i + 1]) flags["tools"] = args[++i];
     else if (args[i] === "--dir" && args[i + 1]) flags["dir"] = args[++i];
     else if (args[i] === "--no-example") flags["no-example"] = "true";
+    else if (args[i] === "--agent-id" && args[i + 1]) flags["agent-id"] = args[++i];
   }
   return flags;
 }
@@ -466,6 +471,39 @@ export async function runInit(args: string[] = []): Promise<void> {
       }
     }
 
+    // Step 4c: Agent ID
+    // Auto-detect from existing Agents/ directory, or ask interactively
+    let agentId: string | undefined;
+    if (nonInteractive) {
+      agentId = flags["agent-id"] || undefined;
+    } else {
+      const agentsDir = path.join(absMemDir, "Agents");
+      const existingAgents = fs.existsSync(agentsDir)
+        ? fs.readdirSync(agentsDir).filter(d => fs.statSync(path.join(agentsDir, d)).isDirectory())
+        : [];
+      if (existingAgents.length === 1) {
+        agentId = existingAgents[0];
+        console.log(`\n  Auto-detected agent: ${agentId}`);
+      } else if (existingAgents.length > 1) {
+        const agentIdx = await askChoice(
+          "Multiple agents found. Which one should the MCP server use?",
+          existingAgents
+        );
+        agentId = existingAgents[agentIdx];
+      } else {
+        const inputId = await ask("\n  Agent ID (name for your memory partition, e.g. 'DEVELOPER'; press Enter to skip): ");
+        agentId = inputId.trim() || undefined;
+      }
+    }
+    if (agentId) {
+      // Ensure agent directory exists
+      const agentDir = path.join(absMemDir, "Agents", agentId);
+      if (!fs.existsSync(agentDir)) {
+        fs.mkdirSync(agentDir, { recursive: true });
+        console.log(`  Created agent directory: ${agentDir}`);
+      }
+    }
+
     // Step 5: Write MCP configs
     console.log("\n  Writing MCP configuration...\n");
 
@@ -483,8 +521,8 @@ export async function runInit(args: string[] = []): Promise<void> {
 
       // Generate MCP entry
       const entry = tool.format === "opencode"
-        ? opencodeMcpEntry(absMemDir)
-        : standardMcpEntry(absMemDir);
+        ? opencodeMcpEntry(absMemDir, agentId)
+        : standardMcpEntry(absMemDir, agentId);
 
       // Read existing config (if any) and merge
       let existing: Record<string, unknown> = {};
