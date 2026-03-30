@@ -1707,6 +1707,20 @@ server.tool(
           }
         }
 
+        // Inject universal conventions (C-entries tagged #universal)
+        try {
+          const conventions = hmemStore.read({
+            prefix: "C", depth: 2, agentRole: (ROLE || "worker") as AgentRole,
+          }).filter(c => !c.obsolete && !c.irrelevant && c.tags?.includes("#universal"));
+          if (conventions.length > 0) {
+            lines.push("  Conventions (#universal):");
+            for (const c of conventions) {
+              lines.push(`    ${c.id}  ${c.title}`);
+              if (c.level_1 && c.level_1 !== c.title) lines.push(`      ${c.level_1}`);
+            }
+          }
+        } catch { /* conventions are optional */ }
+
         const output = lines.join("\n");
         const outputTokens = Math.round(output.length / 4);
         const totalStats = hmemStore.stats();
