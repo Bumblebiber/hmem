@@ -57,26 +57,25 @@ Script: `~/.claude/hooks/hmem-startup.sh`
 - Subagents (messages with `parentUuid`) are skipped.
 - Uses a per-session counter file at `/tmp/claude-hmem-counter-{SESSION_ID}`.
 
-### 2. Stop (sync) — exchange logging
+### 2. Stop (async) — exchange logging + checkpoint
 
 Script: `~/.claude/hooks/hmem-log-exchange.sh`
 
-- Runs synchronously after every agent response (timeout: 10s).
+- Runs asynchronously after every agent response (timeout: 10s).
 - Pipes the Stop hook JSON (containing `transcript_path` and `last_assistant_message`) to `hmem log-exchange`.
 - `hmem log-exchange` reads the last user message from the JSONL transcript, combines it with the agent response, and appends both to the currently active O-entry (session history).
 - If no active O-entry exists, one is created automatically.
+- Every N exchanges (configurable via `checkpointInterval`, default 20), triggers a checkpoint:
+  - **auto mode**: Spawns `hmem checkpoint` in background — Haiku subagent with MCP tools that:
+    - Titles each exchange with a descriptive summary (max 50 chars)
+    - Writes L/D/E entries for non-obvious insights
+    - Updates P-entry (protocol, bugs, open tasks, overview, codebase)
+    - Writes a checkpoint summary for context re-injection
+    - Verifies project relevance and fixes links
+  - **remind mode**: Injects a reminder for the main agent to save knowledge manually
+- Checks transcript file size and writes a warning flag when context exceeds `contextTokenThreshold` (default 100k tokens).
 
-### 3. Stop (async) — auto-title O-entries
-
-Script: `~/.claude/hooks/hmem-title-o-entries.sh`
-
-- Runs asynchronously after every agent response (timeout: 30s).
-- Finds O-entries with title "unassigned" or empty.
-- Reads the first 5 exchanges from each untitled entry.
-- Calls `claude -p --model haiku` to generate a concise one-line title (max 50 chars).
-- Updates the O-entry title in the SQLite database directly.
-
-### 4. SessionStart[clear] — context re-injection
+### 3. SessionStart[clear] — context re-injection
 
 Script: `~/.claude/hooks/hmem-context-inject.sh`
 

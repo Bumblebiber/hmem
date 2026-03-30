@@ -211,11 +211,60 @@ function syncPush(hmemPath) {
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
 log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth}`);
+// ---- Version upgrade detection ----
+import { createRequire } from "node:module";
+const _require = createRequire(import.meta.url);
+const PKG_VERSION = _require("../package.json").version;
+/** Check if hmem was upgraded since last session. Auto-syncs skills and returns upgrade notice. */
+function checkVersionUpgrade() {
+    try {
+        const configPath = path.join(PROJECT_DIR, "hmem.config.json");
+        if (!fs.existsSync(configPath))
+            return "";
+        const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
+        const lastSeen = raw?.memory?.lastSeenVersion || raw?.lastSeenVersion;
+        if (!lastSeen) {
+            // First run with version tracking — save current version, sync skills silently
+            saveLastSeenVersion(configPath, raw);
+            autoSyncSkills();
+            return "";
+        }
+        if (lastSeen !== PKG_VERSION) {
+            saveLastSeenVersion(configPath, raw);
+            autoSyncSkills();
+            return `\n\n⚠ hmem-mcp updated: v${lastSeen} → v${PKG_VERSION}. Skills have been auto-synced. Run /hmem-update for full post-update steps (entry migration, schema enforcement, config check).`;
+        }
+    }
+    catch { }
+    return "";
+}
+/** Auto-sync skill files on version upgrade. Runs hmem update-skills in background. */
+function autoSyncSkills() {
+    try {
+        const child = spawn("hmem", ["update-skills"], {
+            detached: true, stdio: "ignore",
+            env: { ...process.env },
+        });
+        child.unref();
+        log("Auto-syncing skills after version upgrade");
+    }
+    catch { }
+}
+function saveLastSeenVersion(configPath, raw) {
+    try {
+        if (!raw.memory)
+            raw.memory = {};
+        raw.memory.lastSeenVersion = PKG_VERSION;
+        fs.writeFileSync(configPath, JSON.stringify(raw, null, 2) + "\n", "utf8");
+    }
+    catch { }
+}
+let versionUpgradeNotice = checkVersionUpgrade();
 // Session-scoped cache — persists across tool calls within this MCP connection
 const sessionCache = new SessionCache();
 const CONTEXT_THRESHOLD_WARNING = "\n\n⚠ CONTEXT THRESHOLD REACHED (~{tokens}k tokens delivered this session).\n" +
-    "Recommended: flush_context to save current work, then /clear to reset conversation.\n" +
-    "After /clear, use load_project to restore project context.";
+    "Tell the user to run /hmem-wipe — it saves key knowledge and prepares for /clear.\n" +
+    "Alternative: flush_context manually, then /clear, then load_project to restore context.";
 const CACHE_RESET_SIGNAL = "/tmp/hmem-cache-reset-signal";
 /** Track tokens in a tool response and append threshold warning if needed. */
 function trackTokens(result) {
@@ -232,6 +281,11 @@ function trackTokens(result) {
         return result;
     const text = result.content.map(c => c.text).join("");
     sessionCache.addTokens(text.length);
+    // One-time version upgrade notice (shown once per session)
+    if (versionUpgradeNotice) {
+        result.content[result.content.length - 1].text += versionUpgradeNotice;
+        versionUpgradeNotice = ""; // only show once
+    }
     if (sessionCache.checkThreshold(hmemConfig.contextTokenThreshold)) {
         const tokK = Math.round(sessionCache.totalTokensDelivered / 1000);
         result.content[result.content.length - 1].text += CONTEXT_THRESHOLD_WARNING.replace("{tokens}", String(tokK));
@@ -259,14 +313,36 @@ function formatRecentOEntries(store, limit, exchangeCount, linkedTo, expandAll) 
         lines.push(`  ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
         // Expand exchanges: all entries when expandAll, otherwise only latest
         if (expandAll || i === 0) {
-            const exLimit = expandAll && i > 0 ? Math.min(exchangeCount, 5) : exchangeCount;
-            const exchanges = store.getOEntryExchanges(o.id, exLimit, true);
-            for (const ex of exchanges) {
-                const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
-                const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
-                lines.push(`    USER: ${userShort}`);
-                if (agentShort)
-                    lines.push(`    AGENT: ${agentShort}`);
+            // Check for checkpoint summaries — if present, show summary + only exchanges after it
+            const summaries = store.getCheckpointSummaries(o.id, 1);
+            if (summaries.length > 0) {
+                const summary = summaries[0];
+                lines.push(`    [Summary] ${summary.content}`);
+                // Show exchanges after the summary, but always at least 5
+                const allExchanges = store.getOEntryExchanges(o.id, exchangeCount, true);
+                const postSummary = allExchanges.filter(ex => ex.seq > summary.seq);
+                const minExchanges = 5;
+                const toShow = postSummary.length >= minExchanges
+                    ? postSummary
+                    : allExchanges.slice(-minExchanges);
+                for (const ex of toShow) {
+                    const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+                    const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+                    lines.push(`    USER: ${userShort}`);
+                    if (agentShort)
+                        lines.push(`    AGENT: ${agentShort}`);
+                }
+            }
+            else {
+                const exLimit = expandAll && i > 0 ? Math.min(exchangeCount, 5) : exchangeCount;
+                const exchanges = store.getOEntryExchanges(o.id, exLimit, true);
+                for (const ex of exchanges) {
+                    const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+                    const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+                    lines.push(`    USER: ${userShort}`);
+                    if (agentShort)
+                        lines.push(`    AGENT: ${agentShort}`);
+                }
             }
         }
     }
@@ -354,15 +430,15 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
         "\t> React + Vite, ShadcnUI components, SSE for real-time updates\n" +
         "\t\tAuth was tricky — EventSource can't send custom headers"),
     links: z.array(z.string()).optional().describe("Optional: IDs of related memories, e.g. ['P0001', 'L0005']"),
-    favorite: z.boolean().optional().describe("Mark this entry as a favorite — shown with [♥] in bulk reads and always inlined with L2 detail. " +
+    favorite: z.coerce.boolean().optional().describe("Mark this entry as a favorite — shown with [♥] in bulk reads and always inlined with L2 detail. " +
         "Use for reference info you need to see every session, regardless of category."),
     tags: z.array(z.string()).min(1).describe("Required hashtags for cross-cutting search (min 1, recommend 3+). " +
         "E.g. ['#hmem', '#curation']. Max 10, lowercase, must start with #. Shown after title in reads."),
-    pinned: z.boolean().optional().describe("Mark this entry as pinned [P] (super-favorite). Pinned entries show full L2 content in bulk reads. " +
+    pinned: z.coerce.boolean().optional().describe("Mark this entry as pinned [P] (super-favorite). Pinned entries show full L2 content in bulk reads. " +
         "Use for reference entries you need to see in full every session."),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
     min_role: z.enum(["worker", "al", "pl", "ceo"]).default("worker").describe("Minimum role to see this entry"),
-    force: z.boolean().optional().describe("Force creation of a new root entry even if existing entries share tags. " +
+    force: z.coerce.boolean().optional().describe("Force creation of a new root entry even if existing entries share tags. " +
         "Only use when you intentionally want a separate entry, not a child of an existing one."),
 }, async ({ prefix, content, links, favorite, tags, pinned, store: storeName, min_role: minRole, force }) => {
     const templateName = AGENT_ID.replace(/_\d+$/, "");
@@ -475,17 +551,17 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
     id: z.string().describe("ID of the entry or node to update, e.g. 'L0003' or 'L0003.2'"),
     content: z.string().min(1).describe("New text content for this node (plain text, no indentation)"),
     links: z.array(z.string()).optional().describe("Optional: update linked entry IDs (root entries only). Replaces existing links."),
-    obsolete: z.boolean().optional().describe("Mark this root entry as no longer valid (root entries only). " +
+    obsolete: z.coerce.boolean().optional().describe("Mark this root entry as no longer valid (root entries only). " +
         "Requires [✓ID] correction reference in content (e.g. 'Wrong — see [✓E0076]')."),
-    favorite: z.boolean().optional().describe("Set or clear the [♥] favorite flag. Works on root entries and sub-nodes. " +
+    favorite: z.coerce.boolean().optional().describe("Set or clear the [♥] favorite flag. Works on root entries and sub-nodes. " +
         "Root favorites are always shown with L2 detail in bulk reads."),
-    irrelevant: z.boolean().optional().describe("Mark as irrelevant [-]. Works on root entries and sub-nodes. " +
+    irrelevant: z.coerce.boolean().optional().describe("Mark as irrelevant [-]. Works on root entries and sub-nodes. " +
         "No correction entry needed (unlike obsolete). Irrelevant entries/nodes are hidden from output."),
     tags: z.array(z.string()).optional().describe("Set tags on this entry/node. Replaces all existing tags. " +
         "Pass empty array [] to remove all tags. E.g. ['#hmem', '#curation']."),
-    pinned: z.boolean().optional().describe("Set or clear the [P] pinned flag (root entries only). " +
+    pinned: z.coerce.boolean().optional().describe("Set or clear the [P] pinned flag (root entries only). " +
         "Pinned entries show full L2 content in bulk reads (super-favorite)."),
-    active: z.boolean().optional().describe("Mark this root entry as actively relevant [*] (root entries only). " +
+    active: z.coerce.boolean().optional().describe("Mark this root entry as actively relevant [*] (root entries only). " +
         "When any entry in a prefix has active=true, only active entries of that prefix are shown with children in bulk reads. " +
         "Non-active entries in the same prefix are shown as title-only (no children)."),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
@@ -566,10 +642,10 @@ server.tool("update_many", "Batch-update multiple memory entries at once. Applie
     "Use this instead of calling update_memory multiple times during curation.\n\n" +
     "Example: update_many(ids=['T0005', 'T0012', 'L0044'], irrelevant=true)", {
     ids: z.array(z.string()).min(1).describe("List of entry/node IDs to update, e.g. ['T0005', 'T0012', 'L0044']"),
-    irrelevant: z.boolean().optional().describe("Mark all as irrelevant [-]"),
-    favorite: z.boolean().optional().describe("Set or clear [♥] favorite on all"),
-    active: z.boolean().optional().describe("Set or clear [*] active on all"),
-    pinned: z.boolean().optional().describe("Set or clear [P] pinned on all"),
+    irrelevant: z.coerce.boolean().optional().describe("Mark all as irrelevant [-]"),
+    favorite: z.coerce.boolean().optional().describe("Set or clear [♥] favorite on all"),
+    active: z.coerce.boolean().optional().describe("Set or clear [*] active on all"),
+    pinned: z.coerce.boolean().optional().describe("Set or clear [P] pinned on all"),
     store: z.enum(["personal", "company"]).default("personal"),
 }, async ({ ids, irrelevant, favorite, active, pinned, store: storeName }) => {
     const templateName = AGENT_ID.replace(/_\d+$/, "");
@@ -756,11 +832,11 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
     time: z.string().optional().describe("Time filter 'HH:MM' — filter entries by time of day"),
     period: z.string().optional().describe("Time window: '+4h' (after), '-2h' (before), '4h' (±4h symmetric), 'both' (±2h default)"),
     time_around: z.string().optional().describe("Reference entry ID — find entries created around the same time"),
-    show_obsolete: z.boolean().optional().describe("Include all obsolete entries (default: only top 3 most-accessed)"),
-    show_obsolete_path: z.boolean().optional().describe("When reading an obsolete entry by ID, show the full correction chain instead of just the final valid entry."),
-    titles_only: z.boolean().optional().describe("Compact title listing — shows all entries as ID + date + title, without V2 selection or children. " +
+    show_obsolete: z.coerce.boolean().optional().describe("Include all obsolete entries (default: only top 3 most-accessed)"),
+    show_obsolete_path: z.coerce.boolean().optional().describe("When reading an obsolete entry by ID, show the full correction chain instead of just the final valid entry."),
+    titles_only: z.coerce.boolean().optional().describe("Compact title listing — shows all entries as ID + date + title, without V2 selection or children. " +
         "Like a table of contents. Combine with prefix to filter by category."),
-    expand: z.boolean().optional().describe("Expand full tree with complete node content (ID queries only). " +
+    expand: z.coerce.boolean().optional().describe("Expand full tree with complete node content (ID queries only). " +
         "Use to deep-dive into a project after a long break. " +
         "depth controls how deep (default: 5 = full tree). " +
         "Example: read_memory({ id: 'P0001', expand: true, depth: 3 })"),
@@ -769,8 +845,8 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
         "use after context compression to recover key knowledge. " +
         "Auto-selected if omitted: first bulk read → discover, subsequent → essentials."),
     store: z.enum(["personal", "company"]).default("personal").describe("Source store: 'personal' or 'company'"),
-    curator: z.boolean().optional().describe("Set true to show full metadata (access counts, roles, dates). For curators only."),
-    show_all: z.boolean().optional().describe("Curation mode: show ALL entries of the selected prefix with depth 3 children. " +
+    curator: z.coerce.boolean().optional().describe("Set true to show full metadata (access counts, roles, dates). For curators only."),
+    show_all: z.coerce.boolean().optional().describe("Curation mode: show ALL entries of the selected prefix with depth 3 children. " +
         "Bypasses V2 selection and session cache. Use with prefix filter for manageable output."),
     tag: z.string().optional().describe("Filter by hashtag, e.g. '#hmem'. Only entries with this tag are shown in bulk reads. " +
         "Also works with search to find tagged entries."),
@@ -1130,7 +1206,7 @@ server.tool("import_memory", "Import entries from a .hmem file into your memory.
     "Deduplicates by L1 content (merges sub-nodes), remaps IDs on conflict.", {
     source_path: z.string().describe("Path to .hmem file to import"),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' (your own memory) or 'company' (shared company store)"),
-    dry_run: z.boolean().default(false).describe("Preview only — report what would happen without modifying the database"),
+    dry_run: z.coerce.boolean().default(false).describe("Preview only — report what would happen without modifying the database"),
 }, async ({ source_path, store: storeName, dry_run }) => {
     try {
         const hmemStore = storeName === "company"
@@ -1318,19 +1394,32 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             if (e.level_1 && e.level_1 !== e.title)
                 lines.push(`  ${e.level_1}`);
             if (e.children) {
+                const { withBody, withChildren } = hmemConfig.loadProjectExpand;
                 for (const child of e.children.filter(c => !c.irrelevant)) {
                     const cId = child.id.replace(e.id, "");
-                    const isOverview = child.seq === 1; // .1 = Overview node
+                    const expandBody = withBody.includes(child.seq);
+                    const expandChildTitles = withChildren.includes(child.seq);
                     lines.push(`  ${cId}  ${child.title || child.content.substring(0, 60)}`);
                     if (child.children && child.children.length > 0) {
                         for (const gc of child.children.filter((g) => !g.irrelevant)) {
                             const gcId = gc.id.replace(e.id, "");
-                            if (isOverview) {
-                                // Overview: show full L3 content
-                                lines.push(`    ${gcId}  ${gc.content}`);
+                            if (expandBody) {
+                                // Show L3 title + body content
+                                lines.push(`    ${gcId}  ${gc.title || gc.content.substring(0, 80)}`);
+                                if (gc.content && gc.content !== gc.title) {
+                                    // Show body lines indented
+                                    for (const bodyLine of gc.content.split("\n")) {
+                                        lines.push(`      ${bodyLine}`);
+                                    }
+                                }
+                            }
+                            else if (expandChildTitles) {
+                                // Show all L3 children as titles
+                                const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
+                                lines.push(`    ${gcId}  ${gcTitle}`);
                             }
                             else {
-                                // Other L2 nodes: compact titles only
+                                // Default: compact titles only
                                 const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
                                 lines.push(`    ${gcId}  ${gcTitle}`);
                             }
@@ -1385,6 +1474,21 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                     sessionCache.registerDelivered(ids);
                 }
             }
+            // Inject universal conventions (C-entries tagged #universal)
+            try {
+                const conventions = hmemStore.read({
+                    prefix: "C", depth: 2, agentRole: (ROLE || "worker"),
+                }).filter(c => !c.obsolete && !c.irrelevant && c.tags?.includes("#universal"));
+                if (conventions.length > 0) {
+                    lines.push("  Conventions (#universal):");
+                    for (const c of conventions) {
+                        lines.push(`    ${c.id}  ${c.title}`);
+                        if (c.level_1 && c.level_1 !== c.title)
+                            lines.push(`      ${c.level_1}`);
+                    }
+                }
+            }
+            catch { /* conventions are optional */ }
             const output = lines.join("\n");
             const outputTokens = Math.round(output.length / 4);
             const totalStats = hmemStore.stats();
@@ -1603,7 +1707,7 @@ server.tool("get_audit_queue", "CURATOR ONLY (ceo role). Returns agents whose .h
     "Each agent should be audited in a separate spawn to keep context bounded.", {}, async () => {
     if (!isCurator()) {
         return {
-            content: [{ type: "text", text: "ERROR: get_audit_queue is only available to the ceo/curator role." }],
+            content: [{ type: "text", text: "ERROR: get_audit_queue is only available to the ceo/curator role. Set HMEM_AGENT_ROLE=ceo in your MCP server config to use curation tools." }],
             isError: true,
         };
     }
@@ -1727,10 +1831,10 @@ server.tool("fix_agent_memory", "CURATOR ONLY (ceo role). Correct a specific ent
     content: z.string().optional().describe("New text content. For root entries: replaces the L1 summary. " +
         "For node IDs: replaces that node's content."),
     min_role: z.enum(["worker", "al", "pl", "ceo"]).optional().describe("Update access clearance (root entries only)."),
-    obsolete: z.boolean().optional().describe("Mark or unmark as obsolete (root entries only). " +
+    obsolete: z.coerce.boolean().optional().describe("Mark or unmark as obsolete (root entries only). " +
         "Obsolete entries stay in memory but are shown with [⚠ OBSOLETE]."),
-    favorite: z.boolean().optional().describe("Set or clear the [♥] favorite flag (root entries only)."),
-    irrelevant: z.boolean().optional().describe("Mark or unmark as irrelevant (root entries only). Irrelevant entries are hidden from bulk reads. No correction entry needed."),
+    favorite: z.coerce.boolean().optional().describe("Set or clear the [♥] favorite flag (root entries only)."),
+    irrelevant: z.coerce.boolean().optional().describe("Mark or unmark as irrelevant (root entries only). Irrelevant entries are hidden from bulk reads. No correction entry needed."),
 }, async ({ agent_name, entry_id, content, min_role, obsolete, favorite, irrelevant }) => {
     if (!isCurator()) {
         return {

@@ -325,6 +325,22 @@ export declare class HmemStore {
         id: string;
     };
     /**
+     * Append a checkpoint summary as a tagged L2 node under an O-entry.
+     * The summary sits alongside exchanges in the L2 sequence.
+     * Returns the node ID.
+     */
+    appendCheckpointSummary(oEntryId: string, summaryText: string): string;
+    /**
+     * Get checkpoint summaries for an O-entry, newest first.
+     * Returns the summary content + the seq number (to know which exchanges it covers).
+     */
+    getCheckpointSummaries(oEntryId: string, limit?: number): {
+        nodeId: string;
+        seq: number;
+        content: string;
+        created_at: string;
+    }[];
+    /**
      * Bump access_count on a root entry or node.
      * Returns true if the entry was found and bumped.
      */
@@ -342,6 +358,8 @@ export declare class HmemStore {
     private setTags;
     /** Add a single tag to an entry/node without removing existing tags. */
     addTag(entryId: string, tag: string): void;
+    /** Find and tag untagged checkpoint summary nodes ([CP] prefix) under an O-entry. */
+    tagNewCheckpointSummaries(oEntryId: string): string[];
     /** Get tags for a single entry/node. */
     private fetchTags;
     /** Bulk-fetch tags for multiple IDs at once. */

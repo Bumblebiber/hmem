@@ -95,6 +95,16 @@ export interface HmemConfig {
      * Set to 0 to disable. Default: 100000.
      */
     contextTokenThreshold: number;
+    /**
+     * load_project display configuration: which L2 sections to expand.
+     * withBody: L2 seq numbers whose L3 children show title + body (e.g. Overview)
+     * withChildren: L2 seq numbers whose L3 children are all listed as titles (e.g. Bugs, Open Tasks)
+     * Default: withBody=[1], withChildren=[6,8]
+     */
+    loadProjectExpand: {
+        withBody: number[];
+        withChildren: number[];
+    };
     /** Sync configuration — single server or array for multi-server redundancy. */
     sync?: SyncConfigBlock | SyncConfigBlock[];
 }

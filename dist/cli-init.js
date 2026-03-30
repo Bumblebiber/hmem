@@ -220,15 +220,18 @@ function resolveMcpServerPath() {
     // This file (cli-init.js) is in dist/ — mcp-server.js is a sibling
     return path.join(path.dirname(new URL(import.meta.url).pathname), "mcp-server.js");
 }
-function standardMcpEntry(projectDir) {
+function standardMcpEntry(projectDir, agentId) {
+    const env = {
+        HMEM_PROJECT_DIR: projectDir,
+    };
+    if (agentId)
+        env.HMEM_AGENT_ID = agentId;
     return {
         mcpServers: {
             hmem: {
                 command: resolveNodePath(),
                 args: [resolveMcpServerPath()],
-                env: {
-                    HMEM_PROJECT_DIR: projectDir,
-                },
+                env,
             },
         },
     };
@@ -236,15 +239,18 @@ function standardMcpEntry(projectDir) {
 /**
  * Generates the MCP config entry for OpenCode (different schema).
  */
-function opencodeMcpEntry(projectDir) {
+function opencodeMcpEntry(projectDir, agentId) {
+    const env = {
+        HMEM_PROJECT_DIR: projectDir,
+    };
+    if (agentId)
+        env.HMEM_AGENT_ID = agentId;
     return {
         mcp: {
             hmem: {
                 type: "local",
                 command: [resolveNodePath(), resolveMcpServerPath()],
-                environment: {
-                    HMEM_PROJECT_DIR: projectDir,
-                },
+                environment: env,
                 enabled: true,
                 timeout: 30000,
             },
@@ -301,6 +307,8 @@ function parseInitFlags(args) {
             flags["dir"] = args[++i];
         else if (args[i] === "--no-example")
             flags["no-example"] = "true";
+        else if (args[i] === "--agent-id" && args[i + 1])
+            flags["agent-id"] = args[++i];
     }
     return flags;
 }
@@ -405,6 +413,38 @@ export async function runInit(args = []) {
                 }
             }
         }
+        // Step 4c: Agent ID
+        // Auto-detect from existing Agents/ directory, or ask interactively
+        let agentId;
+        if (nonInteractive) {
+            agentId = flags["agent-id"] || undefined;
+        }
+        else {
+            const agentsDir = path.join(absMemDir, "Agents");
+            const existingAgents = fs.existsSync(agentsDir)
+                ? fs.readdirSync(agentsDir).filter(d => fs.statSync(path.join(agentsDir, d)).isDirectory())
+                : [];
+            if (existingAgents.length === 1) {
+                agentId = existingAgents[0];
+                console.log(`\n  Auto-detected agent: ${agentId}`);
+            }
+            else if (existingAgents.length > 1) {
+                const agentIdx = await askChoice("Multiple agents found. Which one should the MCP server use?", existingAgents);
+                agentId = existingAgents[agentIdx];
+            }
+            else {
+                const inputId = await ask("\n  Agent ID (name for your memory partition, e.g. 'DEVELOPER'; press Enter to skip): ");
+                agentId = inputId.trim() || undefined;
+            }
+        }
+        if (agentId) {
+            // Ensure agent directory exists
+            const agentDir = path.join(absMemDir, "Agents", agentId);
+            if (!fs.existsSync(agentDir)) {
+                fs.mkdirSync(agentDir, { recursive: true });
+                console.log(`  Created agent directory: ${agentDir}`);
+            }
+        }
         // Step 5: Write MCP configs
         console.log("\n  Writing MCP configuration...\n");
         for (const toolId of selectedTools) {
@@ -420,8 +460,8 @@ export async function runInit(args = []) {
             }
             // Generate MCP entry
             const entry = tool.format === "opencode"
-                ? opencodeMcpEntry(absMemDir)
-                : standardMcpEntry(absMemDir);
+                ? opencodeMcpEntry(absMemDir, agentId)
+                : standardMcpEntry(absMemDir, agentId);
             // Read existing config (if any) and merge
             let existing = {};
             if (fs.existsSync(configPath)) {
@@ -543,6 +583,16 @@ elif [ "$MODE" = "remind" ] && [ "$INTERVAL" -gt 0 ] && [ $((COUNT % INTERVAL)) 
   }
 }
 HOOK_EOF
+elif [ -f /tmp/hmem-context-warning ] && [ $((COUNT % 5)) -eq 0 ]; then
+  CTX_TOKENS=$(cat /tmp/hmem-context-warning 2>/dev/null)
+  cat <<HOOK_EOF
+{
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "CONTEXT WARNING: Estimated ~\${CTX_TOKENS} tokens in context window. Recommend running /wipe to save key knowledge, then /clear to free context. Performance degrades significantly beyond this point."
+  }
+}
+HOOK_EOF
 fi
 `;
                 // --- Hook 2: Stop — log-exchange (synchronous, every response) ---
@@ -567,63 +617,7 @@ command -v ${hmemBin} >/dev/null 2>&1 || exit 0
 # Pass stdin through to hmem log-exchange (it reads the hook JSON)
 exec ${hmemBin} log-exchange
 `;
-                // --- Hook 3: Stop — title O-entries (async, Haiku) ---
-                const titleScript = `#!/bin/bash
-# hmem Stop hook — async (installed by hmem init):
-# Generates titles for untitled O-entries using Haiku.
-# Finds O-entries titled "unassigned", reads their first exchanges,
-# and asks Haiku for a one-line summary.
-
-export PATH="$HOME/.bun/bin:$HOME/.nvm/versions/node/v24.14.0/bin:$HOME/.local/bin:$PATH"
-export HOME="\${HOME:-/home/\$(whoami)}"
-
-# Detect hmem database path
-HMEM_DB=""
-for DB in "$HOME/.hmem/Agents/"*"/"*.hmem; do
-  [ -f "$DB" ] && HMEM_DB="$DB" && break
-done
-[ -z "$HMEM_DB" ] && exit 0
-
-# Find untitled O-entries
-UNTITLED=$(node -e "
-const D = require('better-sqlite3');
-const db = new D('$HMEM_DB', {readonly:true});
-const rows = db.prepare(\\"SELECT id FROM memories WHERE prefix = 'O' AND (title IS NULL OR title LIKE 'unassigned%' OR title = '') AND obsolete != 1\\").all();
-for (const r of rows) console.log(r.id);
-db.close();
-" 2>/dev/null)
-
-[ -z "$UNTITLED" ] && exit 0
-
-for OID in $UNTITLED; do
-  EXCHANGES=$(node -e "
-const D = require('better-sqlite3');
-const db = new D('$HMEM_DB', {readonly:true});
-const rows = db.prepare(\\"SELECT title, content FROM memory_nodes WHERE root_id = ? ORDER BY seq LIMIT 5\\").all('$OID');
-for (const r of rows) {
-  const text = (r.title || r.content || '').substring(0, 80).replace(/\\n/g, ' ');
-  if (text.trim()) console.log(text);
-}
-db.close();
-" 2>/dev/null)
-
-  [ -z "$EXCHANGES" ] && continue
-
-  TITLE=\$(HMEM_NO_SESSION=1 claude -p --model haiku "Generate a concise one-line title (max 50 chars) summarizing this session. Reply with ONLY the title, nothing else. Topics discussed:
-\$EXCHANGES" 2>/dev/null | head -1 | tr -d '"' | cut -c1-50)
-
-  [ -z "$TITLE" ] && continue
-
-  node -e "
-const D = require('better-sqlite3');
-const db = new D('$HMEM_DB');
-db.prepare('UPDATE memories SET title = ? WHERE id = ?').run('\$TITLE', '$OID');
-db.close();
-" 2>/dev/null
-
-done
-`;
-                // --- Hook 4: SessionStart[clear] — context inject ---
+                // --- Hook 3: SessionStart[clear] — context inject ---
                 const contextInjectScript = `#!/bin/bash
 # hmem SessionStart hook (installed by hmem init):
 # Re-injects project context after /clear.
@@ -641,7 +635,6 @@ exec ${hmemBin} context-inject
                 const hooks = [
                     { name: "hmem-startup.sh", content: startupScript },
                     { name: "hmem-log-exchange.sh", content: logExchangeScript },
-                    { name: "hmem-title-o-entries.sh", content: titleScript },
                     { name: "hmem-context-inject.sh", content: contextInjectScript },
                 ];
                 for (const h of hooks) {
@@ -670,20 +663,12 @@ exec ${hmemBin} context-inject
                     });
                     changed = true;
                 }
-                // Stop — log-exchange (synchronous)
+                // Stop — log-exchange (async — avoid blocking Claude with Node.js cold start)
                 if (!settings.hooks.Stop)
                     settings.hooks.Stop = [];
                 if (!hasHookCmd("Stop", "hmem-log-exchange")) {
-                    // Insert at beginning so it runs before title hook
                     settings.hooks.Stop.unshift({
-                        hooks: [{ type: "command", command: path.join(hooksDir, "hmem-log-exchange.sh"), timeout: 10 }],
-                    });
-                    changed = true;
-                }
-                // Stop — title O-entries (async)
-                if (!hasHookCmd("Stop", "hmem-title-o-entries")) {
-                    settings.hooks.Stop.push({
-                        hooks: [{ type: "command", command: path.join(hooksDir, "hmem-title-o-entries.sh"), timeout: 30, async: true }],
+                        hooks: [{ type: "command", command: path.join(hooksDir, "hmem-log-exchange.sh"), timeout: 10, async: true }],
                     });
                     changed = true;
                 }
@@ -703,6 +688,18 @@ exec ${hmemBin} context-inject
                 }
                 else {
                     console.log(`  [ok] All hooks already registered in settings.json`);
+                }
+                // --- Statusline: context window bar + active hmem project ---
+                if (!settings.statusLine) {
+                    const statuslineSrc = path.join(import.meta.dirname, "..", "scripts", "hmem-statusline.sh");
+                    const statuslineDst = path.join(hooksDir, "hmem-statusline.sh");
+                    if (fs.existsSync(statuslineSrc)) {
+                        fs.copyFileSync(statuslineSrc, statuslineDst);
+                        fs.chmodSync(statuslineDst, 0o755);
+                        settings.statusLine = { type: "command", command: `bash ${statuslineDst}` };
+                        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+                        console.log(`  [ok] Statusline: ${statuslineDst}`);
+                    }
                 }
             }
         }

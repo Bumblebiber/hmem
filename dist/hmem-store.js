@@ -159,6 +159,8 @@ const MIGRATIONS = [
     "ALTER TABLE memory_nodes ADD COLUMN updated_at TEXT",
     // Active flag: marks entries as currently relevant — non-active entries in same prefix shown title-only
     "ALTER TABLE memories ADD COLUMN active INTEGER DEFAULT 0",
+    // Links: JSON array of related entry IDs (cross-references between entries)
+    "ALTER TABLE memories ADD COLUMN links TEXT",
 ];
 // ---- HmemStore class ----
 export class HmemStore {
@@ -241,8 +243,10 @@ export class HmemStore {
         }
         const l1Limit = this.cfg.maxCharsPerLevel[0];
         const t = HmemStore.CHAR_LIMIT_TOLERANCE;
-        if (level1.length > l1Limit * t) {
-            throw new Error(`Level 1 exceeds ${l1Limit} character limit (${level1.length} chars). Keep L1 compact.`);
+        // Only check title length for the L1 limit — body lines (>) are stored separately
+        // and hidden in listings, so they don't affect display compactness
+        if (title.length > l1Limit * t) {
+            throw new Error(`Level 1 title exceeds ${l1Limit} character limit (${title.length} chars). Keep the title compact and move detail to body lines (> prefix) or L2 children.`);
         }
         for (const node of nodes) {
             // depth 2-5 → index 1-4
@@ -1483,15 +1487,13 @@ export class HmemStore {
             return [];
         // Get the last N L2 nodes (exchanges) by seq DESC
         let l2Nodes;
-        if (skipSkillDialogs) {
-            // Exclude exchanges tagged with #skill-dialog
-            l2Nodes = this.db.prepare(`SELECT id, seq FROM memory_nodes WHERE root_id = ? AND depth = 2
-         AND id NOT IN (SELECT entry_id FROM memory_tags WHERE tag = '#skill-dialog')
-         ORDER BY seq DESC LIMIT ?`).all(oEntryId, limit);
-        }
-        else {
-            l2Nodes = this.db.prepare(`SELECT id, seq FROM memory_nodes WHERE root_id = ? AND depth = 2 ORDER BY seq DESC LIMIT ?`).all(oEntryId, limit);
-        }
+        // Always exclude checkpoint-summary nodes (they're not exchanges)
+        const excludeTags = ["'#checkpoint-summary'"];
+        if (skipSkillDialogs)
+            excludeTags.push("'#skill-dialog'");
+        l2Nodes = this.db.prepare(`SELECT id, seq FROM memory_nodes WHERE root_id = ? AND depth = 2
+       AND id NOT IN (SELECT entry_id FROM memory_tags WHERE tag IN (${excludeTags.join(",")}))
+       ORDER BY seq DESC LIMIT ?`).all(oEntryId, limit);
         const exchanges = [];
         for (const l2 of l2Nodes) {
             const l4 = this.db.prepare(`SELECT content FROM memory_nodes WHERE parent_id = ? AND depth = 4 LIMIT 1`).get(l2.id);
@@ -1863,11 +1865,11 @@ export class HmemStore {
         const parentIsRoot = !parentId.includes(".");
         const rootId = parentIsRoot ? parentId : parentId.split(".")[0];
         const timestamp = new Date().toISOString();
-        // Find next available seq
-        const maxSeq = parentIsRoot
-            ? this.db.prepare("SELECT MAX(seq) as m FROM memory_nodes WHERE parent_id = ? AND depth = 2").get(parentId)?.m ?? 0
-            : this.db.prepare("SELECT MAX(seq) as m FROM memory_nodes WHERE parent_id = ?").get(parentId)?.m ?? 0;
-        const seq = maxSeq + 1;
+        // Find next available seq — scan ALL nodes under this parent (any depth) to avoid
+        // ID collisions with checkpoint summaries or other nodes appended at different depths
+        const maxSeqRow = this.db.prepare(`SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`).get(parentId + ".", parentId + ".%", parentId + ".%.%");
+        const seq = (maxSeqRow?.m ?? 0) + 1;
         const title = this.autoExtractTitle(userText.split("\n")[0].replace(/[<>\[\]]/g, ""));
         const l2Id = `${parentId}.${seq}`;
         const l4Id = `${l2Id}.1`;
@@ -1880,6 +1882,38 @@ export class HmemStore {
             this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, rootId);
         })();
         return { id: l2Id };
+    }
+    /**
+     * Append a checkpoint summary as a tagged L2 node under an O-entry.
+     * The summary sits alongside exchanges in the L2 sequence.
+     * Returns the node ID.
+     */
+    appendCheckpointSummary(oEntryId, summaryText) {
+        this.guardCorrupted();
+        const timestamp = new Date().toISOString();
+        // Scan all direct children IDs (any depth) to avoid collisions with exchanges
+        const maxSeqRow = this.db.prepare(`SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`).get(oEntryId + ".", oEntryId + ".%", oEntryId + ".%.%");
+        const seq = (maxSeqRow?.m ?? 0) + 1;
+        const nodeId = `${oEntryId}.${seq}`;
+        const title = this.autoExtractTitle(summaryText);
+        this.db.transaction(() => {
+            this.db.prepare("INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(nodeId, oEntryId, oEntryId, 2, seq, title, summaryText, timestamp, timestamp);
+            this.addTag(nodeId, "#checkpoint-summary");
+            this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, oEntryId);
+        })();
+        return nodeId;
+    }
+    /**
+     * Get checkpoint summaries for an O-entry, newest first.
+     * Returns the summary content + the seq number (to know which exchanges it covers).
+     */
+    getCheckpointSummaries(oEntryId, limit = 2) {
+        return this.db.prepare(`SELECT mn.id as nodeId, mn.seq, mn.content, mn.created_at
+       FROM memory_nodes mn
+       JOIN memory_tags mt ON mt.entry_id = mn.id AND mt.tag = '#checkpoint-summary'
+       WHERE mn.root_id = ?
+       ORDER BY mn.seq DESC LIMIT ?`).all(oEntryId, limit);
     }
     /**
      * Bump access_count on a root entry or node.
@@ -1949,6 +1983,16 @@ export class HmemStore {
     /** Add a single tag to an entry/node without removing existing tags. */
     addTag(entryId, tag) {
         this.db.prepare("INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)").run(entryId, tag);
+    }
+    /** Find and tag untagged checkpoint summary nodes ([CP] prefix) under an O-entry. */
+    tagNewCheckpointSummaries(oEntryId) {
+        const nodes = this.db.prepare(`SELECT id FROM memory_nodes WHERE root_id = ?
+       AND (content LIKE '[CP]%' OR title LIKE '[CP]%')
+       AND id NOT IN (SELECT entry_id FROM memory_tags WHERE tag = '#checkpoint-summary')
+       ORDER BY seq`).all(oEntryId);
+        for (const n of nodes)
+            this.addTag(n.id, "#checkpoint-summary");
+        return nodes.map(n => n.id);
     }
     /** Get tags for a single entry/node. */
     fetchTags(entryId) {

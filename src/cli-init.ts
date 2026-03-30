@@ -658,6 +658,16 @@ elif [ "$MODE" = "remind" ] && [ "$INTERVAL" -gt 0 ] && [ $((COUNT % INTERVAL)) 
   }
 }
 HOOK_EOF
+elif [ -f /tmp/hmem-context-warning ] && [ $((COUNT % 5)) -eq 0 ]; then
+  CTX_TOKENS=$(cat /tmp/hmem-context-warning 2>/dev/null)
+  cat <<HOOK_EOF
+{
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "CONTEXT WARNING: Estimated ~\${CTX_TOKENS} tokens in context window. Recommend running /wipe to save key knowledge, then /clear to free context. Performance degrades significantly beyond this point."
+  }
+}
+HOOK_EOF
 fi
 `;
 
@@ -684,64 +694,7 @@ command -v ${hmemBin} >/dev/null 2>&1 || exit 0
 exec ${hmemBin} log-exchange
 `;
 
-        // --- Hook 3: Stop — title O-entries (async, Haiku) ---
-        const titleScript = `#!/bin/bash
-# hmem Stop hook — async (installed by hmem init):
-# Generates titles for untitled O-entries using Haiku.
-# Finds O-entries titled "unassigned", reads their first exchanges,
-# and asks Haiku for a one-line summary.
-
-export PATH="$HOME/.bun/bin:$HOME/.nvm/versions/node/v24.14.0/bin:$HOME/.local/bin:$PATH"
-export HOME="\${HOME:-/home/\$(whoami)}"
-
-# Detect hmem database path
-HMEM_DB=""
-for DB in "$HOME/.hmem/Agents/"*"/"*.hmem; do
-  [ -f "$DB" ] && HMEM_DB="$DB" && break
-done
-[ -z "$HMEM_DB" ] && exit 0
-
-# Find untitled O-entries
-UNTITLED=$(node -e "
-const D = require('better-sqlite3');
-const db = new D('$HMEM_DB', {readonly:true});
-const rows = db.prepare(\\"SELECT id FROM memories WHERE prefix = 'O' AND (title IS NULL OR title LIKE 'unassigned%' OR title = '') AND obsolete != 1\\").all();
-for (const r of rows) console.log(r.id);
-db.close();
-" 2>/dev/null)
-
-[ -z "$UNTITLED" ] && exit 0
-
-for OID in $UNTITLED; do
-  EXCHANGES=$(node -e "
-const D = require('better-sqlite3');
-const db = new D('$HMEM_DB', {readonly:true});
-const rows = db.prepare(\\"SELECT title, content FROM memory_nodes WHERE root_id = ? ORDER BY seq LIMIT 5\\").all('$OID');
-for (const r of rows) {
-  const text = (r.title || r.content || '').substring(0, 80).replace(/\\n/g, ' ');
-  if (text.trim()) console.log(text);
-}
-db.close();
-" 2>/dev/null)
-
-  [ -z "$EXCHANGES" ] && continue
-
-  TITLE=\$(HMEM_NO_SESSION=1 claude -p --model haiku "Generate a concise one-line title (max 50 chars) summarizing this session. Reply with ONLY the title, nothing else. Topics discussed:
-\$EXCHANGES" 2>/dev/null | head -1 | tr -d '"' | cut -c1-50)
-
-  [ -z "$TITLE" ] && continue
-
-  node -e "
-const D = require('better-sqlite3');
-const db = new D('$HMEM_DB');
-db.prepare('UPDATE memories SET title = ? WHERE id = ?').run('\$TITLE', '$OID');
-db.close();
-" 2>/dev/null
-
-done
-`;
-
-        // --- Hook 4: SessionStart[clear] — context inject ---
+        // --- Hook 3: SessionStart[clear] — context inject ---
         const contextInjectScript = `#!/bin/bash
 # hmem SessionStart hook (installed by hmem init):
 # Re-injects project context after /clear.
@@ -760,7 +713,6 @@ exec ${hmemBin} context-inject
         const hooks = [
           { name: "hmem-startup.sh", content: startupScript },
           { name: "hmem-log-exchange.sh", content: logExchangeScript },
-          { name: "hmem-title-o-entries.sh", content: titleScript },
           { name: "hmem-context-inject.sh", content: contextInjectScript },
         ];
         for (const h of hooks) {
@@ -798,14 +750,6 @@ exec ${hmemBin} context-inject
         if (!hasHookCmd("Stop", "hmem-log-exchange")) {
           settings.hooks.Stop.unshift({
             hooks: [{ type: "command", command: path.join(hooksDir, "hmem-log-exchange.sh"), timeout: 10, async: true }],
-          });
-          changed = true;
-        }
-
-        // Stop — title O-entries (async)
-        if (!hasHookCmd("Stop", "hmem-title-o-entries")) {
-          settings.hooks.Stop.push({
-            hooks: [{ type: "command", command: path.join(hooksDir, "hmem-title-o-entries.sh"), timeout: 30, async: true }],
           });
           changed = true;
         }

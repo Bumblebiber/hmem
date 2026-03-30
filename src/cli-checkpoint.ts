@@ -109,7 +109,8 @@ export async function checkpoint(): Promise<void> {
     const formattedExchanges = newExchanges.map((ex, i) => {
       const user = ex.userText.length > 800 ? ex.userText.substring(0, 800) + "..." : ex.userText;
       const agent = ex.agentText.length > 1200 ? ex.agentText.substring(0, 1200) + "..." : ex.agentText;
-      return `--- Exchange ${i + 1} (${ex.nodeId}) ---\nUSER: ${user}\nAGENT: ${agent}`;
+      const currentTitle = ex.userText.split("\n")[0].replace(/[<>\[\]]/g, "").substring(0, 40);
+      return `--- Exchange ${i + 1} (${ex.nodeId}) [title: "${currentTitle}"] ---\nUSER: ${user}\nAGENT: ${agent}`;
     }).join("\n\n");
 
     // Format previous summaries for rolling compression
@@ -133,26 +134,54 @@ export async function checkpoint(): Promise<void> {
       ? `\n## Previous checkpoint summaries (oldest first):\n\n${prevSummaryText}\n`
       : "";
 
-    const prompt = `Checkpoint: extract non-obvious insights → hmem.
+    // Build exchange listing for titling
+    const exchangeListing = newExchanges.map(ex => {
+      const currentTitle = ex.userText.split("\n")[0].replace(/[<>\[\]]/g, "").substring(0, 40);
+      return `  ${ex.nodeId}: "${currentTitle}"`;
+    }).join("\n");
 
-Project: ${projectName} (${projectId}) | O-entry: ${activeOId}
+    const prompt = `You are a checkpoint agent for "${projectName}" (${projectId}). Process ${newExchanges.length} new exchanges from ${activeOId}.
 ${summarySection}
 ${formattedExchanges}
 
-**L/D/E** (non-obvious only):
-- L: Root-cause lesson, e.g. "HMEM_AGENT_ID env missing → wrong .hmem path"
+## Tasks (execute ALL in order):
+
+### 1. Title each exchange (REQUIRED)
+Each exchange node needs a descriptive title (max 50 chars, match conversation language).
+Current titles (auto-extracted, usually bad):
+${exchangeListing}
+
+For each: update_memory(id="<nodeId>", content="Descriptive title summarizing the exchange")
+Example: update_memory(id="${newExchanges[0]?.nodeId || "O0XXX.1"}", content="Fix hmem-sync path resolution for HMEM_AGENT_ID")
+
+### 2. Extract knowledge (non-obvious only, max 2-3)
+- L: Root-cause lesson (not surface symptoms)
 - E: Bug + root cause + fix
-- D: Decision + rationale
-- Handoff → append_memory(id="${projectId}.7", content="Handoff (YYYY-MM-DD HH:MM): ...")
+- D: Architecture decision + rationale
+write_memory(prefix="L/E/D", content="...", tags=[3-5 tags], links=["${projectId}"])
+Skip if nothing non-obvious happened.
 
-write_memory: tags 3-5, links=["${projectId}"]. Max 2-3.
+### 3. Update project P-entry (IMPORTANT)
+Keep ${projectName} (${projectId}) current:
+- **Protocol** (.7): append_memory(id="${projectId}.7", content="Session YYYY-MM-DD: what happened, what was decided/shipped")
+- **Bugs** (.6): new bugs found → append with reference to E-entry
+- **Open tasks** (.8): tasks completed → update as done; new tasks → append
+- **Overview** (.1): if project state, architecture, or goals changed significantly
+- **Codebase** (.2): if new files/modules added or entry points changed
+Read the P-entry first: read_memory(id="${projectId}") to see current state before updating.
 
-**Summary (always required):** append_memory(id="${activeOId}", content="\\t[CP] ...")
-- Prior summaries → 1-2 sentences${prevSummaries.length > 0 ? " (shown above)" : ""}; detail exchanges 3-8 sentences, match language
+### 4. Checkpoint summary (REQUIRED)
+append_memory(id="${activeOId}", content="\\t[CP] ${prevSummaries.length > 0 ? "Prior: compressed. " : ""}3-8 sentence summary. Match conversation language.")
 
-**Project relevance check:** Are these exchanges actually about ${projectName}? If the conversation drifted to a different topic or project, note this in the summary: "[DRIFT: topic X is unrelated to ${projectName}]". If ALL exchanges are off-topic, switch the active project: update_memory(id="P0000", content="Non-Project | Active | Default", active=true).
+### 5. Project relevance check
+Are these exchanges about ${projectName}? If conversation drifted to a different project, note "[DRIFT: topic X]" in the summary.
 
-read_memory() first; skip/extend duplicates.`;
+## Rules:
+- read_memory() FIRST to avoid duplicates and see current P-entry state
+- Match language of existing entries (likely German)
+- Tags: 3-5 per entry, lowercase with #
+- Only save what's valuable in 6 months
+- Do NOT skip titling — every exchange needs a proper title`;
 
     // 7. Spawn Haiku with MCP access
     const allowedTools = [

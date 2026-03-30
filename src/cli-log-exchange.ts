@@ -169,7 +169,7 @@ export async function logExchange(): Promise<void> {
 
       if (exchangeCount > 0 && exchangeCount % saveInterval === 0) {
         if (checkpointMode === "auto") {
-          // Spawn background checkpoint — Haiku extracts L/D/E + handoff
+          // Spawn background checkpoint — Haiku extracts L/D/E + titles + P-updates
           const child = spawn("hmem", ["checkpoint"], {
             detached: true,
             stdio: "ignore",
@@ -185,6 +185,23 @@ export async function logExchange(): Promise<void> {
           process.stdout.write(JSON.stringify(nudge));
         }
       }
+    }
+
+    // Context size warning: check transcript file size as proxy for token usage
+    if (input.transcript_path) {
+      try {
+        const transcriptStat = fs.statSync(input.transcript_path);
+        const contextThreshold = hmemConfig.contextTokenThreshold || 100000;
+        // Rough heuristic: transcript JSON ≈ 3 bytes per token (includes JSON overhead, tool calls)
+        const estimatedTokens = Math.round(transcriptStat.size / 3);
+        if (estimatedTokens > contextThreshold) {
+          const tokensK = Math.round(estimatedTokens / 1000);
+          fs.writeFileSync("/tmp/hmem-context-warning", `${tokensK}k`);
+        } else {
+          // Clear flag if below threshold (e.g. after /clear)
+          try { fs.unlinkSync("/tmp/hmem-context-warning"); } catch {}
+        }
+      } catch {}
     }
   } catch (e) {
     console.error(`[hmem log-exchange] ${e}`);
