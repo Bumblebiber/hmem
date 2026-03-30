@@ -105,6 +105,13 @@ export async function checkpoint(): Promise<void> {
     // Only format exchanges AFTER the last summary (those are new)
     const newExchanges = exchanges.filter(ex => ex.seq > lastSummarySeq);
 
+    // Split: last 5 stay verbatim, the rest get summarized
+    const VERBATIM_WINDOW = 5;
+    const toSummarize = newExchanges.length > VERBATIM_WINDOW
+      ? newExchanges.slice(0, -VERBATIM_WINDOW)
+      : [];
+    const verbatimExchanges = newExchanges.slice(-VERBATIM_WINDOW);
+
     // 5. Format exchanges (generous limits — Haiku needs context)
     const formattedExchanges = newExchanges.map((ex, i) => {
       const user = ex.userText.length > 800 ? ex.userText.substring(0, 800) + "..." : ex.userText;
@@ -140,6 +147,20 @@ export async function checkpoint(): Promise<void> {
       return `  ${ex.nodeId}: "${currentTitle}"`;
     }).join("\n");
 
+    // Build conditional summary task
+    const hasSummaryWork = toSummarize.length > 0;
+    const summaryNodeIds = toSummarize.map(e => e.nodeId).join(", ");
+    const verbatimNodeIds = verbatimExchanges.map(e => e.nodeId).join(", ");
+
+    const summaryTask = hasSummaryWork
+      ? `### 4. Checkpoint summary (REQUIRED — ${toSummarize.length} exchanges to compress)
+Summarize exchanges ${summaryNodeIds} into a rolling summary.
+${prevSummaryText ? "IMPORTANT: Incorporate the previous summary into your new one — it covers older exchanges. The new summary should be a CUMULATIVE summary of everything so far." : "This is the first summary for this session."}
+append_memory(id="${activeOId}", content="\\t[CP] Rolling summary covering all exchanges through ${toSummarize[toSummarize.length - 1].nodeId}. 3-8 sentences. Match conversation language.")
+The last ${verbatimExchanges.length} exchanges (${verbatimNodeIds}) stay verbatim — do NOT include them in the summary.`
+      : `### 4. Checkpoint summary — SKIP
+Only ${newExchanges.length} exchanges since last summary — all within the verbatim window (last ${VERBATIM_WINDOW}). No summary needed.`;
+
     const prompt = `You are a checkpoint agent for "${projectName}" (${projectId}). Process ${newExchanges.length} new exchanges from ${activeOId}.
 ${summarySection}
 ${formattedExchanges}
@@ -170,12 +191,11 @@ Keep ${projectName} (${projectId}) current:
 - **Codebase** (.2): if new files/modules added or entry points changed
 Read the P-entry first: read_memory(id="${projectId}") to see current state before updating.
 
-### 4. Checkpoint summary (REQUIRED)
-append_memory(id="${activeOId}", content="\\t[CP] ${prevSummaries.length > 0 ? "Prior: compressed. " : ""}3-8 sentence summary. Match conversation language.")
+${summaryTask}
 
 ### 5. Title the O-entry root
 If the O-entry root (${activeOId}) still has a generic title like "unassigned" or just the project name,
-give it a proper session title based on the checkpoint summary you just wrote:
+give it a proper session title based on what happened so far:
 update_memory(id="${activeOId}", content="Session title summarizing key topics (max 60 chars)")
 
 ### 6. Project relevance check

@@ -17,6 +17,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { HmemStore, resolveHmemPath } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
+import { resolveEnvDefaults } from "./cli-env.js";
 /** Read the last real user message from a JSONL transcript file.
  *  Only reads the last 500KB to avoid loading huge files into memory. */
 function readLastUserMessage(transcriptPath) {
@@ -111,6 +112,8 @@ export async function logExchange() {
     catch {
         process.exit(0);
     }
+    // Resolve env defaults (HMEM_PROJECT_DIR, HMEM_AGENT_ID)
+    resolveEnvDefaults();
     // Guards
     if (input.stop_hook_active)
         process.exit(0);
@@ -177,27 +180,6 @@ export async function logExchange() {
                     process.stdout.write(JSON.stringify(nudge));
                 }
             }
-        }
-        // Context size warning: check transcript file size as proxy for token usage
-        if (input.transcript_path) {
-            try {
-                const transcriptStat = fs.statSync(input.transcript_path);
-                const contextThreshold = hmemConfig.contextTokenThreshold || 100000;
-                // Rough heuristic: transcript JSON ≈ 3 bytes per token (includes JSON overhead, tool calls)
-                const estimatedTokens = Math.round(transcriptStat.size / 3);
-                if (estimatedTokens > contextThreshold) {
-                    const tokensK = Math.round(estimatedTokens / 1000);
-                    fs.writeFileSync("/tmp/hmem-context-warning", `${tokensK}k`);
-                }
-                else {
-                    // Clear flag if below threshold (e.g. after /clear)
-                    try {
-                        fs.unlinkSync("/tmp/hmem-context-warning");
-                    }
-                    catch { }
-                }
-            }
-            catch { }
         }
     }
     catch (e) {

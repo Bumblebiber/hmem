@@ -18,6 +18,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { HmemStore, resolveHmemPath } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
+import { resolveEnvDefaults } from "./cli-env.js";
 
 interface HookInput {
   transcript_path?: string;
@@ -117,6 +118,9 @@ export async function logExchange(): Promise<void> {
   } catch {
     process.exit(0);
   }
+
+  // Resolve env defaults (HMEM_PROJECT_DIR, HMEM_AGENT_ID)
+  resolveEnvDefaults();
 
   // Guards
   if (input.stop_hook_active) process.exit(0);

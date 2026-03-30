@@ -529,120 +529,7 @@ export async function runInit(args = []) {
             if (hookChoice === 0) {
                 const hooksDir = path.join(HOME, ".claude", "hooks");
                 fs.mkdirSync(hooksDir, { recursive: true });
-                // Resolve hmem binary path (npx or global)
-                const hmemBin = "hmem";
-                // --- Hook 1: UserPromptSubmit (startup + checkpoint reminder) ---
-                const startupScript = `#!/bin/bash
-# hmem memory hook (installed by hmem init):
-# - First message: remind agent to call read_memory()
-# - Every N messages: remind agent to save knowledge (configurable)
-# - Config: checkpointInterval (default 20, 0=off), checkpointMode ("remind"|"auto")
-# - Subagents are skipped (they have parentUuid set)
-
-INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
-[ -z "$SESSION_ID" ] && SESSION_ID="global"
-
-# Skip subagents
-IS_SUBAGENT=$(echo "$INPUT" | grep -o '"parentUuid":"[^"]*"' | head -1)
-[ -n "$IS_SUBAGENT" ] && exit 0
-
-INTERVAL=20
-MODE="remind"
-for CFG in "$HOME/.hmem/hmem.config.json" "$HOME/.hmem/Agents/*/hmem.config.json"; do
-  if [ -f "$CFG" ]; then
-    VAL=$(grep -o '"checkpointInterval" *: *[0-9]*' "$CFG" 2>/dev/null | head -1 | grep -o '[0-9]*$')
-    [ -n "$VAL" ] && INTERVAL=$VAL
-    MVAL=$(grep -o '"checkpointMode" *: *"[^"]*"' "$CFG" 2>/dev/null | head -1 | grep -o '"[^"]*"$' | tr -d '"')
-    [ -n "$MVAL" ] && MODE=$MVAL
-    break
-  fi
-done
-
-COUNTER_FILE="/tmp/claude-hmem-counter-\${SESSION_ID}"
-if [ -f "$COUNTER_FILE" ]; then COUNT=$(cat "$COUNTER_FILE"); else COUNT=0; fi
-COUNT=$((COUNT + 1))
-echo "$COUNT" > "$COUNTER_FILE"
-
-if [ "$COUNT" -eq 1 ]; then
-  cat <<'HOOK_EOF'
-{
-  "hookSpecificOutput": {
-    "hookEventName": "UserPromptSubmit",
-    "additionalContext": "IMPORTANT: This is the first message of the session. Before responding, call read_memory() (no parameters) to load your L1 memory overview. Do this silently."
-  }
-}
-HOOK_EOF
-elif [ "$MODE" = "remind" ] && [ "$INTERVAL" -gt 0 ] && [ $((COUNT % INTERVAL)) -eq 0 ]; then
-  # Remind mode only — auto mode is handled by Stop hook (hmem log-exchange + hmem checkpoint)
-  cat <<'HOOK_EOF'
-{
-  "hookSpecificOutput": {
-    "hookEventName": "UserPromptSubmit",
-    "additionalContext": "CHECKPOINT: AFTER responding to this message, you MUST save new knowledge from this session via write_memory or append_memory."
-  }
-}
-HOOK_EOF
-elif [ -f /tmp/hmem-context-warning ] && [ $((COUNT % 5)) -eq 0 ]; then
-  CTX_TOKENS=$(cat /tmp/hmem-context-warning 2>/dev/null)
-  cat <<HOOK_EOF
-{
-  "hookSpecificOutput": {
-    "hookEventName": "UserPromptSubmit",
-    "additionalContext": "CONTEXT WARNING: Estimated ~\${CTX_TOKENS} tokens in context window. Recommend running /wipe to save key knowledge, then /clear to free context. Performance degrades significantly beyond this point."
-  }
-}
-HOOK_EOF
-fi
-`;
-                // --- Hook 2: Stop — log-exchange (synchronous, every response) ---
-                const logExchangeScript = `#!/bin/bash
-# hmem Stop hook (installed by hmem init):
-# Logs every user/agent exchange to the active O-entry (session history).
-# Reads Claude Code's Stop hook JSON from stdin and pipes it to hmem log-exchange.
-# Also handles checkpoint reminders (every N messages, configurable).
-
-export HMEM_PROJECT_DIR="\${HMEM_PROJECT_DIR:-$HOME/.hmem}"
-
-# Auto-detect agent ID from Agents/ directory (first agent found)
-if [ -z "$HMEM_AGENT_ID" ]; then
-  for D in "$HMEM_PROJECT_DIR"/Agents/*/; do
-    [ -d "$D" ] && export HMEM_AGENT_ID="\\$(basename "$D")" && break
-  done
-fi
-
-# Skip if hmem is not installed
-command -v ${hmemBin} >/dev/null 2>&1 || exit 0
-
-# Pass stdin through to hmem log-exchange (it reads the hook JSON)
-exec ${hmemBin} log-exchange
-`;
-                // --- Hook 3: SessionStart[clear] — context inject ---
-                const contextInjectScript = `#!/bin/bash
-# hmem SessionStart hook (installed by hmem init):
-# Re-injects project context after /clear.
-# Reads session JSON from stdin and outputs additionalContext with project state.
-
-export HMEM_PROJECT_DIR="\${HMEM_PROJECT_DIR:-$HOME/.hmem}"
-
-# Skip if hmem is not installed
-command -v ${hmemBin} >/dev/null 2>&1 || exit 0
-
-# Pass stdin through to hmem context-inject
-exec ${hmemBin} context-inject
-`;
-                // Write all hook scripts
-                const hooks = [
-                    { name: "hmem-startup.sh", content: startupScript },
-                    { name: "hmem-log-exchange.sh", content: logExchangeScript },
-                    { name: "hmem-context-inject.sh", content: contextInjectScript },
-                ];
-                for (const h of hooks) {
-                    const p = path.join(hooksDir, h.name);
-                    fs.writeFileSync(p, h.content, { mode: 0o755 });
-                    console.log(`\n  [ok] Hook script: ${p}`);
-                }
-                // Register hooks in settings.json
+                // Register hooks in settings.json — direct hmem CLI commands (cross-platform, no bash needed)
                 const settingsPath = path.join(HOME, ".claude", "settings.json");
                 let settings = {};
                 try {
@@ -653,32 +540,57 @@ exec ${hmemBin} context-inject
                     settings.hooks = {};
                 // Helper: check if a hook command is already registered
                 const hasHookCmd = (event, match) => (settings.hooks[event] || []).some((h) => h.hooks?.some((hh) => hh.command?.includes(match)));
-                let changed = false;
-                // UserPromptSubmit — startup + checkpoint
+                // Migration: remove old .sh-based hooks (replaced by cross-platform hmem CLI commands)
+                const migrateHook = (event, oldMatch) => {
+                    if (settings.hooks[event]) {
+                        const before = settings.hooks[event].length;
+                        settings.hooks[event] = settings.hooks[event].filter((h) => !h.hooks?.some((hh) => hh.command?.includes(oldMatch)));
+                        return settings.hooks[event].length !== before;
+                    }
+                    return false;
+                };
+                const migrated = migrateHook("UserPromptSubmit", "hmem-startup.sh") ||
+                    migrateHook("Stop", "hmem-log-exchange.sh") ||
+                    migrateHook("SessionStart", "hmem-context-inject.sh");
+                if (migrated) {
+                    console.log(`\n  [ok] Migrated old .sh hooks to cross-platform hmem commands`);
+                }
+                // Clean up old .sh hook scripts
+                for (const old of ["hmem-startup.sh", "hmem-log-exchange.sh", "hmem-context-inject.sh"]) {
+                    const p = path.join(hooksDir, old);
+                    if (fs.existsSync(p)) {
+                        try {
+                            fs.unlinkSync(p);
+                        }
+                        catch { }
+                    }
+                }
+                let changed = migrated;
+                // UserPromptSubmit — startup + checkpoint (cross-platform Node.js)
                 if (!settings.hooks.UserPromptSubmit)
                     settings.hooks.UserPromptSubmit = [];
-                if (!hasHookCmd("UserPromptSubmit", "hmem-startup")) {
+                if (!hasHookCmd("UserPromptSubmit", "hmem hook-startup")) {
                     settings.hooks.UserPromptSubmit.push({
-                        hooks: [{ type: "command", command: path.join(hooksDir, "hmem-startup.sh"), timeout: 5 }],
+                        hooks: [{ type: "command", command: "hmem hook-startup", timeout: 5 }],
                     });
                     changed = true;
                 }
                 // Stop — log-exchange (async — avoid blocking Claude with Node.js cold start)
                 if (!settings.hooks.Stop)
                     settings.hooks.Stop = [];
-                if (!hasHookCmd("Stop", "hmem-log-exchange")) {
+                if (!hasHookCmd("Stop", "hmem log-exchange")) {
                     settings.hooks.Stop.unshift({
-                        hooks: [{ type: "command", command: path.join(hooksDir, "hmem-log-exchange.sh"), timeout: 10, async: true }],
+                        hooks: [{ type: "command", command: "hmem log-exchange", timeout: 10, async: true }],
                     });
                     changed = true;
                 }
                 // SessionStart[clear] — context inject
                 if (!settings.hooks.SessionStart)
                     settings.hooks.SessionStart = [];
-                if (!hasHookCmd("SessionStart", "hmem-context-inject")) {
+                if (!hasHookCmd("SessionStart", "hmem context-inject")) {
                     settings.hooks.SessionStart.push({
                         matcher: "clear",
-                        hooks: [{ type: "command", command: path.join(hooksDir, "hmem-context-inject.sh"), timeout: 10 }],
+                        hooks: [{ type: "command", command: "hmem context-inject", timeout: 10 }],
                     });
                     changed = true;
                 }

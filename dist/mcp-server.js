@@ -314,35 +314,19 @@ function formatRecentOEntries(store, limit, exchangeCount, linkedTo, expandAll) 
         // Expand exchanges: all entries when expandAll, otherwise only latest
         if (expandAll || i === 0) {
             // Check for checkpoint summaries — if present, show summary + only exchanges after it
+            // Always show: latest summary (if any) + last 5 exchanges verbatim
+            const VERBATIM_WINDOW = 5;
             const summaries = store.getCheckpointSummaries(o.id, 1);
             if (summaries.length > 0) {
-                const summary = summaries[0];
-                lines.push(`    [Summary] ${summary.content}`);
-                // Show exchanges after the summary, but always at least 5
-                const allExchanges = store.getOEntryExchanges(o.id, exchangeCount, true);
-                const postSummary = allExchanges.filter(ex => ex.seq > summary.seq);
-                const minExchanges = 5;
-                const toShow = postSummary.length >= minExchanges
-                    ? postSummary
-                    : allExchanges.slice(-minExchanges);
-                for (const ex of toShow) {
-                    const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
-                    const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
-                    lines.push(`    USER: ${userShort}`);
-                    if (agentShort)
-                        lines.push(`    AGENT: ${agentShort}`);
-                }
+                lines.push(`    [Summary] ${summaries[0].content}`);
             }
-            else {
-                const exLimit = expandAll && i > 0 ? Math.min(exchangeCount, 5) : exchangeCount;
-                const exchanges = store.getOEntryExchanges(o.id, exLimit, true);
-                for (const ex of exchanges) {
-                    const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
-                    const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
-                    lines.push(`    USER: ${userShort}`);
-                    if (agentShort)
-                        lines.push(`    AGENT: ${agentShort}`);
-                }
+            const exchanges = store.getOEntryExchanges(o.id, VERBATIM_WINDOW, true);
+            for (const ex of exchanges) {
+                const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+                const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+                lines.push(`    USER: ${userShort}`);
+                if (agentShort)
+                    lines.push(`    AGENT: ${agentShort}`);
             }
         }
     }

@@ -43,6 +43,12 @@ switch (command) {
     break;
   }
 
+  case "hook-startup": {
+    const { hookStartup } = await import("./cli-hook-startup.js");
+    await hookStartup();
+    break;
+  }
+
   case "version":
   case "--version":
   case "-v": {
@@ -63,6 +69,7 @@ Usage:
   hmem log-exchange   Log a chat exchange to active O-entry (called by Stop hook)
   hmem context-inject Output compressed context for re-injection after /clear
   hmem checkpoint     Extract knowledge from recent exchanges via Haiku (background)
+  hmem hook-startup   UserPromptSubmit hook — counter, checkpoint reminders (cross-platform)
   hmem version        Show version
 
 Environment variables (for serve):

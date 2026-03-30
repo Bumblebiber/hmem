@@ -49,7 +49,7 @@ export const DEFAULT_CONFIG = {
     maxTitleChars: 50,
     accessCountTopN: 5,
     prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
-    checkpointInterval: 20,
+    checkpointInterval: 5,
     checkpointMode: "remind",
     recentOEntries: 10,
     contextTokenThreshold: 100_000,

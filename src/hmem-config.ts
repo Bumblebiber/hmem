@@ -176,7 +176,7 @@ export const DEFAULT_CONFIG: HmemConfig = {
   maxTitleChars: 50,
   accessCountTopN: 5,
   prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
-  checkpointInterval: 20,
+  checkpointInterval: 5,
   checkpointMode: "remind" as const,
   recentOEntries: 10,
   contextTokenThreshold: 100_000,

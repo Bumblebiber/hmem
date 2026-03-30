@@ -2599,6 +2599,7 @@ export class HmemStore {
      * Priority: text before " — " > word-boundary truncation > hard truncation.
      */
     autoExtractTitle(text) {
+        text = text.replace(/[\t\r\n]/g, " ").replace(/  +/g, " ").trim();
         const maxLen = Math.floor(this.cfg.maxTitleChars * HmemStore.CHAR_LIMIT_TOLERANCE);
         const dashIdx = text.indexOf(" — ");
         if (dashIdx > 0 && dashIdx <= maxLen)
@@ -2697,11 +2698,12 @@ export class HmemStore {
             seqAtParent.set(parentId, seq);
             const nodeId = `${parentId}.${seq}`;
             lastIdAtDepth.set(depth, nodeId);
-            nodes.push({ id: nodeId, parent_id: parentId, depth, seq, content: text, title: text });
+            const sanitizedTitle = text.replace(/[\t\r\n]/g, " ").replace(/  +/g, " ").trim();
+            nodes.push({ id: nodeId, parent_id: parentId, depth, seq, content: text, title: sanitizedTitle });
         }
         // Backward-compatible: nodes without body lines get autoExtractTitle fallback
         for (const node of nodes) {
-            if (node.content === node.title) {
+            if (node.content === node.title || node.content.replace(/[\t\r\n]/g, " ").replace(/  +/g, " ").trim() === node.title) {
                 // No body was added — old format: content = full text, title = auto-extracted
                 node.title = this.autoExtractTitle(node.content);
             }
@@ -2711,11 +2713,11 @@ export class HmemStore {
         let title;
         let level1;
         if (l1Body.length > 0) {
-            title = l1Title[0] ?? "";
+            title = (l1Title[0] ?? "").replace(/[\t\r\n]/g, " ").replace(/  +/g, " ").trim();
             level1 = l1Body.join("\n");
         }
         else if (l1Title.length >= 2) {
-            title = l1Title[0];
+            title = l1Title[0].replace(/[\t\r\n]/g, " ").replace(/  +/g, " ").trim();
             level1 = l1Title.slice(1).join(" | ");
         }
         else {
@@ -2788,11 +2790,12 @@ export class HmemStore {
             seqAtParent.set(myParentId, seq);
             const nodeId = `${myParentId}.${seq}`;
             lastIdAtRelDepth.set(relDepth, nodeId);
-            nodes.push({ id: nodeId, parent_id: myParentId, depth: absDepth, seq, content: text, title: text });
+            const sanitizedTitle = text.replace(/[\t\r\n]/g, " ").replace(/  +/g, " ").trim();
+            nodes.push({ id: nodeId, parent_id: myParentId, depth: absDepth, seq, content: text, title: sanitizedTitle });
         }
         // Backward-compatible: nodes without body lines get autoExtractTitle fallback
         for (const node of nodes) {
-            if (node.content === node.title) {
+            if (node.content === node.title || node.content.replace(/[\t\r\n]/g, " ").replace(/  +/g, " ").trim() === node.title) {
                 node.title = this.autoExtractTitle(node.content);
             }
         }

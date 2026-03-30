@@ -19,6 +19,7 @@
 import fs from "node:fs";
 import { openAgentMemory } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
+import { resolveEnvDefaults } from "./cli-env.js";
 import type { AgentRole } from "./hmem-store.js";
 
 /** Number of recent conversation messages to include after /clear. */
@@ -88,7 +89,10 @@ function readRecentTranscript(transcriptPath: string, count: number): string[] {
 }
 
 export async function contextInject(): Promise<void> {
-  const projectDir = process.env.HMEM_PROJECT_DIR || process.env.COUNCIL_PROJECT_DIR || "";
+  // Resolve env defaults (HMEM_PROJECT_DIR, HMEM_AGENT_ID)
+  resolveEnvDefaults();
+
+  const projectDir = process.env.HMEM_PROJECT_DIR || "";
   if (!projectDir) {
     process.stderr.write("HMEM_PROJECT_DIR not set\n");
     return;
@@ -165,31 +169,18 @@ export async function contextInject(): Promise<void> {
             for (let i = 0; i < recentO.length; i++) {
               const o = recentO[i];
               lines.push(`    ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
+              // Always show: latest summary (if any) + last 5 exchanges verbatim
+              const VERBATIM_WINDOW = 5;
               const summaries = store.getCheckpointSummaries(o.id, 1);
               if (summaries.length > 0) {
-                const summary = summaries[0];
-                lines.push(`      [Summary] ${summary.content}`);
-                const allExchanges = store.getOEntryExchanges(o.id, 10, true);
-                const postSummary = allExchanges.filter(ex => ex.seq > summary.seq);
-                const minExchanges = 5;
-                const toShow = postSummary.length >= minExchanges
-                  ? postSummary
-                  : allExchanges.slice(-minExchanges);
-                for (const ex of toShow) {
-                  const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
-                  const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
-                  lines.push(`      USER: ${userShort}`);
-                  if (agentShort) lines.push(`      AGENT: ${agentShort}`);
-                }
-              } else {
-                const exLimit = i === 0 ? 10 : 5;
-                const exchanges = store.getOEntryExchanges(o.id, exLimit, true);
-                for (const ex of exchanges) {
-                  const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
-                  const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
-                  lines.push(`      USER: ${userShort}`);
-                  if (agentShort) lines.push(`      AGENT: ${agentShort}`);
-                }
+                lines.push(`      [Summary] ${summaries[0].content}`);
+              }
+              const exchanges = store.getOEntryExchanges(o.id, VERBATIM_WINDOW, true);
+              for (const ex of exchanges) {
+                const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+                const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+                lines.push(`      USER: ${userShort}`);
+                if (agentShort) lines.push(`      AGENT: ${agentShort}`);
               }
             }
           }
