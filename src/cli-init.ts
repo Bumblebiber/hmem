@@ -793,12 +793,11 @@ exec ${hmemBin} context-inject
           changed = true;
         }
 
-        // Stop — log-exchange (synchronous)
+        // Stop — log-exchange (async — avoid blocking Claude with Node.js cold start)
         if (!settings.hooks.Stop) settings.hooks.Stop = [];
         if (!hasHookCmd("Stop", "hmem-log-exchange")) {
-          // Insert at beginning so it runs before title hook
           settings.hooks.Stop.unshift({
-            hooks: [{ type: "command", command: path.join(hooksDir, "hmem-log-exchange.sh"), timeout: 10 }],
+            hooks: [{ type: "command", command: path.join(hooksDir, "hmem-log-exchange.sh"), timeout: 10, async: true }],
           });
           changed = true;
         }
@@ -826,6 +825,19 @@ exec ${hmemBin} context-inject
           console.log(`  [ok] All hooks registered in: ${settingsPath}`);
         } else {
           console.log(`  [ok] All hooks already registered in settings.json`);
+        }
+
+        // --- Statusline: context window bar + active hmem project ---
+        if (!settings.statusLine) {
+          const statuslineSrc = path.join(import.meta.dirname, "..", "scripts", "hmem-statusline.sh");
+          const statuslineDst = path.join(hooksDir, "hmem-statusline.sh");
+          if (fs.existsSync(statuslineSrc)) {
+            fs.copyFileSync(statuslineSrc, statuslineDst);
+            fs.chmodSync(statuslineDst, 0o755);
+            settings.statusLine = { type: "command", command: `bash ${statuslineDst}` };
+            fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+            console.log(`  [ok] Statusline: ${statuslineDst}`);
+          }
         }
       }
     }
