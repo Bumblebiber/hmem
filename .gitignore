@@ -4,3 +4,4 @@ dist/
 !hmem_developer.hmem
 *.tmp
 .env
+skills/hmem-release/
