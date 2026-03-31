@@ -439,8 +439,9 @@ export declare class HmemStore {
     /** Get or create the active O-entry (for log-exchange hook). */
     /** Count L2 children of a root entry (direct children only). */
     countDirectChildren(rootId: string): number;
+    /** @deprecated Use resolveProjectO() instead. Will be removed in v6.0. */
     getActiveO(): string;
-    /** Get the active O-entry ID without creating one. Returns null if none active. */
+    /** @deprecated Use resolveProjectO() instead. Will be removed in v6.0. Get the active O-entry ID without creating one. Returns null if none active. */
     getActiveOId(): string | null;
     /** Get the active project entry. Returns null if none active. */
     getActiveProject(): {

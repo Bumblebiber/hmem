@@ -316,3 +316,105 @@ describe("moveNodes", () => {
     expect(sourceSession).toBeNull();
   });
 });
+
+describe("Full pipeline integration", () => {
+  it("simulates 7 exchanges across 2 sessions with batch rotation", () => {
+    // Setup project
+    store.writeLinear("P", { l1: "Test Project | Integration test" }, ["#project"]);
+    const oId = store.resolveProjectO(1);
+
+    // Session 1: 5 exchanges (fills 1 batch of size 3 + starts second)
+    const s1 = store.resolveSession(oId, "/tmp/session1.jsonl");
+
+    for (let i = 1; i <= 5; i++) {
+      const batchId = store.resolveBatch(s1, oId, 3);
+      store.appendExchangeV2(batchId, oId, `question ${i}`, `answer ${i}`);
+    }
+
+    // Verify: 2 batches (3 + 2)
+    const batches1 = store.getChildNodes(s1).filter(n => n.depth === 3);
+    expect(batches1).toHaveLength(2);
+
+    // First batch should have 3 exchanges, second should have 2
+    const b1Exchanges = store.getChildNodes(batches1[0].id).filter(n => n.depth === 4);
+    const b2Exchanges = store.getChildNodes(batches1[1].id).filter(n => n.depth === 4);
+    expect(b1Exchanges).toHaveLength(3);
+    expect(b2Exchanges).toHaveLength(2);
+
+    // Session 2: 2 more exchanges
+    const s2 = store.resolveSession(oId, "/tmp/session2.jsonl");
+    const b3 = store.resolveBatch(s2, oId, 3);
+    store.appendExchangeV2(b3, oId, "question 6", "answer 6");
+    store.appendExchangeV2(b3, oId, "question 7", "answer 7");
+
+    // Read all exchanges
+    const all = store.getOEntryExchangesV2(oId, 20);
+    expect(all).toHaveLength(7);
+    expect(all[0].userText).toBe("question 1");
+    expect(all[6].userText).toBe("question 7");
+
+    // Verify dual-format compatibility (getOEntryExchanges should detect new format)
+    const legacy = store.getOEntryExchanges(oId, 20);
+    expect(legacy).toHaveLength(7);
+
+    // Verify listProjects
+    const projects = store.listProjects();
+    expect(projects).toHaveLength(1);
+    expect(projects[0].id).toBe("P0001");
+  });
+
+  it("moves exchanges between projects correctly", () => {
+    store.writeLinear("P", { l1: "Project A" }, ["#project"]);
+    store.writeLinear("P", { l1: "Project B" }, ["#project"]);
+    const oA = store.resolveProjectO(1);
+    const oB = store.resolveProjectO(2);
+
+    const sA = store.resolveSession(oA, "/tmp/sA.jsonl");
+    const bA = store.resolveBatch(sA, oA, 5);
+    const e1 = store.appendExchangeV2(bA, oA, "for project B", "moved");
+    const e2 = store.appendExchangeV2(bA, oA, "for project A", "stays");
+
+    // Move first exchange to project B
+    const result = store.moveNodes([e1.id], oB);
+    expect(result.moved).toBe(1);
+    expect(result.errors).toHaveLength(0);
+
+    const exA = store.getOEntryExchangesV2(oA, 10);
+    const exB = store.getOEntryExchangesV2(oB, 10);
+    expect(exA).toHaveLength(1);
+    expect(exA[0].userText).toBe("for project A");
+    expect(exB).toHaveLength(1);
+    expect(exB[0].userText).toBe("for project B");
+  });
+
+  it("countBatchExchanges works correctly", () => {
+    store.writeLinear("P", { l1: "test" }, ["#project"]);
+    const oId = store.resolveProjectO(1);
+    const sid = store.resolveSession(oId, "/tmp/t.jsonl");
+    const bid = store.resolveBatch(sid, oId, 5);
+
+    expect(store.countBatchExchanges(bid)).toBe(0);
+    store.appendExchangeV2(bid, oId, "q1", "a1");
+    expect(store.countBatchExchanges(bid)).toBe(1);
+    store.appendExchangeV2(bid, oId, "q2", "a2");
+    expect(store.countBatchExchanges(bid)).toBe(2);
+  });
+
+  it("getPreviousSession returns the second-to-last session", () => {
+    store.writeLinear("P", { l1: "test" }, ["#project"]);
+    const oId = store.resolveProjectO(1);
+
+    // No sessions yet
+    expect(store.getPreviousSession(oId)).toBeNull();
+
+    // One session
+    const s1 = store.resolveSession(oId, "/tmp/s1.jsonl");
+    expect(store.getPreviousSession(oId)).toBeNull(); // only one, no "previous"
+
+    // Two sessions
+    const s2 = store.resolveSession(oId, "/tmp/s2.jsonl");
+    const prev = store.getPreviousSession(oId);
+    expect(prev).toBeTruthy();
+    expect(prev!.id).toBe(s1);
+  });
+});

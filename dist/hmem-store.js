@@ -1500,6 +1500,22 @@ export class HmemStore {
     getOEntryExchanges(oEntryId, limit, skipSkillDialogs = false) {
         if (limit <= 0)
             return [];
+        // Check if this O-entry uses the new 5-level format (has L3 nodes at depth=3)
+        const hasL3 = this.db.prepare("SELECT 1 FROM memory_nodes WHERE root_id = ? AND depth = 3 LIMIT 1").get(oEntryId);
+        if (hasL3) {
+            // New format: delegate to V2
+            const opts = {};
+            if (skipSkillDialogs)
+                opts.titleOnlyTags = ["#skill-dialog"];
+            const v2 = this.getOEntryExchangesV2(oEntryId, limit, opts);
+            return v2.map(ex => ({
+                nodeId: ex.nodeId,
+                seq: 0, // seq not globally meaningful in new format
+                userText: ex.userText,
+                agentText: ex.agentText,
+            }));
+        }
+        // Legacy format: original logic below
         // Get the last N L2 nodes (exchanges) by seq DESC
         let l2Nodes;
         // Always exclude checkpoint-summary nodes (they're not exchanges)
@@ -2361,6 +2377,7 @@ export class HmemStore {
     countDirectChildren(rootId) {
         return this.db.prepare("SELECT COUNT(*) as n FROM memory_nodes WHERE root_id = ? AND depth = 2").get(rootId)?.n ?? 0;
     }
+    /** @deprecated Use resolveProjectO() instead. Will be removed in v6.0. */
     getActiveO() {
         // Find active project for context
         const activeProject = this.db.prepare("SELECT id, title FROM memories WHERE prefix = 'P' AND active = 1 AND obsolete != 1 LIMIT 1").get();
@@ -2390,7 +2407,7 @@ export class HmemStore {
             .run(new Date().toISOString(), result.id);
         return result.id;
     }
-    /** Get the active O-entry ID without creating one. Returns null if none active. */
+    /** @deprecated Use resolveProjectO() instead. Will be removed in v6.0. Get the active O-entry ID without creating one. Returns null if none active. */
     getActiveOId() {
         const row = this.db.prepare("SELECT id FROM memories WHERE prefix = 'O' AND active = 1 AND obsolete != 1 AND irrelevant != 1 LIMIT 1").get();
         return row?.id ?? null;
