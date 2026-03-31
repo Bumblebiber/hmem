@@ -6,7 +6,7 @@
  */
 
 import path from "node:path";
-import { resolveHmemPathNew } from "./hmem-store.js";
+import { resolveHmemPath } from "./hmem-store.js";
 
 /**
  * Resolve HMEM_PATH and HMEM_PROJECT_DIR environment variables.
@@ -19,7 +19,7 @@ import { resolveHmemPathNew } from "./hmem-store.js";
  */
 export function resolveEnvDefaults(): void {
   if (!process.env.HMEM_PATH) {
-    process.env.HMEM_PATH = resolveHmemPathNew();
+    process.env.HMEM_PATH = resolveHmemPath();
   }
 
   if (!process.env.HMEM_PROJECT_DIR) {

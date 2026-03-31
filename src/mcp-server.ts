@@ -20,14 +20,14 @@ import { fileURLToPath } from "node:url";
 import { spawnSync, spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import { searchMemory } from "./memory-search.js";
-import { openCompanyMemory, resolveHmemPath, resolveHmemPathNew, routeTask, HmemStore } from "./hmem-store.js";
+import { openCompanyMemory, resolveHmemPath, resolveHmemPathLegacy, routeTask, HmemStore } from "./hmem-store.js";
 import type { MemoryEntry, MemoryNode } from "./hmem-store.js";
 import { loadHmemConfig, formatPrefixList, getSyncServers } from "./hmem-config.js";
 import type { HmemConfig } from "./hmem-config.js";
 import { SessionCache } from "./session-cache.js";
 
 // ---- Environment ----
-const HMEM_PATH = process.env.HMEM_PATH || resolveHmemPathNew();
+const HMEM_PATH = process.env.HMEM_PATH || resolveHmemPath();
 const PROJECT_DIR = process.env.HMEM_PROJECT_DIR || path.dirname(HMEM_PATH);
 let DEPTH = parseInt(process.env.HMEM_DEPTH || "0", 10);
 
@@ -2162,7 +2162,7 @@ server.tool(
       };
     }
 
-    const hmemPath = resolveHmemPath(PROJECT_DIR, agent_name);
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
     if (!fs.existsSync(hmemPath)) {
       return {
         content: [{ type: "text" as const, text: `No .hmem found for agent "${agent_name}" (expected: ${hmemPath}).` }],
@@ -2251,7 +2251,7 @@ server.tool(
       };
     }
 
-    const hmemPath = resolveHmemPath(PROJECT_DIR, agent_name);
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
     if (!fs.existsSync(hmemPath)) {
       return {
         content: [{ type: "text" as const, text: `No .hmem found for agent "${agent_name}".` }],
@@ -2343,7 +2343,7 @@ server.tool(
       };
     }
 
-    const hmemPath = resolveHmemPath(PROJECT_DIR, agent_name);
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
     if (!fs.existsSync(hmemPath)) {
       return {
         content: [{ type: "text" as const, text: `No .hmem found for agent "${agent_name}".` }],
@@ -2396,7 +2396,7 @@ server.tool(
       };
     }
 
-    const hmemPath = resolveHmemPath(PROJECT_DIR, agent_name);
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
     if (!fs.existsSync(hmemPath)) {
       return {
         content: [{ type: "text" as const, text: `No .hmem found for agent "${agent_name}".` }],

@@ -4656,7 +4656,11 @@ export class HmemStore {
 
 // ---- Convenience: resolve .hmem path for an agent ----
 
-export function resolveHmemPath(projectDir: string, templateName: string): string {
+/**
+ * @deprecated Use resolveHmemPath() (no args) instead. Will be removed in v7.0.
+ */
+export function resolveHmemPathLegacy(projectDir: string, templateName: string): string {
+  console.error("[hmem] DEPRECATED: resolveHmemPathLegacy(projectDir, templateName) — use HMEM_PATH env var instead");
   // No agent name configured → use memory.hmem directly in project root
   if (!templateName || templateName === "UNKNOWN") {
     return path.join(projectDir, "memory.hmem");
@@ -4671,12 +4675,10 @@ export function resolveHmemPath(projectDir: string, templateName: string): strin
 }
 
 /**
- * Resolve the path to the .hmem file using a 3-step priority chain:
- *   1. HMEM_PATH env var (~ expanded, resolved to absolute)
- *   2. CWD discovery: exactly 1 .hmem file in cwd → use it; multiple → error
- *   3. Default fallback: ~/.hmem/memory.hmem
+ * Resolve the path to the personal .hmem database file.
+ * Priority: HMEM_PATH env var > CWD discovery > ~/.hmem/memory.hmem
  */
-export function resolveHmemPathNew(cwdOverride?: string): string {
+export function resolveHmemPath(cwdOverride?: string): string {
   // Priority 1: HMEM_PATH env var
   const hmemPath = process.env.HMEM_PATH;
   if (hmemPath) {
@@ -4703,10 +4705,11 @@ export function resolveHmemPathNew(cwdOverride?: string): string {
 }
 
 /**
- * Open (or create) an HmemStore for an agent's personal memory.
+ * @deprecated Use `new HmemStore(resolveHmemPath(), config)` instead.
  */
 export function openAgentMemory(projectDir: string, templateName: string, config?: HmemConfig): HmemStore {
-  const hmemPath = resolveHmemPath(projectDir, templateName);
+  console.error("[hmem] DEPRECATED: openAgentMemory() — use new HmemStore(resolveHmemPath(), config)");
+  const hmemPath = resolveHmemPathLegacy(projectDir, templateName);
   return new HmemStore(hmemPath, config);
 }
 
