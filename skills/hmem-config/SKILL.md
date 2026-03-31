@@ -15,7 +15,7 @@ This skill guides you through reading, explaining, and updating hmem's configura
 
 ## Locate and read the config
 
-The config lives at `hmem.config.json` inside the hmem project directory. With an agent ID, it's typically at `~/.hmem/Agents/<NAME>/hmem.config.json`. Without one, `~/.hmem/hmem.config.json`.
+The config lives at `hmem.config.json` in the same directory as your .hmem file. Located at `~/.hmem/hmem.config.json` (in the same directory as your .hmem file).
 
 Read the file directly — don't ask the user where it is. If it doesn't exist, offer to create one (only non-default values need to be specified).
 
@@ -152,5 +152,5 @@ npx hmem-sync connect
 |---------|-----|
 | "Config not found" | Run `npx hmem-sync connect` |
 | 401 Token verification failed | Passphrase has special chars — set `HMEM_SYNC_PASSPHRASE` in .mcp.json env |
-| 0 entries after pull | `HMEM_AGENT_ID` must match between devices |
+| 0 entries after pull | `HMEM_PATH` filename must match between devices |
 | Update | `npm update -g hmem-sync` (always global, never inside a project) |

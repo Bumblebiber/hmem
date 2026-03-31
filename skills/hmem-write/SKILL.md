@@ -33,9 +33,9 @@ write_memory(
 ```
 Short Error Title
 > SQLite connection failed because .mcp.json used a relative path.
-> The fix was to use an absolute path in the HMEM_PROJECT_DIR env var.
+> The fix was to use an absolute path in the HMEM_PATH env var.
 	Details about reproduction
-	> Steps: 1. Set HMEM_PROJECT_DIR=./hmem  2. Run hmem serve  3. Observe SQLITE_CANTOPEN
+	> Steps: 1. Set HMEM_PATH=./hmem  2. Run hmem serve  3. Observe SQLITE_CANTOPEN
 ```
 
 **L1 example without body (old format, still works):**
@@ -280,7 +280,6 @@ Title auto-extracted: `"SQLite connection failed due to wrong path in .mc"`
 write_memory(
   prefix: "S",
   store: "company",
-  min_role: "worker",
   content: "..."
 )
 ```

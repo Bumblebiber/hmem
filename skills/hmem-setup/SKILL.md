@@ -180,7 +180,7 @@ Verify: `dist/mcp-server.js` must exist after build.
 ### Step 2 — Create Memory Directory
 
 ```bash
-mkdir -p /your/project/Agents/YOUR_NAME
+mkdir -p ~/.hmem
 ```
 
 The SQLite `.hmem` file is created automatically on first write.
@@ -197,8 +197,7 @@ Add hmem to your `.mcp.json` (create it at your project root if it does not exis
       "command": "node",
       "args": ["/absolute/path/to/hmem/dist/mcp-server.js"],
       "env": {
-        "HMEM_PROJECT_DIR": "/absolute/path/to/your/project",
-        "HMEM_AGENT_ID": "YOUR_NAME",
+        "HMEM_PATH": "/absolute/path/to/your/memory.hmem",
         "HMEM_AGENT_ROLE": "worker"
       }
     }
@@ -208,8 +207,7 @@ Add hmem to your `.mcp.json` (create it at your project root if it does not exis
 
 | Variable | Description |
 |----------|-------------|
-| `HMEM_PROJECT_DIR` | Root directory where `.hmem` files are stored |
-| `HMEM_AGENT_ID` | Unique identifier for this agent (e.g. `ALICE`, `DEVELOPER`) |
+| `HMEM_PATH` | Absolute path to your .hmem file (e.g. `~/.hmem/memory.hmem`) |
 | `HMEM_AGENT_ROLE` | Permission level: `worker` / `al` / `pl` / `ceo` |
 
 ### Step 4 — Install Skill Files
@@ -247,7 +245,7 @@ Expected: `Memory is empty` (or your existing memories).
 
 | Symptom | Likely cause |
 |---------|-------------|
-| `HMEM_PROJECT_DIR not set` | Path missing or wrong env var name in `.mcp.json` |
+| `HMEM_PATH not set` | Path missing or wrong env var name in `.mcp.json` |
 | `No such tool: read_memory` | Tool not restarted after adding `.mcp.json` |
 | `npm install` fails | Missing build tools (see Prerequisites above) |
 | `read_memory` returns empty after writing | MCP server process is stale — restart tool |

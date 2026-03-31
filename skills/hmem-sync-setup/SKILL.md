@@ -34,13 +34,13 @@ instance, or `http://localhost:3100` for a local development server.
 For non-interactive use:
 ```bash
 # New account
-npx hmem-sync connect --user-id myname --passphrase "pass" --hmem-path ~/.hmem/ --agent-id DEVELOPER
+npx hmem-sync connect --user-id myname --passphrase "pass" --hmem-path ~/.hmem/memory.hmem
 
 # Existing account
-npx hmem-sync connect --user-id myname --passphrase "pass" --token abc123... --hmem-path ~/.hmem/ --agent-id DEVELOPER
+npx hmem-sync connect --user-id myname --passphrase "pass" --token abc123... --hmem-path ~/.hmem/memory.hmem
 
 # Custom server
-npx hmem-sync connect --server-url http://localhost:3100 --user-id myname --passphrase "pass" --hmem-path ~/.hmem/ --agent-id DEVELOPER
+npx hmem-sync connect --server-url http://localhost:3100 --user-id myname --passphrase "pass" --hmem-path ~/.hmem/memory.hmem
 ```
 
 The legacy `setup` and `restore` commands still work for backwards compatibility.
@@ -85,8 +85,7 @@ Add `HMEM_SYNC_PASSPHRASE` to your `.mcp.json` env block:
   "mcpServers": {
     "hmem": {
       "env": {
-        "HMEM_PROJECT_DIR": "/path/to/project",
-        "HMEM_AGENT_ID": "DEVELOPER",
+        "HMEM_PATH": "/path/to/your/memory.hmem",
         "HMEM_SYNC_PASSPHRASE": "your-passphrase-here"
       }
     }
@@ -111,10 +110,10 @@ The user needs these values on their other devices:
 - **Token** — from `.hmem-sync-token`
 - **Passphrase** — the one they chose in Step 2
 
-Show the user where these files are (adjust AGENT_ID to match your `HMEM_AGENT_ID`):
+Show the user where these files are (in the same directory as your .hmem file):
 ```bash
-cat "$HMEM_PROJECT_DIR/Agents/$HMEM_AGENT_ID/.hmem-sync-config.json"
-cat "$HMEM_PROJECT_DIR/Agents/$HMEM_AGENT_ID/.hmem-sync-token"
+cat "$(dirname "$HMEM_PATH")/.hmem-sync-config.json"
+cat "$(dirname "$HMEM_PATH")/.hmem-sync-token"
 ```
 
 ---
@@ -144,37 +143,25 @@ npx hmem-sync restore
 This prompts for all values interactively. Or pass them as flags:
 
 ```bash
-# Without agent ID → stores as memory.hmem
 npx hmem-sync restore \
   --server-url https://sync.example.com/hmem-sync \
   --user-id myname \
   --token abc123... \
   --passphrase "my passphrase" \
-  --hmem-path ~/.hmem/
-
-# With agent ID → stores as Agents/DEVELOPER/DEVELOPER.hmem
-npx hmem-sync restore \
-  --server-url https://sync.example.com/hmem-sync \
-  --user-id myname \
-  --token abc123... \
-  --passphrase "my passphrase" \
-  --hmem-path ~/.hmem/ \
-  --agent-id DEVELOPER
+  --hmem-path ~/.hmem/memory.hmem
 ```
 
-**IMPORTANT:** If you use `HMEM_AGENT_ID` in your .mcp.json, you MUST also use `--agent-id` in restore.
-Otherwise the DB lands at `memory.hmem` but hmem-mcp looks for `Agents/X/X.hmem`.
+**IMPORTANT:** The `--hmem-path` must point to the exact .hmem file path.
+The filename is used as identity for sync — it must match across devices.
 
 ### Step 4: Verify
 
-After restore, the output shows entry count and path convention:
+After restore, the output shows entry count and path:
 
 ```
-✓ Restore complete: 325 entries in /path/to/DEVELOPER.hmem
+✓ Restore complete: 325 entries in ~/.hmem/memory.hmem
 
-Path convention for MCP config:
-  Without HMEM_AGENT_ID: set HMEM_PROJECT_DIR to the directory containing memory.hmem
-  With HMEM_AGENT_ID=X:  set HMEM_PROJECT_DIR to the parent of Agents/X/X.hmem
+Set HMEM_PATH in your .mcp.json to this path.
 ```
 
 ### Step 5: Configure MCP (same as Scenario A, Step 3)
@@ -240,15 +227,15 @@ then continue with normal work.
 |---------|-------|-----|
 | 401 Token verification failed | Passphrase special chars broken by shell | Use `--passphrase` flag or `HMEM_SYNC_PASSPHRASE` env in .mcp.json |
 | Config not found | hmem-sync looks in wrong directory | Run from the directory containing your .hmem file, or use `--config` flag |
-| 0 entries after sync | Different `HMEM_AGENT_ID` on devices | Must match — different IDs mean different .hmem files |
-| read_memory returns empty | `~/.claude.json` caches old HMEM_AGENT_ID | Check `~/.claude.json` for stale MCP env overrides |
+| 0 entries after sync | Different `HMEM_PATH` filename on devices | Filename must match — it's used as sync identity |
+| read_memory returns empty | `~/.claude.json` caches old HMEM_PATH | Check `~/.claude.json` for stale MCP env overrides |
 | "npm ERR" on update | Running `npm update` inside a project dir | Always use `npm update -g hmem-sync` (global flag!) |
 
 ## Path Convention
 
 ```
-Without HMEM_AGENT_ID:  {HMEM_PROJECT_DIR}/memory.hmem
-With HMEM_AGENT_ID=X:   {HMEM_PROJECT_DIR}/Agents/X/X.hmem
+HMEM_PATH points directly to the .hmem file (e.g. ~/.hmem/memory.hmem)
+The parent directory is derived automatically.
 ```
 
 Config files are always stored next to the .hmem file:
