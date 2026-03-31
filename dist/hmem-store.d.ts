@@ -24,6 +24,7 @@
  *   To go deeper, call read_memory(id=child_id).
  *   depth parameter is IGNORED for ID-based queries.
  */
+import Database from "better-sqlite3";
 import type { HmemConfig } from "./hmem-config.js";
 export type AgentRole = "worker" | "al" | "pl" | "ceo";
 export interface MemoryEntry {
@@ -179,7 +180,7 @@ export interface ImportResult {
     conflicts: number;
 }
 export declare class HmemStore {
-    private db;
+    db: Database.Database;
     private readonly dbPath;
     getDbPath(): string;
     private readonly cfg;

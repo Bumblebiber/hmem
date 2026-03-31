@@ -331,7 +331,7 @@ const MIGRATIONS = [
 // ---- HmemStore class ----
 
 export class HmemStore {
-  private db: Database.Database;
+  public db: Database.Database;
   private readonly dbPath: string;
   getDbPath(): string { return this.dbPath; }
   private readonly cfg: HmemConfig;

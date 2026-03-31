@@ -61,6 +61,12 @@ switch (command) {
     break;
   }
 
+  case "migrate-o-entries": {
+    const { migrateOEntries } = await import("./cli-migrate-o.js");
+    await migrateOEntries();
+    break;
+  }
+
   case "version":
   case "--version":
   case "-v": {
