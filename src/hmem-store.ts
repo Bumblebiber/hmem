@@ -1820,6 +1820,26 @@ export class HmemStore {
    */
   getOEntryExchanges(oEntryId: string, limit: number, skipSkillDialogs = false): { nodeId: string; seq: number; userText: string; agentText: string }[] {
     if (limit <= 0) return [];
+
+    // Check if this O-entry uses the new 5-level format (has L3 nodes at depth=3)
+    const hasL3 = this.db.prepare(
+      "SELECT 1 FROM memory_nodes WHERE root_id = ? AND depth = 3 LIMIT 1"
+    ).get(oEntryId);
+
+    if (hasL3) {
+      // New format: delegate to V2
+      const opts: { skipIrrelevant?: boolean; titleOnlyTags?: string[] } = {};
+      if (skipSkillDialogs) opts.titleOnlyTags = ["#skill-dialog"];
+      const v2 = this.getOEntryExchangesV2(oEntryId, limit, opts);
+      return v2.map(ex => ({
+        nodeId: ex.nodeId,
+        seq: 0, // seq not globally meaningful in new format
+        userText: ex.userText,
+        agentText: ex.agentText,
+      }));
+    }
+
+    // Legacy format: original logic below
     // Get the last N L2 nodes (exchanges) by seq DESC
     let l2Nodes: { id: string; seq: number }[];
     // Always exclude checkpoint-summary nodes (they're not exchanges)
@@ -2804,6 +2824,7 @@ export class HmemStore {
     ).get(rootId) as any)?.n ?? 0;
   }
 
+  /** @deprecated Use resolveProjectO() instead. Will be removed in v6.0. */
   getActiveO(): string {
     // Find active project for context
     const activeProject = this.db.prepare(
@@ -2840,7 +2861,7 @@ export class HmemStore {
     return result.id;
   }
 
-  /** Get the active O-entry ID without creating one. Returns null if none active. */
+  /** @deprecated Use resolveProjectO() instead. Will be removed in v6.0. Get the active O-entry ID without creating one. Returns null if none active. */
   getActiveOId(): string | null {
     const row = this.db.prepare(
       "SELECT id FROM memories WHERE prefix = 'O' AND active = 1 AND obsolete != 1 AND irrelevant != 1 LIMIT 1"
