@@ -1676,6 +1676,39 @@ server.tool("move_memory", "Move a sub-node (and its entire subtree) to a differ
         return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
     }
 });
+server.tool("rename_id", "Atomically rename an entry ID and update ALL references across the database. " +
+    "Renames: root entry, all child nodes, tags, FTS index, links in other entries, obsolete markers. " +
+    "Use to resolve ID conflicts after sync-push detects a collision. " +
+    "Example: rename_id({ old_id: 'P0048', new_id: 'P0052' })", {
+    old_id: z.string().describe("Current entry ID to rename, e.g. 'P0048'"),
+    new_id: z.string().describe("New entry ID, e.g. 'P0052' — must have same prefix and not exist yet"),
+    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
+}, async ({ old_id, new_id, store }) => {
+    try {
+        const hmemStore = store === "company"
+            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        try {
+            const result = hmemStore.renameId(old_id, new_id);
+            if (!result.ok) {
+                return { content: [{ type: "text", text: `ERROR: ${result.error}` }], isError: true };
+            }
+            log(`rename_id: ${old_id} → ${new_id} (${result.affected} rows affected)`);
+            return {
+                content: [{
+                        type: "text",
+                        text: `Renamed ${old_id} → ${new_id} (${result.affected} rows affected).\nAll child nodes, tags, links, and FTS index updated.`,
+                    }],
+            };
+        }
+        finally {
+            hmemStore.close();
+        }
+    }
+    catch (e) {
+        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+    }
+});
 // ---- Curator Tools (ceo role only) ----
 const AUDIT_STATE_FILE = process.env.HMEM_AUDIT_STATE_PATH
     || path.join(PROJECT_DIR, "audit_state.json");

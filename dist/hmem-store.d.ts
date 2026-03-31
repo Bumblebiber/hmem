@@ -456,6 +456,21 @@ export declare class HmemStore {
      * Returns the number of deleted entries.
      */
     purgeIrrelevant(maxAgeDays?: number): number;
+    /**
+     * Atomically rename an entry ID and update all references across the database.
+     * Used to resolve ID conflicts after sync-push detects a collision.
+     *
+     * Updates: memories.id, memory_nodes (id, parent_id, root_id),
+     * memory_tags.entry_id, hmem_fts_rowid_map (root_id, node_id),
+     * memories.links (JSON arrays in other entries), level_1 obsolete markers [✓ID].
+     *
+     * Returns the number of affected rows (nodes + link rewrites + tag rewrites).
+     */
+    renameId(oldId: string, newId: string): {
+        ok: boolean;
+        affected: number;
+        error?: string;
+    };
     private bumpNodeAccess;
     /**
      * Follow the obsolete chain from an entry to its final valid correction.

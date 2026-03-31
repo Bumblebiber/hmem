@@ -2898,7 +2898,7 @@ export class HmemStore {
 
     const deleteNodes = this.db.prepare("DELETE FROM memory_nodes WHERE root_id = ?");
     const deleteRoot = this.db.prepare("DELETE FROM memories WHERE id = ?");
-    const deleteTags = this.db.prepare("DELETE FROM tags WHERE root_id = ?");
+    const deleteTags = this.db.prepare("DELETE FROM memory_tags WHERE entry_id LIKE ? || '%'");
 
     const purge = this.db.transaction(() => {
       for (const { id } of rows) {
@@ -2909,6 +2909,114 @@ export class HmemStore {
     });
     purge();
     return rows.length;
+  }
+
+  /**
+   * Atomically rename an entry ID and update all references across the database.
+   * Used to resolve ID conflicts after sync-push detects a collision.
+   *
+   * Updates: memories.id, memory_nodes (id, parent_id, root_id),
+   * memory_tags.entry_id, hmem_fts_rowid_map (root_id, node_id),
+   * memories.links (JSON arrays in other entries), level_1 obsolete markers [✓ID].
+   *
+   * Returns the number of affected rows (nodes + link rewrites + tag rewrites).
+   */
+  renameId(oldId: string, newId: string): { ok: boolean; affected: number; error?: string } {
+    // Validate
+    if (oldId === newId) return { ok: false, affected: 0, error: "old and new ID are identical" };
+
+    const oldEntry = this.db.prepare("SELECT id, prefix FROM memories WHERE id = ?").get(oldId) as any;
+    if (!oldEntry) return { ok: false, affected: 0, error: `entry ${oldId} not found` };
+
+    const newExists = this.db.prepare("SELECT id FROM memories WHERE id = ?").get(newId) as any;
+    if (newExists) return { ok: false, affected: 0, error: `target ID ${newId} already exists` };
+
+    // Ensure same prefix
+    const oldPrefix = oldId.match(/^[A-Z]+/)?.[0];
+    const newPrefix = newId.match(/^[A-Z]+/)?.[0];
+    if (oldPrefix !== newPrefix) return { ok: false, affected: 0, error: `prefix mismatch: ${oldPrefix} vs ${newPrefix}` };
+
+    let affected = 0;
+
+    const doRename = this.db.transaction(() => {
+      // 1. Rename all child nodes: P0048.1.2 → P0052.1.2
+      const nodes = this.db.prepare(
+        "SELECT id, parent_id FROM memory_nodes WHERE root_id = ?"
+      ).all(oldId) as { id: string; parent_id: string }[];
+
+      for (const node of nodes) {
+        const newNodeId = node.id.replace(oldId, newId);
+        const newParentId = node.parent_id.replace(oldId, newId);
+        this.db.prepare(
+          "UPDATE memory_nodes SET id = ?, parent_id = ?, root_id = ? WHERE id = ?"
+        ).run(newNodeId, newParentId, newId, node.id);
+        affected++;
+      }
+
+      // 2. Rename root entry
+      this.db.prepare("UPDATE memories SET id = ? WHERE id = ?").run(newId, oldId);
+      affected++;
+
+      // 3. Rename tags (root + node tags)
+      const tags = this.db.prepare(
+        "SELECT entry_id, tag FROM memory_tags WHERE entry_id = ? OR entry_id LIKE ?"
+      ).all(oldId, `${oldId}.%`) as { entry_id: string; tag: string }[];
+
+      for (const t of tags) {
+        const newEntryId = t.entry_id === oldId ? newId : t.entry_id.replace(oldId, newId);
+        this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ? AND tag = ?").run(t.entry_id, t.tag);
+        this.db.prepare("INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)").run(newEntryId, t.tag);
+        affected++;
+      }
+
+      // 4. Rename FTS rowid-map
+      this.db.prepare(
+        "UPDATE hmem_fts_rowid_map SET root_id = ? WHERE root_id = ?"
+      ).run(newId, oldId);
+
+      const ftsNodes = this.db.prepare(
+        "SELECT fts_rowid, node_id FROM hmem_fts_rowid_map WHERE node_id LIKE ?"
+      ).all(`${oldId}.%`) as { fts_rowid: number; node_id: string }[];
+
+      for (const fn of ftsNodes) {
+        const newNodeId = fn.node_id.replace(oldId, newId);
+        this.db.prepare(
+          "UPDATE hmem_fts_rowid_map SET node_id = ? WHERE fts_rowid = ?"
+        ).run(newNodeId, fn.fts_rowid);
+      }
+
+      // 5. Rewrite links in OTHER entries that reference oldId
+      const linkRows = this.db.prepare(
+        "SELECT id, links FROM memories WHERE links IS NOT NULL AND links LIKE ?"
+      ).all(`%${oldId}%`) as { id: string; links: string }[];
+
+      for (const lr of linkRows) {
+        try {
+          const links = JSON.parse(lr.links) as string[];
+          const updated = links.map(l => l === oldId ? newId : l);
+          if (JSON.stringify(links) !== JSON.stringify(updated)) {
+            this.db.prepare("UPDATE memories SET links = ? WHERE id = ?")
+              .run(JSON.stringify(updated), lr.id === oldId ? newId : lr.id);
+            affected++;
+          }
+        } catch { /* skip malformed links */ }
+      }
+
+      // 6. Rewrite obsolete markers [✓oldId] in level_1 text
+      const obsoleteRows = this.db.prepare(
+        "SELECT id, level_1 FROM memories WHERE level_1 LIKE ?"
+      ).all(`%[✓${oldId}]%`) as { id: string; level_1: string }[];
+
+      for (const or_ of obsoleteRows) {
+        const newL1 = or_.level_1.replace(`[✓${oldId}]`, `[✓${newId}]`);
+        this.db.prepare("UPDATE memories SET level_1 = ? WHERE id = ?")
+          .run(newL1, or_.id === oldId ? newId : or_.id);
+        affected++;
+      }
+    });
+
+    doRename();
+    return { ok: true, affected };
   }
 
   private bumpNodeAccess(id: string): void {
