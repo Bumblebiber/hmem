@@ -26,6 +26,7 @@
  */
 
 import Database from "better-sqlite3";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { HmemConfig } from "./hmem-config.js";
@@ -2894,7 +2895,6 @@ export class HmemStore {
    * A new transcript_path means a new Claude Code session.
    */
   resolveSession(oId: string, transcriptPath: string): string {
-    const crypto = require("node:crypto") as typeof import("node:crypto");
     const hash = crypto.createHash("md5").update(oId).digest("hex").substring(0, 8);
     const stateFile = `/tmp/.hmem_session_${hash}.json`;
 
@@ -2965,6 +2965,7 @@ export class HmemStore {
     this.db.prepare(
       "INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, 3, ?, ?, ?, ?, ?)"
     ).run(batchId, sessionId, oId, seq, title, title, timestamp, timestamp);
+    this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, oId);
 
     return batchId;
   }

@@ -28,6 +28,9 @@ describe("resolveProjectO", () => {
     // Verify entry was created
     const entry = store.readEntry("O0001");
     expect(entry).toBeTruthy();
+    const rawLinks = store.readEntry("O0001")?.links;
+    expect(rawLinks).toBeTruthy();
+    expect(JSON.parse(rawLinks!)).toContain("P0001");
   });
 
   it("returns existing O if already exists", () => {
