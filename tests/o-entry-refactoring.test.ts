@@ -143,3 +143,75 @@ describe("resolveBatch (with appendExchangeV2)", () => {
     expect(b2).toBe("O0001.1.2"); // second batch
   });
 });
+
+describe("getOEntryExchangesV2", () => {
+  it("reads exchanges from new 5-level format", () => {
+    store.writeLinear("P", { l1: "test" }, ["#project"]);
+    const oId = store.resolveProjectO(1);
+    const sid = store.resolveSession(oId, "/tmp/t.jsonl");
+    const bid = store.resolveBatch(sid, oId, 5);
+
+    store.appendExchangeV2(bid, oId, "question 1", "answer 1");
+    store.appendExchangeV2(bid, oId, "question 2", "answer 2");
+
+    const exchanges = store.getOEntryExchangesV2(oId, 5);
+    expect(exchanges).toHaveLength(2);
+    expect(exchanges[0].userText).toBe("question 1");
+    expect(exchanges[0].agentText).toBe("answer 1");
+    expect(exchanges[1].userText).toBe("question 2");
+  });
+
+  it("skips #irrelevant exchanges", () => {
+    store.writeLinear("P", { l1: "test" }, ["#project"]);
+    const oId = store.resolveProjectO(1);
+    const sid = store.resolveSession(oId, "/tmp/t.jsonl");
+    const bid = store.resolveBatch(sid, oId, 5);
+
+    store.appendExchangeV2(bid, oId, "important", "answer");
+    const e2 = store.appendExchangeV2(bid, oId, "ok", "ok");
+    store.addTag(e2.id, "#irrelevant");
+
+    const exchanges = store.getOEntryExchangesV2(oId, 5, { skipIrrelevant: true });
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0].userText).toBe("important");
+  });
+
+  it("returns only title for #skill-dialog tagged exchanges", () => {
+    store.writeLinear("P", { l1: "test" }, ["#project"]);
+    const oId = store.resolveProjectO(1);
+    const sid = store.resolveSession(oId, "/tmp/t.jsonl");
+    const bid = store.resolveBatch(sid, oId, 5);
+
+    store.appendExchangeV2(bid, oId, "normal q", "normal a");
+    const e2 = store.appendExchangeV2(bid, oId, "brainstorm long content", "skill output");
+    store.addTag(e2.id, "#skill-dialog");
+
+    const exchanges = store.getOEntryExchangesV2(oId, 5, { titleOnlyTags: ["#skill-dialog"] });
+    expect(exchanges).toHaveLength(2);
+    expect(exchanges[0].userText).toBe("normal q");
+    expect(exchanges[1].userText).toBe(""); // title-only
+    expect(exchanges[1].title).toBeTruthy();
+  });
+
+  it("reads across multiple batches and sessions", () => {
+    store.writeLinear("P", { l1: "test" }, ["#project"]);
+    const oId = store.resolveProjectO(1);
+
+    const s1 = store.resolveSession(oId, "/tmp/t1.jsonl");
+    const b1 = store.resolveBatch(s1, oId, 2);
+    store.appendExchangeV2(b1, oId, "s1 q1", "s1 a1");
+    store.appendExchangeV2(b1, oId, "s1 q2", "s1 a2");
+
+    const b2 = store.resolveBatch(s1, oId, 2);
+    store.appendExchangeV2(b2, oId, "s1 q3", "s1 a3");
+
+    const s2 = store.resolveSession(oId, "/tmp/t2.jsonl");
+    const b3 = store.resolveBatch(s2, oId, 5);
+    store.appendExchangeV2(b3, oId, "s2 q1", "s2 a1");
+
+    const exchanges = store.getOEntryExchangesV2(oId, 10);
+    expect(exchanges).toHaveLength(4);
+    expect(exchanges[0].userText).toBe("s1 q1");
+    expect(exchanges[3].userText).toBe("s2 q1");
+  });
+});

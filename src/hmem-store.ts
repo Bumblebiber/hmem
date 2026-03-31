@@ -3007,6 +3007,62 @@ export class HmemStore {
     return { id: l4Id };
   }
 
+  getOEntryExchangesV2(
+    oId: string,
+    limit: number,
+    opts?: { skipIrrelevant?: boolean; titleOnlyTags?: string[] }
+  ): { nodeId: string; title: string; userText: string; agentText: string; created_at: string }[] {
+    if (limit <= 0) return [];
+
+    const excludeTags: string[] = [];
+    if (opts?.skipIrrelevant) excludeTags.push("#irrelevant");
+    const titleOnlyTags = opts?.titleOnlyTags ?? [];
+
+    // Get L4 exchange nodes, newest first
+    let query = `SELECT id, title, created_at FROM memory_nodes WHERE root_id = ? AND depth = 4`;
+    if (excludeTags.length > 0) {
+      const tagList = excludeTags.map(t => `'${t}'`).join(",");
+      query += ` AND id NOT IN (SELECT entry_id FROM memory_tags WHERE tag IN (${tagList}))`;
+    }
+    query += ` ORDER BY created_at DESC, id DESC LIMIT ?`;
+
+    const l4Nodes = this.db.prepare(query).all(oId, limit) as { id: string; title: string; created_at: string }[];
+
+    const exchanges: { nodeId: string; title: string; userText: string; agentText: string; created_at: string }[] = [];
+
+    for (const l4 of l4Nodes) {
+      let isTitleOnly = false;
+      if (titleOnlyTags.length > 0) {
+        const tagList = titleOnlyTags.map(t => `'${t}'`).join(",");
+        const hasTag = this.db.prepare(
+          `SELECT 1 FROM memory_tags WHERE entry_id = ? AND tag IN (${tagList}) LIMIT 1`
+        ).get(l4.id);
+        if (hasTag) isTitleOnly = true;
+      }
+
+      if (isTitleOnly) {
+        exchanges.push({ nodeId: l4.id, title: l4.title, userText: "", agentText: "", created_at: l4.created_at });
+      } else {
+        const l5User = this.db.prepare(
+          "SELECT content FROM memory_nodes WHERE parent_id = ? AND depth = 5 AND seq = 1 LIMIT 1"
+        ).get(l4.id) as { content: string } | undefined;
+        const l5Agent = this.db.prepare(
+          "SELECT content FROM memory_nodes WHERE parent_id = ? AND depth = 5 AND seq = 2 LIMIT 1"
+        ).get(l4.id) as { content: string } | undefined;
+
+        exchanges.push({
+          nodeId: l4.id,
+          title: l4.title,
+          userText: l5User?.content ?? "",
+          agentText: l5Agent?.content ?? "",
+          created_at: l4.created_at,
+        });
+      }
+    }
+
+    return exchanges.reverse(); // chronological order
+  }
+
   /** Read a single memory_nodes row by ID. Returns null if not found. */
   readNode(id: string): MemoryNode | null {
     return (this.db.prepare("SELECT * FROM memory_nodes WHERE id = ?").get(id) as MemoryNode) ?? null;
