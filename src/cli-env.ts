@@ -2,41 +2,27 @@
  * cli-env.ts
  *
  * Shared environment variable resolution for all hmem CLI commands.
- * Sets HMEM_PROJECT_DIR and HMEM_AGENT_ID defaults so CLI commands
- * work without a bash wrapper script (cross-platform, no Git Bash needed on Windows).
+ * Resolves HMEM_PATH (new) and HMEM_PROJECT_DIR (for company.hmem + config).
  */
 
-import fs from "node:fs";
 import path from "node:path";
-import os from "node:os";
+import { resolveHmemPathNew } from "./hmem-store.js";
 
 /**
- * Resolve HMEM_PROJECT_DIR and HMEM_AGENT_ID environment variables.
+ * Resolve HMEM_PATH and HMEM_PROJECT_DIR environment variables.
  *
- * - HMEM_PROJECT_DIR defaults to ~/.hmem
- * - HMEM_AGENT_ID is auto-detected from Agents/ directory if not set
+ * - HMEM_PATH: resolved via 3-step priority (env > CWD > ~/.hmem/memory.hmem)
+ * - HMEM_PROJECT_DIR: directory containing the resolved .hmem file
+ *   (used for company.hmem and hmem.config.json location)
  *
  * Call this early in any CLI command that needs these env vars.
  */
 export function resolveEnvDefaults(): void {
-  // HMEM_PROJECT_DIR: default to ~/.hmem
-  if (!process.env.HMEM_PROJECT_DIR) {
-    process.env.HMEM_PROJECT_DIR = process.env.COUNCIL_PROJECT_DIR || path.join(os.homedir(), ".hmem");
+  if (!process.env.HMEM_PATH) {
+    process.env.HMEM_PATH = resolveHmemPathNew();
   }
 
-  const projectDir = process.env.HMEM_PROJECT_DIR;
-
-  // HMEM_AGENT_ID: auto-detect from Agents/ directory
-  if (!process.env.HMEM_AGENT_ID && !process.env.COUNCIL_AGENT_ID) {
-    const agentsDir = path.join(projectDir, "Agents");
-    try {
-      const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          process.env.HMEM_AGENT_ID = entry.name;
-          break;
-        }
-      }
-    } catch {}
+  if (!process.env.HMEM_PROJECT_DIR) {
+    process.env.HMEM_PROJECT_DIR = path.dirname(process.env.HMEM_PATH);
   }
 }
