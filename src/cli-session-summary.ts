@@ -10,11 +10,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
-import { HmemStore, resolveHmemPath } from "./hmem-store.js";
+import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
 
-function buildMcpConfig(projectDir: string, agentId: string): string {
+function buildMcpConfig(projectDir: string, hmemPath: string): string {
   let hmemServerPath: string;
   try {
     hmemServerPath = execSync("which hmem", { encoding: "utf8" }).trim();
@@ -36,7 +36,7 @@ function buildMcpConfig(projectDir: string, agentId: string): string {
       hmem: {
         command: process.execPath,
         args: [hmemServerPath],
-        env: { HMEM_PROJECT_DIR: projectDir, HMEM_AGENT_ID: agentId, HMEM_NO_SESSION: "1" },
+        env: { HMEM_PROJECT_DIR: projectDir, HMEM_PATH: hmemPath, HMEM_NO_SESSION: "1" },
       },
     },
   };
@@ -53,12 +53,10 @@ export async function summarizeSession(sessionId: string): Promise<void> {
   }
 
   resolveEnvDefaults();
-  const projectDir = process.env.HMEM_PROJECT_DIR || process.env.COUNCIL_PROJECT_DIR;
+  const projectDir = process.env.HMEM_PROJECT_DIR!;
   if (!projectDir) process.exit(0);
 
-  const agentId = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "";
-  const templateName = agentId.replace(/_\d+$/, "");
-  const hmemPath = resolveHmemPath(projectDir, templateName);
+  const hmemPath = process.env.HMEM_PATH!;
   if (!fs.existsSync(hmemPath)) process.exit(0);
 
   const config = loadHmemConfig(path.dirname(hmemPath));
@@ -80,7 +78,7 @@ export async function summarizeSession(sessionId: string): Promise<void> {
 
     store.close();
 
-    mcpConfigPath = buildMcpConfig(projectDir, agentId);
+    mcpConfigPath = buildMcpConfig(projectDir, hmemPath);
 
     const prompt = `Summarize session ${sessionId}.
 

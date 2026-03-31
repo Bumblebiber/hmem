@@ -14,7 +14,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { resolveHmemPath } from "./hmem-store.js";
 import { resolveEnvDefaults } from "./cli-env.js";
 import { loadHmemConfig } from "./hmem-config.js";
 
@@ -95,25 +94,8 @@ async function getHmemStatus(): Promise<HmemStatus> {
   let status = empty;
   try {
     resolveEnvDefaults();
-    const projectDir = process.env.HMEM_PROJECT_DIR || process.env.COUNCIL_PROJECT_DIR;
-    if (!projectDir) return writeCache(empty);
-
-    const agentId = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "";
-    const templateName = agentId.replace(/_\d+$/, "");
-
-    let hmemPath: string;
-    try {
-      hmemPath = resolveHmemPath(projectDir, templateName);
-    } catch {
-      const agentsDir = path.join(projectDir, "Agents");
-      if (fs.existsSync(agentsDir)) {
-        for (const dir of fs.readdirSync(agentsDir)) {
-          const candidate = path.join(agentsDir, dir, `${dir}.hmem`);
-          if (fs.existsSync(candidate)) { hmemPath = candidate; break; }
-        }
-      }
-      if (!hmemPath!) return writeCache(empty);
-    }
+    const hmemPath = process.env.HMEM_PATH;
+    if (!hmemPath) return writeCache(empty);
 
     // Load config for checkpoint interval
     const hmemConfig = loadHmemConfig(path.dirname(hmemPath));

@@ -10,18 +10,18 @@
  * Usage: hmem checkpoint
  *
  * Requires env:
- *   HMEM_PROJECT_DIR — root directory for .hmem files
- *   HMEM_AGENT_ID    — agent identifier (optional, auto-detected)
+ *   HMEM_PATH        — path to .hmem file (auto-detected)
+ *   HMEM_PROJECT_DIR — directory for config + company.hmem
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
-import { HmemStore, resolveHmemPath } from "./hmem-store.js";
+import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 
 /** Build a minimal MCP config JSON for the subagent (hmem only). */
-function buildMcpConfig(projectDir: string, agentId: string): string {
+function buildMcpConfig(projectDir: string, hmemPath: string): string {
   // Find the hmem-mcp entry point
   let hmemServerPath: string;
   try {
@@ -51,7 +51,7 @@ function buildMcpConfig(projectDir: string, agentId: string): string {
         args: [hmemServerPath],
         env: {
           HMEM_PROJECT_DIR: projectDir,
-          HMEM_AGENT_ID: agentId,
+          HMEM_PATH: hmemPath,
           HMEM_NO_SESSION: "1",
         },
       },
@@ -64,12 +64,10 @@ function buildMcpConfig(projectDir: string, agentId: string): string {
 }
 
 export async function checkpoint(): Promise<void> {
-  const projectDir = process.env.HMEM_PROJECT_DIR || process.env.COUNCIL_PROJECT_DIR;
+  const projectDir = process.env.HMEM_PROJECT_DIR;
   if (!projectDir) process.exit(0);
 
-  const agentId = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "";
-  const templateName = agentId.replace(/_\d+$/, "");
-  const hmemPath = resolveHmemPath(projectDir, templateName);
+  const hmemPath = process.env.HMEM_PATH!;
   if (!fs.existsSync(hmemPath)) process.exit(0);
 
   const config = loadHmemConfig(path.dirname(hmemPath));
@@ -119,7 +117,7 @@ export async function checkpoint(): Promise<void> {
     store.close();
 
     // 7. Build MCP config and prompt
-    mcpConfigPath = buildMcpConfig(projectDir, agentId);
+    mcpConfigPath = buildMcpConfig(projectDir, hmemPath);
 
     const formattedExchanges = batchExchanges.map((ex, i) => {
       const user = ex.userText.length > 800 ? ex.userText.substring(0, 800) + "..." : ex.userText;
@@ -179,6 +177,8 @@ For each exchange, consider adding ONE tag if applicable:
 - #planning: Design/architecture discussion
 - #debugging: Bug hunting/fixing
 - #admin: Setup, config, infra work
+- #meta: Discussion ABOUT the project's tooling/memory/config, not actual project work (e.g. hmem config, sync issues, memory curation, entry cleanup)
+- #repetition: User repeating something already known/stored — redundant exchange, don't include in summary
 
 ### 6. Title session ${sessionId} (if generic)
 update_memory(id="${sessionId}", content="Session title summarizing key topics, max 60 chars")

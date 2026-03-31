@@ -14,8 +14,8 @@
  * Usage: hmem hook-startup
  *
  * Requires env:
- *   HMEM_PROJECT_DIR — root directory for .hmem files (default: ~/.hmem)
- *   HMEM_AGENT_ID    — agent identifier (optional, auto-detected)
+ *   HMEM_PATH        — path to .hmem file (auto-detected)
+ *   HMEM_PROJECT_DIR — directory for config + company.hmem
  */
 
 import fs from "node:fs";
@@ -46,16 +46,10 @@ export async function hookStartup(): Promise<void> {
   // Read config
   let interval = 20;
   let mode = "remind";
-  const projectDir = process.env.HMEM_PROJECT_DIR;
-  if (projectDir) {
+  const hmemPath = process.env.HMEM_PATH;
+  if (hmemPath) {
     try {
-      const agentId = process.env.HMEM_AGENT_ID || "";
-      const templateName = agentId.replace(/_\d+$/, "");
-      let configDir = projectDir;
-      if (templateName && templateName !== "UNKNOWN") {
-        const agentDir = path.join(projectDir, "Agents", templateName);
-        if (fs.existsSync(agentDir)) configDir = agentDir;
-      }
+      const configDir = path.dirname(hmemPath);
       const config = loadHmemConfig(configDir);
       interval = config.checkpointInterval;
       mode = config.checkpointMode;

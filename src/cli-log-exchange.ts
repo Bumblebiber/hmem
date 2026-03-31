@@ -9,15 +9,15 @@
  * Usage: echo '{"transcript_path":"...","last_assistant_message":"..."}' | hmem log-exchange
  *
  * Requires env:
- *   HMEM_PROJECT_DIR — root directory for .hmem files
- *   HMEM_AGENT_ID    — agent identifier (optional)
+ *   HMEM_PATH        — path to .hmem file (auto-detected)
+ *   HMEM_PROJECT_DIR — directory for config + company.hmem
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { HmemStore, resolveHmemPath } from "./hmem-store.js";
+import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
 
@@ -123,7 +123,7 @@ export async function logExchange(): Promise<void> {
     process.exit(0);
   }
 
-  // Resolve env defaults (HMEM_PROJECT_DIR, HMEM_AGENT_ID)
+  // Resolve env defaults (HMEM_PATH, HMEM_PROJECT_DIR)
   resolveEnvDefaults();
 
   // Guards
@@ -150,12 +150,10 @@ export async function logExchange(): Promise<void> {
   if (userMessage.startsWith("Generate a concise one-line title")) process.exit(0);
 
   // Open hmem store
-  const projectDir = process.env.HMEM_PROJECT_DIR || process.env.COUNCIL_PROJECT_DIR;
+  const projectDir = process.env.HMEM_PROJECT_DIR;
   if (!projectDir) process.exit(0);
 
-  const agentId = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "";
-  const templateName = agentId.replace(/_\d+$/, "");
-  const hmemPath = resolveHmemPath(projectDir, templateName);
+  const hmemPath = process.env.HMEM_PATH!;
   if (!fs.existsSync(hmemPath)) process.exit(0);
 
   const hmemConfig = loadHmemConfig(path.dirname(hmemPath));
@@ -193,7 +191,7 @@ export async function logExchange(): Promise<void> {
           const child = spawn(process.execPath, [HMEM_BIN, "checkpoint"], {
             detached: true,
             stdio: "ignore",
-            env: { ...process.env, HMEM_PROJECT_DIR: projectDir, HMEM_AGENT_ID: agentId },
+            env: { ...process.env, HMEM_PROJECT_DIR: projectDir, HMEM_PATH: process.env.HMEM_PATH },
           });
           child.unref();
         } else {

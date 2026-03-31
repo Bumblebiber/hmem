@@ -9,22 +9,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { HmemStore, resolveHmemPath } from "./hmem-store.js";
+import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
 
 export async function migrateOEntries(): Promise<void> {
   resolveEnvDefaults();
-  const projectDir = process.env.HMEM_PROJECT_DIR || process.env.COUNCIL_PROJECT_DIR;
-  if (!projectDir) {
-    console.error("HMEM_PROJECT_DIR not set");
-    process.exit(1);
-  }
-
-  const agentId = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "";
-  const templateName = agentId.replace(/_\d+$/, "");
-  const hmemPath = resolveHmemPath(projectDir, templateName);
-  if (!fs.existsSync(hmemPath)) {
+  const hmemPath = process.env.HMEM_PATH!;
+  if (!hmemPath || !fs.existsSync(hmemPath)) {
     console.error(`hmem file not found: ${hmemPath}`);
     process.exit(1);
   }

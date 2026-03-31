@@ -13,20 +13,20 @@
  * Usage: hmem context-inject  (reads stdin JSON from Claude Code hook)
  *
  * Requires env:
- *   HMEM_PROJECT_DIR — root directory for .hmem files
- *   HMEM_AGENT_ID    — agent identifier (optional)
+ *   HMEM_PATH        — path to .hmem file (auto-detected)
+ *   HMEM_PROJECT_DIR — directory for config + company.hmem
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
-import { openAgentMemory } from "./hmem-store.js";
+import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
 import type { AgentRole } from "./hmem-store.js";
 
 export async function contextInject(): Promise<void> {
-  // Resolve env defaults (HMEM_PROJECT_DIR, HMEM_AGENT_ID)
+  // Resolve env defaults (HMEM_PATH, HMEM_PROJECT_DIR)
   resolveEnvDefaults();
 
   const projectDir = process.env.HMEM_PROJECT_DIR || "";
@@ -40,13 +40,12 @@ export async function contextInject(): Promise<void> {
     fs.readFileSync(0, "utf-8");
   } catch { /* no stdin — OK */ }
 
-  const agentId = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "";
-  const templateName = agentId.replace(/_\d+$/, "");
+  const hmemPath = process.env.HMEM_PATH!;
   const config = loadHmemConfig(projectDir);
 
   let store;
   try {
-    store = openAgentMemory(projectDir, templateName, config);
+    store = new HmemStore(hmemPath, config);
   } catch (e) {
     process.stderr.write(`Failed to open memory: ${e}\n`);
     return;
