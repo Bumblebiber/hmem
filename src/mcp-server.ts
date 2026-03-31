@@ -1543,7 +1543,8 @@ server.tool(
 
 server.tool(
   "route_task",
-  "Multi-agent only: find the best agent for a task based on memory content. " +
+  "[DEPRECATED: route_task requires the legacy Agents/ directory structure. Future versions will use config-based agent discovery.]\n\n" +
+    "Multi-agent only: find the best agent for a task based on memory content. " +
     "Scans all agent .hmem files in the Agents/ directory and scores them against tags + keywords. " +
     "Only useful in multi-agent setups (Heimdall, Das Althing) — single-agent users should ignore this tool.\n\n" +
     "Example: route_task(tags=['#backend', '#sqlite'], keywords='connection pooling bug')\n" +

@@ -4730,6 +4730,9 @@ export interface AgentRouteResult {
 
 /**
  * Route a task to the best-matching agent based on memory content.
+ * @deprecated This function scans the Agents/ directory structure which is being phased out.
+ * Future versions will use a config-based file list instead.
+ *
  * Scans all agent .hmem files in the project directory and scores them
  * against the provided tags and/or search keywords.
  *
