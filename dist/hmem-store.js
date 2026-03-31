@@ -2400,6 +2400,16 @@ export class HmemStore {
         return this.db.prepare("SELECT id, title FROM memories WHERE prefix = 'P' AND active = 1 AND obsolete != 1 LIMIT 1").get() ?? null;
     }
     /**
+     * Get the second-to-last session (L2 node) under an O-entry.
+     * Used by the SessionStart hook to check if the previous session needs a summary.
+     * Returns null if fewer than 2 sessions exist.
+     */
+    getPreviousSession(oId) {
+        return this.db.prepare(`SELECT id, title, content FROM memory_nodes
+       WHERE root_id = ? AND depth = 2
+       ORDER BY seq DESC LIMIT 1 OFFSET 1`).get(oId) ?? null;
+    }
+    /**
      * Read a root entry from the memories table by ID. Returns null if not found.
      */
     readEntry(id) {

@@ -55,6 +55,12 @@ switch (command) {
     break;
   }
 
+  case "summarize-session": {
+    const { summarizeSession } = await import("./cli-session-summary.js");
+    await summarizeSession(process.argv[3] || "");
+    break;
+  }
+
   case "version":
   case "--version":
   case "-v": {

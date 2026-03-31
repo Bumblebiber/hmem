@@ -447,6 +447,16 @@ export declare class HmemStore {
         title: string;
     } | null;
     /**
+     * Get the second-to-last session (L2 node) under an O-entry.
+     * Used by the SessionStart hook to check if the previous session needs a summary.
+     * Returns null if fewer than 2 sessions exist.
+     */
+    getPreviousSession(oId: string): {
+        id: string;
+        title: string;
+        content: string;
+    } | null;
+    /**
      * Read a root entry from the memories table by ID. Returns null if not found.
      */
     readEntry(id: string): {

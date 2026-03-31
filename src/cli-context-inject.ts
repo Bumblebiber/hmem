@@ -18,6 +18,8 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
+import { execFileSync, spawn } from "node:child_process";
 import { openAgentMemory } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
@@ -81,6 +83,30 @@ export async function contextInject(): Promise<void> {
     lines.push(`\n(Context re-injected after /clear. Use load_project for full briefing, read_memory(id) to drill into specific entries.)`);
 
     process.stdout.write(lines.join("\n") + "\n");
+
+    // Check if the previous session needs a summary (async, non-blocking)
+    if (activeProject) {
+      try {
+        const projSeq = parseInt(activeProject.id.replace(/\D/g, ""), 10);
+        const oId = `O${String(projSeq).padStart(4, "0")}`;
+        const prevSession = store.getPreviousSession(oId);
+        if (prevSession && prevSession.content === prevSession.title) {
+          // No summary yet — resolve hmem binary and spawn async
+          let hmemBin: string;
+          try {
+            hmemBin = execFileSync("which", ["hmem"], { encoding: "utf8" }).trim();
+          } catch {
+            hmemBin = path.join(path.dirname(process.execPath), "hmem");
+          }
+          const child = spawn(hmemBin, ["summarize-session", prevSession.id], {
+            detached: true,
+            stdio: "ignore",
+            env: { ...process.env },
+          });
+          child.unref();
+        }
+      } catch { /* non-critical */ }
+    }
   } finally {
     store.close();
   }
