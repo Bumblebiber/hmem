@@ -3,16 +3,12 @@
  * hmem — Humanlike Memory MCP Server.
  *
  * Provides persistent, hierarchical memory for AI agents via MCP.
- * SQLite-backed, 5-level lazy loading, role-based access control.
+ * SQLite-backed, 5-level lazy loading.
  *
  * Environment variables:
- *   HMEM_PROJECT_DIR         — Root directory where .hmem files are stored (required)
- *   HMEM_AGENT_ID            — Agent identifier (optional; defaults to memory.hmem)
- *   HMEM_AGENT_ROLE          — Role: worker | al | pl | ceo (default: worker)
+ *   HMEM_PATH                — Full path to .hmem file (auto-resolved if not set)
+ *   HMEM_PROJECT_DIR         — Root directory (fallback: dirname of HMEM_PATH)
  *   HMEM_AUDIT_STATE_PATH    — Path to audit_state.json (default: {PROJECT_DIR}/audit_state.json)
- *
- * Legacy fallbacks (Das Althing):
- *   COUNCIL_PROJECT_DIR, COUNCIL_AGENT_ID, COUNCIL_AGENT_ROLE
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -24,48 +20,35 @@ import { fileURLToPath } from "node:url";
 import { spawnSync, spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import { searchMemory } from "./memory-search.js";
-import { openAgentMemory, openCompanyMemory, resolveHmemPath, routeTask, HmemStore } from "./hmem-store.js";
+import { openCompanyMemory, resolveHmemPath, resolveHmemPathNew, routeTask, HmemStore } from "./hmem-store.js";
 import type { AgentRole, MemoryEntry, MemoryNode } from "./hmem-store.js";
 import { loadHmemConfig, formatPrefixList, getSyncServers } from "./hmem-config.js";
 import type { HmemConfig } from "./hmem-config.js";
 import { SessionCache } from "./session-cache.js";
 
 // ---- Environment ----
-// HMEM_* vars are the canonical names; COUNCIL_* kept for backwards compatibility
-const PROJECT_DIR = process.env.HMEM_PROJECT_DIR || process.env.COUNCIL_PROJECT_DIR || "";
+const HMEM_PATH = process.env.HMEM_PATH || resolveHmemPathNew();
+const PROJECT_DIR = process.env.HMEM_PROJECT_DIR || path.dirname(HMEM_PATH);
+let DEPTH = parseInt(process.env.HMEM_DEPTH || "0", 10);
 
-if (!PROJECT_DIR) {
-  console.error("FATAL: HMEM_PROJECT_DIR not set");
-  process.exit(1);
-}
-
-// Empty string → resolveHmemPath uses memory.hmem (no agent name required)
-let AGENT_ID = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "";
-let DEPTH = parseInt(process.env.HMEM_DEPTH || process.env.COUNCIL_DEPTH || "0", 10);
-let ROLE = process.env.HMEM_AGENT_ROLE || process.env.COUNCIL_AGENT_ROLE || "worker";
-
-// Optional: PID-based identity override (used by Das Althing orchestrator)
+// Legacy: PID-based identity override (Das Althing orchestrator)
 const ppid = process.ppid;
 const ctxFile = path.join(PROJECT_DIR, "orchestrator", ".mcp_contexts", `${ppid}.json`);
 try {
   if (fs.existsSync(ctxFile)) {
     const ctx = JSON.parse(fs.readFileSync(ctxFile, "utf-8"));
-    AGENT_ID = ctx.agent_id || AGENT_ID;
     DEPTH = ctx.depth ?? DEPTH;
-    ROLE = ctx.role || ROLE;
   }
-} catch {
-  // Fallback to env vars — context file is optional
-}
+} catch {}
 
 function log(msg: string) {
-  console.error(`[hmem:${AGENT_ID || "default"}] ${msg}`);
+  const name = path.basename(HMEM_PATH, ".hmem");
+  console.error(`[hmem:${name}] ${msg}`);
 }
 
 // ---- Session-start mtime snapshot (for [NEW] markers) ----
 // Captured before any syncPull so we can detect entries created after our last local write.
-const _tmpl = AGENT_ID.replace(/_\d+$/, "");
-const _hmemPathAtStart = resolveHmemPath(PROJECT_DIR, _tmpl);
+const _hmemPathAtStart = HMEM_PATH;
 const dbMtimeAtStart: string | null = (() => {
   try {
     if (fs.existsSync(_hmemPathAtStart)) {
@@ -472,7 +455,7 @@ server.tool(
       .describe("Max results (default: 10)"),
   },
   async ({ query, scope, max_results }) => {
-    log(`search_memory: query="${query}", scope=${scope || "all"}, by=${AGENT_ID}`);
+    log(`search_memory: query="${query}", scope=${scope || "all"}`);
 
     const results = searchMemory(PROJECT_DIR, query, {
       scope: scope || "all",
@@ -572,9 +555,8 @@ server.tool(
     ),
   },
   async ({ prefix, content, links, favorite, tags, pinned, store: storeName, min_role: minRole, force }) => {
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
-    const agentRole = (ROLE || "worker") as AgentRole;
-    const isFirstTime = !AGENT_ID && !fs.existsSync(resolveHmemPath(PROJECT_DIR, ""));
+    const agentRole = "worker" as AgentRole;
+    const isFirstTime = !fs.existsSync(HMEM_PATH);
 
     // O-prefix is reserved for flush_context
     if (prefix.toUpperCase() === "O") {
@@ -626,7 +608,7 @@ server.tool(
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         // Warn if database is corrupted
         if (hmemStore.corrupted) {
@@ -641,14 +623,13 @@ server.tool(
         }
 
         const effectiveMinRole = storeName === "company" ? (minRole as AgentRole) : ("worker" as AgentRole);
-        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
-        if (storeName === "personal") syncPullThenPush(hmemPath);
+        if (storeName === "personal") syncPullThenPush(HMEM_PATH);
         const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite, tags, pinned, force);
-        const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
+        const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
         log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix}, min_role=${effectiveMinRole})`);
-        if (storeName === "personal") syncPush(hmemPath);
+        if (storeName === "personal") syncPush(HMEM_PATH);
         const firstTimeNote = isFirstTime
-          ? `\nMemory store created: ${hmemPath}\nTo use a custom name, set HMEM_AGENT_ID in your .mcp.json.`
+          ? `\nMemory store created: ${HMEM_PATH}`
           : "";
 
         return {
@@ -725,8 +706,7 @@ server.tool(
     ),
   },
   async ({ id, content, links, obsolete, favorite, irrelevant, tags, pinned, active, store: storeName }) => {
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
-    const agentRole = (ROLE || "worker") as AgentRole;
+    const agentRole = "worker" as AgentRole;
 
     if (storeName === "company") {
       const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
@@ -741,7 +721,7 @@ server.tool(
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         if (hmemStore.corrupted) {
           return {
@@ -750,10 +730,9 @@ server.tool(
           };
         }
 
-        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
-        if (storeName === "personal") syncPullThenPush(hmemPath);
+        if (storeName === "personal") syncPullThenPush(HMEM_PATH);
         const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant, tags, pinned, active);
-        const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
+        const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
         log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${irrelevant ? " (marked irrelevant)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}${active !== undefined ? ` (active=${active})` : ""}`);
 
         if (!ok) {
@@ -775,7 +754,7 @@ server.tool(
         if (active === true) parts.push("marked as [*] active");
         if (active === false) parts.push("active flag cleared");
         if (tags !== undefined) parts.push(tags.length > 0 ? `tags: ${tags.join(" ")}` : "tags cleared");
-        if (storeName === "personal") syncPush(hmemPath);
+        if (storeName === "personal") syncPush(HMEM_PATH);
         return { content: [{ type: "text" as const, text: parts.join(" | ") }] };
       } finally {
         hmemStore.close();
@@ -803,14 +782,12 @@ server.tool(
     store: z.enum(["personal", "company"]).default("personal"),
   },
   async ({ ids, irrelevant, favorite, active, pinned, store: storeName }) => {
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
-        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
-        if (storeName === "personal") syncPullThenPush(hmemPath);
+        if (storeName === "personal") syncPullThenPush(HMEM_PATH);
 
         let updated = 0;
         let notFound = 0;
@@ -820,7 +797,7 @@ server.tool(
           else notFound++;
         }
 
-        const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
+        const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
         const flags = [
           irrelevant !== undefined ? `irrelevant=${irrelevant}` : "",
           favorite !== undefined ? `favorite=${favorite}` : "",
@@ -829,7 +806,7 @@ server.tool(
         ].filter(Boolean).join(", ");
         log(`update_many [${storeLabel}]: ${updated}/${ids.length} updated (${flags})`);
 
-        if (storeName === "personal") syncPush(hmemPath);
+        if (storeName === "personal") syncPush(HMEM_PATH);
         const result = `Updated ${updated} of ${ids.length} entries (${flags})`;
         return {
           content: [{ type: "text" as const, text: notFound > 0 ? `${result}\n${notFound} not found` : result }],
@@ -878,19 +855,17 @@ server.tool(
     ),
   },
   async ({ l1, l2, l3, l4, l5, tags, links }) => {
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
     try {
-      const hmemStore = openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+      const hmemStore = new HmemStore(HMEM_PATH, hmemConfig);
       try {
-        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
-        syncPullThenPush(hmemPath);
+        syncPullThenPush(HMEM_PATH);
 
         const result = hmemStore.writeLinear("O", { l1, l2, l3, l4, l5 }, tags, links);
 
         const levels = [l1, l2, l3, l4, l5].filter(Boolean).length;
         log(`flush_context: ${result.id} (${levels} levels, ${tags.join(" ")})`);
 
-        syncPush(hmemPath);
+        syncPush(HMEM_PATH);
         return trackTokens({
           content: [{
             type: "text" as const,
@@ -938,8 +913,7 @@ server.tool(
     ),
   },
   async ({ id, content, store: storeName }) => {
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
-    const agentRole = (ROLE || "worker") as AgentRole;
+    const agentRole = "worker" as AgentRole;
 
     if (storeName === "company") {
       const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
@@ -954,7 +928,7 @@ server.tool(
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         if (hmemStore.corrupted) {
           return {
@@ -963,10 +937,9 @@ server.tool(
           };
         }
 
-        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
-        if (storeName === "personal") syncPullThenPush(hmemPath);
+        if (storeName === "personal") syncPullThenPush(HMEM_PATH);
         const result = hmemStore.appendChildren(id, content);
-        const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
+        const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
         log(`append_memory [${storeLabel}]: ${id} + ${result.count} nodes → [${result.ids.join(", ")}]`);
 
         if (result.count === 0) {
@@ -975,7 +948,7 @@ server.tool(
           };
         }
 
-        if (storeName === "personal") syncPush(hmemPath);
+        if (storeName === "personal") syncPush(HMEM_PATH);
         return {
           content: [{
             type: "text" as const,
@@ -1073,23 +1046,15 @@ server.tool(
     ),
   },
   async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator, show_all, tag, stale_days, context_for, min_tag_score }) => {
-    if (AGENT_ID === "UNKNOWN") {
-      return {
-        content: [{ type: "text" as const, text: "ERROR: Agent-ID unknown. read_memory is only available for spawned agents." }],
-        isError: true,
-      };
-    }
-
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
-    const agentRole = (ROLE || "worker") as AgentRole;
+    const agentRole = "worker" as AgentRole;
 
     // Pull before read to get latest from server (30s cooldown)
-    const newEntries = storeName === "personal" ? syncPull(resolveHmemPath(PROJECT_DIR, templateName)) : [];
+    const newEntries = storeName === "personal" ? syncPull(HMEM_PATH) : [];
 
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const corruptionWarning = hmemStore.corrupted
           ? "⚠ WARNING: Memory database is corrupted! Reads may be incomplete. A backup (.corrupt) was saved.\n\n"
@@ -1162,7 +1127,7 @@ server.tool(
             }
           }
 
-          const storeLabel = storeName === "company" ? "company" : templateName;
+          const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
           const output = lines.join("\n");
 
           // Add token estimate to header line (2nd line)
@@ -1215,10 +1180,10 @@ server.tool(
         if (entries.length === 0) {
           const hmemPath = storeName === "company"
             ? path.join(PROJECT_DIR, "company.hmem")
-            : resolveHmemPath(PROJECT_DIR, templateName);
+            : HMEM_PATH;
           const dbExists = fs.existsSync(hmemPath);
-          const label = storeName === "company" ? "company" : templateName;
-          const storeInfo = `\nStore: ${label} | Agent: ${templateName || "(none)"} | DB: ${hmemPath}${dbExists ? "" : " [FILE NOT FOUND]"}`;
+          const label = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
+          const storeInfo = `\nStore: ${label} | DB: ${hmemPath}${dbExists ? "" : " [FILE NOT FOUND]"}`;
 
           // Sync hint: if memory is empty and hmem-sync is not configured, suggest it
           let syncHint = "";
@@ -1256,7 +1221,7 @@ server.tool(
             : formatFlatOutput(entries, curator ?? false, expand ?? false);
 
         const stats = hmemStore.stats();
-        const storeLabel = storeName === "company" ? "company" : templateName;
+        const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
         const visibleCount = entries.length;
 
         // Cache status in header (when active)
@@ -1461,7 +1426,7 @@ server.tool(
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         if (format === "hmem") {
           const defaultPath = path.join(
@@ -1506,7 +1471,7 @@ server.tool(
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const result = hmemStore.importFromHmem(source_path, dry_run);
         const mode = dry_run ? "preview" : "imported";
@@ -1549,16 +1514,15 @@ server.tool(
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const s = hmemStore.getStats();
-        const agentName = AGENT_ID.replace(/_\d+$/, "");
         const hmemPath = storeName === "company"
           ? path.join(PROJECT_DIR, "company.hmem")
-          : resolveHmemPath(PROJECT_DIR, agentName);
+          : HMEM_PATH;
         const lines: string[] = [];
         lines.push(`Memory stats (${storeName}):`);
-        lines.push(`  Agent: ${agentName || "(none)"} | DB: ${hmemPath}`);
+        lines.push(`  DB: ${hmemPath}`);
         lines.push(`  Total entries: ${s.totalEntries}`);
         const prefixLine = Object.entries(s.byPrefix).map(([p, c]) => `${p}:${c}`).join(", ");
         if (prefixLine) lines.push(`  By prefix: ${prefixLine}`);
@@ -1600,7 +1564,7 @@ server.tool(
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const results = hmemStore.findRelatedCombined(id, limit);
         if (results.length === 0) {
@@ -1681,10 +1645,9 @@ server.tool(
   },
   async ({ id, store: storeName }) => {
     try {
-      const templateName = AGENT_ID.replace(/_\d+$/, "");
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         // Validate it's a P-entry
         if (!id.startsWith("P")) {
@@ -1702,7 +1665,7 @@ server.tool(
           id,
           depth: 3,
           expand: true,
-          agentRole: (ROLE || "worker") as AgentRole,
+          agentRole: "worker" as AgentRole,
         });
 
         if (entries.length === 0) {
@@ -1790,7 +1753,7 @@ server.tool(
         const ruleEntries = hmemStore.read({
           prefix: "R",
           depth: 1,
-          agentRole: (ROLE || "worker") as AgentRole,
+          agentRole: "worker" as AgentRole,
         }).filter(r => !r.obsolete && !r.irrelevant);
         if (ruleEntries.length > 0) {
           lines.push("  Rules:");
@@ -1818,7 +1781,7 @@ server.tool(
         // Inject universal conventions (C-entries tagged #universal)
         try {
           const conventions = hmemStore.read({
-            prefix: "C", depth: 2, agentRole: (ROLE || "worker") as AgentRole,
+            prefix: "C", depth: 2, agentRole: "worker" as AgentRole,
           }).filter(c => !c.obsolete && !c.irrelevant && c.tags?.includes("#universal"));
           if (conventions.length > 0) {
             lines.push("  Conventions (#universal):");
@@ -1839,8 +1802,7 @@ server.tool(
         log(`load_project: ${id} activated and loaded (depth=3)`);
 
         // Sync if enabled
-        const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
-        if (storeName === "personal") syncPush(hmemPath);
+        if (storeName === "personal") syncPush(HMEM_PATH);
 
         return trackTokens({
           content: [{
@@ -1871,7 +1833,7 @@ server.tool(
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const h = hmemStore.healthCheck();
         const lines: string[] = [`Memory health report (${storeName}):`];
@@ -1950,7 +1912,7 @@ server.tool(
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const count = hmemStore.tagBulk(filter, add_tags, remove_tags);
         const added = add_tags?.length ? `+[${add_tags.join(", ")}]` : "";
@@ -1983,7 +1945,7 @@ server.tool(
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const count = hmemStore.tagRename(old_tag, new_tag);
         return {
@@ -2018,7 +1980,7 @@ server.tool(
     try {
       const hmemStore = store === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const result = hmemStore.moveNode(source_id, target_parent_id);
         const idLines = Object.entries(result.idMap)
@@ -2054,7 +2016,7 @@ server.tool(
     try {
       const hmemStore = store === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const result = hmemStore.renameId(old_id, new_id);
         if (!result.ok) {
@@ -2088,7 +2050,7 @@ server.tool(
     try {
       const hmemStore = store === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const projects = hmemStore.listProjects();
         const text = projects.map(p => `${p.id} ${p.title}`).join("\n");
@@ -2116,7 +2078,7 @@ server.tool(
     try {
       const hmemStore = store === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const result = hmemStore.moveNodes(node_ids, target_o_id);
         let text = `Moved ${result.moved} node(s) to ${target_o_id}.`;
@@ -2156,7 +2118,7 @@ function saveAuditState(state: Record<string, string>): void {
 }
 
 function isCurator(): boolean {
-  return ROLE === "ceo";
+  return process.env.HMEM_AGENT_ROLE === "ceo";
 }
 
 server.tool(
@@ -2971,13 +2933,11 @@ async function main() {
   await server.connect(transport);
 
   // Startup diagnostics — helps debug "0 entries" issues
-  const templateName = AGENT_ID.replace(/_\d+$/, "");
-  const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
-  const dbExists = fs.existsSync(hmemPath);
+  const dbExists = fs.existsSync(HMEM_PATH);
   let entryCount = 0;
   if (dbExists) {
     try {
-      const store = openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+      const store = new HmemStore(HMEM_PATH, hmemConfig);
       try {
         entryCount = store.stats().total;
         // Reset all active markers — each session starts neutral, agent picks project
@@ -2986,15 +2946,11 @@ async function main() {
     } catch {}
   }
   if (!dbExists) {
-    log(`WARNING: DB not found at ${hmemPath}`);
-    if (templateName && templateName !== "UNKNOWN") {
-      log(`  HMEM_AGENT_ID="${templateName}" → expects: ${PROJECT_DIR}/Agents/${templateName}/${templateName}.hmem`);
-      log(`  Without HMEM_AGENT_ID: would use ${PROJECT_DIR}/memory.hmem`);
-    }
-    log(`  Check HMEM_PROJECT_DIR and HMEM_AGENT_ID in your .mcp.json`);
+    log(`WARNING: DB not found at ${HMEM_PATH}`);
+    log(`  Check HMEM_PATH in your .mcp.json (current: ${HMEM_PATH})`);
     log(`  The DB will be created on first write_memory() call.`);
   }
-  log(`MCP Server running on stdio | Agent: ${templateName || "(none)"} | Role: ${ROLE || "worker"} | DB: ${hmemPath}${dbExists ? ` (${entryCount} entries)` : " [NOT FOUND — see warnings above]"}`);
+  log(`MCP Server running on stdio | DB: ${HMEM_PATH}${dbExists ? ` (${entryCount} entries)` : " [NOT FOUND]"}`);
 
   checkForUpdates();
 }
