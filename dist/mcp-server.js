@@ -97,7 +97,7 @@ function resolveHmemSyncBin() {
     try {
         // Try which/where to find the hmem-sync script
         const cmd = process.platform === "win32" ? "where" : "which";
-        const result = spawnSync(cmd, ["hmem-sync"], { encoding: "utf8", shell: false, windowsHide: true });
+        const result = spawnSync(cmd, ["hmem-sync"], { encoding: "utf8", shell: true, windowsHide: true });
         if (result.stdout) {
             const binPath = result.stdout.trim().split(/\r?\n/)[0];
             if (binPath.endsWith(".cmd") || binPath.endsWith(".ps1")) {
