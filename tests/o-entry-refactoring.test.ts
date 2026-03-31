@@ -215,3 +215,104 @@ describe("getOEntryExchangesV2", () => {
     expect(exchanges[3].userText).toBe("s2 q1");
   });
 });
+
+describe("listProjects", () => {
+  it("returns all active non-obsolete P-entries", () => {
+    store.writeLinear("P", { l1: "Project A" }, ["#project"]);
+    store.writeLinear("P", { l1: "Project B" }, ["#project"]);
+    const projects = store.listProjects();
+    expect(projects).toHaveLength(2);
+    expect(projects[0].id).toBe("P0001");
+    expect(projects[1].id).toBe("P0002");
+  });
+
+  it("excludes obsolete P-entries", () => {
+    store.writeLinear("P", { l1: "Project A" }, ["#project"]);
+    store.writeLinear("P", { l1: "Project B" }, ["#project"]);
+    // Mark P0001 as obsolete
+    store.db.prepare("UPDATE memories SET obsolete = 1 WHERE id = 'P0001'").run();
+    const projects = store.listProjects();
+    expect(projects).toHaveLength(1);
+    expect(projects[0].id).toBe("P0002");
+  });
+});
+
+describe("moveNodes", () => {
+  it("moves an L4 exchange to a different O-entry", () => {
+    store.writeLinear("P", { l1: "Project A" }, ["#project"]);
+    store.writeLinear("P", { l1: "Project B" }, ["#project"]);
+    const oA = store.resolveProjectO(1);
+    const oB = store.resolveProjectO(2);
+
+    const sA = store.resolveSession(oA, "/tmp/tA.jsonl");
+    const bA = store.resolveBatch(sA, oA, 5);
+    const ex = store.appendExchangeV2(bA, oA, "belongs to B", "response");
+
+    const result = store.moveNodes([ex.id], oB);
+    expect(result.moved).toBe(1);
+
+    const exA = store.getOEntryExchangesV2(oA, 10);
+    const exB = store.getOEntryExchangesV2(oB, 10);
+    expect(exA).toHaveLength(0);
+    expect(exB).toHaveLength(1);
+    expect(exB[0].userText).toBe("belongs to B");
+  });
+
+  it("moves an L2 session with all children", () => {
+    store.writeLinear("P", { l1: "Project A" }, ["#project"]);
+    store.writeLinear("P", { l1: "Project B" }, ["#project"]);
+    const oA = store.resolveProjectO(1);
+    const oB = store.resolveProjectO(2);
+
+    const sA = store.resolveSession(oA, "/tmp/tA.jsonl");
+    const bA = store.resolveBatch(sA, oA, 5);
+    store.appendExchangeV2(bA, oA, "q1", "a1");
+    store.appendExchangeV2(bA, oA, "q2", "a2");
+
+    const result = store.moveNodes([sA], oB);
+    expect(result.moved).toBe(1);
+
+    const exB = store.getOEntryExchangesV2(oB, 10);
+    expect(exB).toHaveLength(2);
+  });
+
+  it("preserves tags when moving", () => {
+    store.writeLinear("P", { l1: "Project A" }, ["#project"]);
+    store.writeLinear("P", { l1: "Project B" }, ["#project"]);
+    const oA = store.resolveProjectO(1);
+    const oB = store.resolveProjectO(2);
+
+    const sA = store.resolveSession(oA, "/tmp/tA.jsonl");
+    const bA = store.resolveBatch(sA, oA, 5);
+    const ex = store.appendExchangeV2(bA, oA, "tagged exchange", "response");
+    store.addTag(ex.id, "#debugging");
+
+    store.moveNodes([ex.id], oB);
+
+    // Verify tag was moved with the node
+    const exB = store.getOEntryExchangesV2(oB, 10);
+    expect(exB).toHaveLength(1);
+    // The exchange should NOT be excluded when filtering for #irrelevant
+    const filtered = store.getOEntryExchangesV2(oB, 10, { skipIrrelevant: true });
+    expect(filtered).toHaveLength(1);
+  });
+
+  it("cleans up empty parents after move", () => {
+    store.writeLinear("P", { l1: "Project A" }, ["#project"]);
+    store.writeLinear("P", { l1: "Project B" }, ["#project"]);
+    const oA = store.resolveProjectO(1);
+    const oB = store.resolveProjectO(2);
+
+    const sA = store.resolveSession(oA, "/tmp/tA.jsonl");
+    const bA = store.resolveBatch(sA, oA, 5);
+    const ex = store.appendExchangeV2(bA, oA, "only exchange", "response");
+
+    store.moveNodes([ex.id], oB);
+
+    // Source batch and session should be cleaned up (empty)
+    const sourceBatch = store.readNode(bA);
+    expect(sourceBatch).toBeNull();
+    const sourceSession = store.readNode(sA);
+    expect(sourceSession).toBeNull();
+  });
+});

@@ -107,6 +107,7 @@ export interface MemoryNode {
   title: string;
   content: string;
   created_at: string;
+  updated_at?: string;
   access_count: number;
   last_accessed: string | null;
   favorite?: boolean;       // true if marked as a favorite
@@ -3096,6 +3097,229 @@ export class HmemStore {
        LIMIT 1`
     ).get(rootId, depth, `%${pattern}%`, `%${pattern}%`) as { id: string } | undefined;
     return row?.id ?? null;
+  }
+
+  /**
+   * Return all non-obsolete P-entries with just id + title.
+   */
+  listProjects(): { id: string; title: string }[] {
+    return this.db.prepare(
+      "SELECT id, title FROM memories WHERE prefix = 'P' AND seq > 0 AND obsolete != 1 ORDER BY seq"
+    ).all() as { id: string; title: string }[];
+  }
+
+  /**
+   * Move L2 (sessions), L3 (batches), or L4 (exchanges) between O-entries.
+   * Rewrites all IDs in the subtree (node + children + tags + FTS).
+   */
+  moveNodes(nodeIds: string[], targetOId: string): { moved: number; errors: string[] } {
+    let moved = 0;
+    const errors: string[] = [];
+
+    const doMove = this.db.transaction(() => {
+      for (const nodeId of nodeIds) {
+        const node = this.readNode(nodeId);
+        if (!node) {
+          errors.push(`Node ${nodeId} not found`);
+          continue;
+        }
+
+        const sourceOId = node.root_id;
+        if (sourceOId === targetOId) {
+          errors.push(`Node ${nodeId} already belongs to ${targetOId}`);
+          continue;
+        }
+
+        // Determine the depth and figure out the new parent
+        if (node.depth === 2) {
+          // L2 session — re-parent directly under target O
+          this._moveSubtree(nodeId, sourceOId, targetOId, targetOId, 2);
+        } else if (node.depth === 3) {
+          // L3 batch — find/create session in target O
+          const sessionId = this._findOrCreateSessionForDate(targetOId, node.created_at.substring(0, 10));
+          this._moveSubtree(nodeId, sourceOId, targetOId, sessionId, 3);
+        } else if (node.depth === 4) {
+          // L4 exchange — find/create session + batch in target O
+          const sessionId = this._findOrCreateSessionForDate(targetOId, node.created_at.substring(0, 10));
+          const batchId = this._findOrCreateBatchForDate(sessionId, targetOId, node.created_at.substring(0, 10));
+          this._moveSubtree(nodeId, sourceOId, targetOId, batchId, 4);
+        } else {
+          errors.push(`Cannot move node ${nodeId} at depth ${node.depth} — only L2-L4 supported`);
+          continue;
+        }
+
+        // Clean up empty parents in the source O-entry
+        this._cleanupEmptyParents(sourceOId);
+        moved++;
+      }
+    });
+
+    doMove();
+    return { moved, errors };
+  }
+
+  /**
+   * Find an existing L2 session created on the given date, or create a new one.
+   */
+  private _findOrCreateSessionForDate(oId: string, dateIso: string): string {
+    // Look for existing session created on this date
+    const existing = this.db.prepare(
+      `SELECT id FROM memory_nodes WHERE parent_id = ? AND depth = 2
+       AND created_at LIKE ? ORDER BY seq DESC LIMIT 1`
+    ).get(oId, `${dateIso}%`) as { id: string } | undefined;
+
+    if (existing) return existing.id;
+
+    // Create new session
+    const maxSeqRow = this.db.prepare(
+      `SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`
+    ).get(oId + ".", oId + ".%", oId + ".%.%") as { m: number | null };
+    const seq = (maxSeqRow?.m ?? 0) + 1;
+    const sessionId = `${oId}.${seq}`;
+    const timestamp = new Date().toISOString();
+    const title = `Session ${dateIso}`;
+
+    this.db.prepare(
+      "INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, 2, ?, ?, ?, ?, ?)"
+    ).run(sessionId, oId, oId, seq, title, title, timestamp, timestamp);
+    this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, oId);
+
+    return sessionId;
+  }
+
+  /**
+   * Find a batch under the session with room, or create a new one.
+   */
+  private _findOrCreateBatchForDate(sessionId: string, oId: string, _dateIso: string): string {
+    const batchSize = this.cfg.checkpointInterval || 5;
+
+    // Find latest batch with room
+    const latestBatch = this.db.prepare(
+      "SELECT id FROM memory_nodes WHERE parent_id = ? AND depth = 3 ORDER BY seq DESC LIMIT 1"
+    ).get(sessionId) as { id: string } | undefined;
+
+    if (latestBatch) {
+      const countRow = this.db.prepare(
+        "SELECT COUNT(*) as n FROM memory_nodes WHERE parent_id = ? AND depth = 4"
+      ).get(latestBatch.id) as { n: number };
+      if (countRow.n < batchSize) return latestBatch.id;
+    }
+
+    // Create new batch
+    const maxSeqRow = this.db.prepare(
+      `SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`
+    ).get(sessionId + ".", sessionId + ".%", sessionId + ".%.%") as { m: number | null };
+    const seq = (maxSeqRow?.m ?? 0) + 1;
+    const batchId = `${sessionId}.${seq}`;
+    const timestamp = new Date().toISOString();
+    const title = `Batch ${seq}`;
+
+    this.db.prepare(
+      "INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, 3, ?, ?, ?, ?, ?)"
+    ).run(batchId, sessionId, oId, seq, title, title, timestamp, timestamp);
+    this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, oId);
+
+    return batchId;
+  }
+
+  /**
+   * Move a subtree (node + all descendants) to a new parent in the target O-entry.
+   * Rewrites all IDs, parent_ids, root_ids, tags, and FTS rowid map entries.
+   */
+  private _moveSubtree(nodeId: string, sourceOId: string, targetOId: string, newParentId: string, depth: number): void {
+    // 1. Get all nodes in subtree (nodeId itself + all descendants)
+    const subtreeNodes = this.db.prepare(
+      "SELECT id, parent_id, root_id, depth, seq, title, content, created_at, updated_at, access_count, last_accessed FROM memory_nodes WHERE id = ? OR id LIKE ?"
+    ).all(nodeId, `${nodeId}.%`) as MemoryNode[];
+
+    // 2. Calculate next seq under new parent (direct children only)
+    const maxSeqRow = this.db.prepare(
+      `SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`
+    ).get(newParentId + ".", newParentId + ".%", newParentId + ".%.%") as { m: number | null };
+    const newSeq = (maxSeqRow?.m ?? 0) + 1;
+
+    // 3. Build old prefix -> new prefix mapping
+    const newNodeId = `${newParentId}.${newSeq}`;
+    const oldPrefix = nodeId;
+    const newPrefix = newNodeId;
+
+    // 4. For each node in the subtree: delete old, insert new
+    const deleteStmt = this.db.prepare("DELETE FROM memory_nodes WHERE id = ?");
+    const insertStmt = this.db.prepare(
+      "INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at, access_count, last_accessed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+
+    for (const n of subtreeNodes) {
+      const nNewId = n.id === oldPrefix ? newPrefix : n.id.replace(oldPrefix, newPrefix);
+      const nNewParentId = n.id === oldPrefix ? newParentId : n.parent_id.replace(oldPrefix, newPrefix);
+      const nNewDepth = n.depth + (depth - (subtreeNodes.find(s => s.id === nodeId)!.depth));
+
+      // Delete old node
+      deleteStmt.run(n.id);
+
+      // Insert new node
+      insertStmt.run(
+        nNewId, nNewParentId, targetOId,
+        nNewDepth, n.id === oldPrefix ? newSeq : n.seq,
+        n.title, n.content, n.created_at, n.updated_at ?? n.created_at,
+        n.access_count ?? 0, n.last_accessed ?? null
+      );
+
+      // 5. Update tags: DELETE old + INSERT new
+      const tags = this.db.prepare(
+        "SELECT tag FROM memory_tags WHERE entry_id = ?"
+      ).all(n.id) as { tag: string }[];
+
+      if (tags.length > 0) {
+        this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ?").run(n.id);
+        for (const t of tags) {
+          this.db.prepare("INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)").run(nNewId, t.tag);
+        }
+      }
+
+      // 6. Update FTS rowid map
+      this.db.prepare(
+        "UPDATE hmem_fts_rowid_map SET root_id = ?, node_id = ? WHERE node_id = ?"
+      ).run(targetOId, nNewId, n.id);
+    }
+
+    // Update target O-entry updated_at
+    const timestamp = new Date().toISOString();
+    this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, targetOId);
+  }
+
+  /**
+   * Remove empty L2 (sessions) and L3 (batches) nodes in an O-entry.
+   */
+  private _cleanupEmptyParents(oId: string): void {
+    // Clean up empty L3 batches (no L4 children)
+    const emptyBatches = this.db.prepare(
+      `SELECT n.id FROM memory_nodes n
+       WHERE n.root_id = ? AND n.depth = 3
+       AND NOT EXISTS (SELECT 1 FROM memory_nodes c WHERE c.parent_id = n.id)`
+    ).all(oId) as { id: string }[];
+
+    for (const b of emptyBatches) {
+      this.db.prepare("DELETE FROM memory_nodes WHERE id = ?").run(b.id);
+      this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ?").run(b.id);
+      this.db.prepare("DELETE FROM hmem_fts_rowid_map WHERE node_id = ?").run(b.id);
+    }
+
+    // Clean up empty L2 sessions (no L3 children)
+    const emptySessions = this.db.prepare(
+      `SELECT n.id FROM memory_nodes n
+       WHERE n.root_id = ? AND n.depth = 2
+       AND NOT EXISTS (SELECT 1 FROM memory_nodes c WHERE c.parent_id = n.id)`
+    ).all(oId) as { id: string }[];
+
+    for (const s of emptySessions) {
+      this.db.prepare("DELETE FROM memory_nodes WHERE id = ?").run(s.id);
+      this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ?").run(s.id);
+      this.db.prepare("DELETE FROM hmem_fts_rowid_map WHERE node_id = ?").run(s.id);
+    }
   }
 
   bumpAccess(id: string): void {

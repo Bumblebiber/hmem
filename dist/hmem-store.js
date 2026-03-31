@@ -25,6 +25,7 @@
  *   depth parameter is IGNORED for ID-based queries.
  */
 import Database from "better-sqlite3";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_CONFIG, DEFAULT_PREFIX_DESCRIPTIONS } from "./hmem-config.js";
@@ -2430,7 +2431,6 @@ export class HmemStore {
      * A new transcript_path means a new Claude Code session.
      */
     resolveSession(oId, transcriptPath) {
-        const crypto = require("node:crypto");
         const hash = crypto.createHash("md5").update(oId).digest("hex").substring(0, 8);
         const stateFile = `/tmp/.hmem_session_${hash}.json`;
         // Check cached state
@@ -2482,7 +2482,84 @@ export class HmemStore {
         const timestamp = new Date().toISOString();
         const title = `Batch ${seq}`;
         this.db.prepare("INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, 3, ?, ?, ?, ?, ?)").run(batchId, sessionId, oId, seq, title, title, timestamp, timestamp);
+        this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, oId);
         return batchId;
+    }
+    /**
+     * Append a V2 exchange (3-node chain) under a batch (L3 node).
+     * Creates:
+     *   L4: exchange node — title auto-extracted from userText
+     *   L5.1: user message (raw userText)
+     *   L5.2: agent message (raw agentText)
+     */
+    appendExchangeV2(batchId, oId, userText, agentText) {
+        this.guardCorrupted();
+        const timestamp = new Date().toISOString();
+        // Next seq under batch (direct children only)
+        const maxSeqRow = this.db.prepare(`SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`).get(batchId + ".", batchId + ".%", batchId + ".%.%");
+        const seq = (maxSeqRow?.m ?? 0) + 1;
+        const title = this.autoExtractTitle(userText.split("\n")[0].replace(/[<>\[\]]/g, ""));
+        const l4Id = `${batchId}.${seq}`;
+        const l5UserId = `${l4Id}.1`;
+        const l5AgentId = `${l4Id}.2`;
+        const insertNode = this.db.prepare("INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        this.db.transaction(() => {
+            insertNode.run(l4Id, batchId, oId, 4, seq, title, title, timestamp, timestamp);
+            insertNode.run(l5UserId, l4Id, oId, 5, 1, this.autoExtractTitle(userText), userText, timestamp, timestamp);
+            insertNode.run(l5AgentId, l4Id, oId, 5, 2, this.autoExtractTitle(agentText), agentText, timestamp, timestamp);
+            this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, oId);
+        })();
+        return { id: l4Id };
+    }
+    getOEntryExchangesV2(oId, limit, opts) {
+        if (limit <= 0)
+            return [];
+        const excludeTags = [];
+        if (opts?.skipIrrelevant)
+            excludeTags.push("#irrelevant");
+        const titleOnlyTags = opts?.titleOnlyTags ?? [];
+        // Get L4 exchange nodes, newest first
+        let query = `SELECT id, title, created_at FROM memory_nodes WHERE root_id = ? AND depth = 4`;
+        if (excludeTags.length > 0) {
+            const tagList = excludeTags.map(t => `'${t}'`).join(",");
+            query += ` AND id NOT IN (SELECT entry_id FROM memory_tags WHERE tag IN (${tagList}))`;
+        }
+        query += ` ORDER BY created_at DESC, id DESC LIMIT ?`;
+        const l4Nodes = this.db.prepare(query).all(oId, limit);
+        const exchanges = [];
+        for (const l4 of l4Nodes) {
+            let isTitleOnly = false;
+            if (titleOnlyTags.length > 0) {
+                const tagList = titleOnlyTags.map(t => `'${t}'`).join(",");
+                const hasTag = this.db.prepare(`SELECT 1 FROM memory_tags WHERE entry_id = ? AND tag IN (${tagList}) LIMIT 1`).get(l4.id);
+                if (hasTag)
+                    isTitleOnly = true;
+            }
+            if (isTitleOnly) {
+                exchanges.push({ nodeId: l4.id, title: l4.title, userText: "", agentText: "", created_at: l4.created_at });
+            }
+            else {
+                const l5User = this.db.prepare("SELECT content FROM memory_nodes WHERE parent_id = ? AND depth = 5 AND seq = 1 LIMIT 1").get(l4.id);
+                const l5Agent = this.db.prepare("SELECT content FROM memory_nodes WHERE parent_id = ? AND depth = 5 AND seq = 2 LIMIT 1").get(l4.id);
+                exchanges.push({
+                    nodeId: l4.id,
+                    title: l4.title,
+                    userText: l5User?.content ?? "",
+                    agentText: l5Agent?.content ?? "",
+                    created_at: l4.created_at,
+                });
+            }
+        }
+        return exchanges.reverse(); // chronological order
+    }
+    /** Read a single memory_nodes row by ID. Returns null if not found. */
+    readNode(id) {
+        return this.db.prepare("SELECT * FROM memory_nodes WHERE id = ?").get(id) ?? null;
+    }
+    /** Return all direct children of a node, ordered by seq. */
+    getChildNodes(parentId) {
+        return this.db.prepare("SELECT * FROM memory_nodes WHERE parent_id = ? ORDER BY seq").all(parentId);
     }
     /** Find a child node by content/title pattern. Returns node ID or null. */
     findChildNode(parentId, pattern, depth) {
@@ -2501,6 +2578,166 @@ export class HmemStore {
        AND (LOWER(content) LIKE ? OR LOWER(title) LIKE ?)
        LIMIT 1`).get(rootId, depth, `%${pattern}%`, `%${pattern}%`);
         return row?.id ?? null;
+    }
+    /**
+     * Return all non-obsolete P-entries with just id + title.
+     */
+    listProjects() {
+        return this.db.prepare("SELECT id, title FROM memories WHERE prefix = 'P' AND seq > 0 AND obsolete != 1 ORDER BY seq").all();
+    }
+    /**
+     * Move L2 (sessions), L3 (batches), or L4 (exchanges) between O-entries.
+     * Rewrites all IDs in the subtree (node + children + tags + FTS).
+     */
+    moveNodes(nodeIds, targetOId) {
+        let moved = 0;
+        const errors = [];
+        const doMove = this.db.transaction(() => {
+            for (const nodeId of nodeIds) {
+                const node = this.readNode(nodeId);
+                if (!node) {
+                    errors.push(`Node ${nodeId} not found`);
+                    continue;
+                }
+                const sourceOId = node.root_id;
+                if (sourceOId === targetOId) {
+                    errors.push(`Node ${nodeId} already belongs to ${targetOId}`);
+                    continue;
+                }
+                // Determine the depth and figure out the new parent
+                if (node.depth === 2) {
+                    // L2 session — re-parent directly under target O
+                    this._moveSubtree(nodeId, sourceOId, targetOId, targetOId, 2);
+                }
+                else if (node.depth === 3) {
+                    // L3 batch — find/create session in target O
+                    const sessionId = this._findOrCreateSessionForDate(targetOId, node.created_at.substring(0, 10));
+                    this._moveSubtree(nodeId, sourceOId, targetOId, sessionId, 3);
+                }
+                else if (node.depth === 4) {
+                    // L4 exchange — find/create session + batch in target O
+                    const sessionId = this._findOrCreateSessionForDate(targetOId, node.created_at.substring(0, 10));
+                    const batchId = this._findOrCreateBatchForDate(sessionId, targetOId, node.created_at.substring(0, 10));
+                    this._moveSubtree(nodeId, sourceOId, targetOId, batchId, 4);
+                }
+                else {
+                    errors.push(`Cannot move node ${nodeId} at depth ${node.depth} — only L2-L4 supported`);
+                    continue;
+                }
+                // Clean up empty parents in the source O-entry
+                this._cleanupEmptyParents(sourceOId);
+                moved++;
+            }
+        });
+        doMove();
+        return { moved, errors };
+    }
+    /**
+     * Find an existing L2 session created on the given date, or create a new one.
+     */
+    _findOrCreateSessionForDate(oId, dateIso) {
+        // Look for existing session created on this date
+        const existing = this.db.prepare(`SELECT id FROM memory_nodes WHERE parent_id = ? AND depth = 2
+       AND created_at LIKE ? ORDER BY seq DESC LIMIT 1`).get(oId, `${dateIso}%`);
+        if (existing)
+            return existing.id;
+        // Create new session
+        const maxSeqRow = this.db.prepare(`SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`).get(oId + ".", oId + ".%", oId + ".%.%");
+        const seq = (maxSeqRow?.m ?? 0) + 1;
+        const sessionId = `${oId}.${seq}`;
+        const timestamp = new Date().toISOString();
+        const title = `Session ${dateIso}`;
+        this.db.prepare("INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, 2, ?, ?, ?, ?, ?)").run(sessionId, oId, oId, seq, title, title, timestamp, timestamp);
+        this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, oId);
+        return sessionId;
+    }
+    /**
+     * Find a batch under the session with room, or create a new one.
+     */
+    _findOrCreateBatchForDate(sessionId, oId, _dateIso) {
+        const batchSize = this.cfg.checkpointInterval || 5;
+        // Find latest batch with room
+        const latestBatch = this.db.prepare("SELECT id FROM memory_nodes WHERE parent_id = ? AND depth = 3 ORDER BY seq DESC LIMIT 1").get(sessionId);
+        if (latestBatch) {
+            const countRow = this.db.prepare("SELECT COUNT(*) as n FROM memory_nodes WHERE parent_id = ? AND depth = 4").get(latestBatch.id);
+            if (countRow.n < batchSize)
+                return latestBatch.id;
+        }
+        // Create new batch
+        const maxSeqRow = this.db.prepare(`SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`).get(sessionId + ".", sessionId + ".%", sessionId + ".%.%");
+        const seq = (maxSeqRow?.m ?? 0) + 1;
+        const batchId = `${sessionId}.${seq}`;
+        const timestamp = new Date().toISOString();
+        const title = `Batch ${seq}`;
+        this.db.prepare("INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, 3, ?, ?, ?, ?, ?)").run(batchId, sessionId, oId, seq, title, title, timestamp, timestamp);
+        this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, oId);
+        return batchId;
+    }
+    /**
+     * Move a subtree (node + all descendants) to a new parent in the target O-entry.
+     * Rewrites all IDs, parent_ids, root_ids, tags, and FTS rowid map entries.
+     */
+    _moveSubtree(nodeId, sourceOId, targetOId, newParentId, depth) {
+        // 1. Get all nodes in subtree (nodeId itself + all descendants)
+        const subtreeNodes = this.db.prepare("SELECT id, parent_id, root_id, depth, seq, title, content, created_at, updated_at, access_count, last_accessed FROM memory_nodes WHERE id = ? OR id LIKE ?").all(nodeId, `${nodeId}.%`);
+        // 2. Calculate next seq under new parent (direct children only)
+        const maxSeqRow = this.db.prepare(`SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`).get(newParentId + ".", newParentId + ".%", newParentId + ".%.%");
+        const newSeq = (maxSeqRow?.m ?? 0) + 1;
+        // 3. Build old prefix -> new prefix mapping
+        const newNodeId = `${newParentId}.${newSeq}`;
+        const oldPrefix = nodeId;
+        const newPrefix = newNodeId;
+        // 4. For each node in the subtree: delete old, insert new
+        const deleteStmt = this.db.prepare("DELETE FROM memory_nodes WHERE id = ?");
+        const insertStmt = this.db.prepare("INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at, access_count, last_accessed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        for (const n of subtreeNodes) {
+            const nNewId = n.id === oldPrefix ? newPrefix : n.id.replace(oldPrefix, newPrefix);
+            const nNewParentId = n.id === oldPrefix ? newParentId : n.parent_id.replace(oldPrefix, newPrefix);
+            const nNewDepth = n.depth + (depth - (subtreeNodes.find(s => s.id === nodeId).depth));
+            // Delete old node
+            deleteStmt.run(n.id);
+            // Insert new node
+            insertStmt.run(nNewId, nNewParentId, targetOId, nNewDepth, n.id === oldPrefix ? newSeq : n.seq, n.title, n.content, n.created_at, n.updated_at ?? n.created_at, n.access_count ?? 0, n.last_accessed ?? null);
+            // 5. Update tags: DELETE old + INSERT new
+            const tags = this.db.prepare("SELECT tag FROM memory_tags WHERE entry_id = ?").all(n.id);
+            if (tags.length > 0) {
+                this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ?").run(n.id);
+                for (const t of tags) {
+                    this.db.prepare("INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)").run(nNewId, t.tag);
+                }
+            }
+            // 6. Update FTS rowid map
+            this.db.prepare("UPDATE hmem_fts_rowid_map SET root_id = ?, node_id = ? WHERE node_id = ?").run(targetOId, nNewId, n.id);
+        }
+        // Update target O-entry updated_at
+        const timestamp = new Date().toISOString();
+        this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, targetOId);
+    }
+    /**
+     * Remove empty L2 (sessions) and L3 (batches) nodes in an O-entry.
+     */
+    _cleanupEmptyParents(oId) {
+        // Clean up empty L3 batches (no L4 children)
+        const emptyBatches = this.db.prepare(`SELECT n.id FROM memory_nodes n
+       WHERE n.root_id = ? AND n.depth = 3
+       AND NOT EXISTS (SELECT 1 FROM memory_nodes c WHERE c.parent_id = n.id)`).all(oId);
+        for (const b of emptyBatches) {
+            this.db.prepare("DELETE FROM memory_nodes WHERE id = ?").run(b.id);
+            this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ?").run(b.id);
+            this.db.prepare("DELETE FROM hmem_fts_rowid_map WHERE node_id = ?").run(b.id);
+        }
+        // Clean up empty L2 sessions (no L3 children)
+        const emptySessions = this.db.prepare(`SELECT n.id FROM memory_nodes n
+       WHERE n.root_id = ? AND n.depth = 2
+       AND NOT EXISTS (SELECT 1 FROM memory_nodes c WHERE c.parent_id = n.id)`).all(oId);
+        for (const s of emptySessions) {
+            this.db.prepare("DELETE FROM memory_nodes WHERE id = ?").run(s.id);
+            this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ?").run(s.id);
+            this.db.prepare("DELETE FROM hmem_fts_rowid_map WHERE node_id = ?").run(s.id);
+        }
     }
     bumpAccess(id) {
         // Clear irrelevant flag on explicit read — if someone reads it, it matters

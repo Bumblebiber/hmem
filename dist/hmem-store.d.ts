@@ -101,6 +101,7 @@ export interface MemoryNode {
     title: string;
     content: string;
     created_at: string;
+    updated_at?: string;
     access_count: number;
     last_accessed: string | null;
     favorite?: boolean;
@@ -472,10 +473,66 @@ export declare class HmemStore {
      * Creates a new batch if the current one is full (has >= batchSize L4 children).
      */
     resolveBatch(sessionId: string, oId: string, batchSize: number): string;
+    /**
+     * Append a V2 exchange (3-node chain) under a batch (L3 node).
+     * Creates:
+     *   L4: exchange node — title auto-extracted from userText
+     *   L5.1: user message (raw userText)
+     *   L5.2: agent message (raw agentText)
+     */
+    appendExchangeV2(batchId: string, oId: string, userText: string, agentText: string): {
+        id: string;
+    };
+    getOEntryExchangesV2(oId: string, limit: number, opts?: {
+        skipIrrelevant?: boolean;
+        titleOnlyTags?: string[];
+    }): {
+        nodeId: string;
+        title: string;
+        userText: string;
+        agentText: string;
+        created_at: string;
+    }[];
+    /** Read a single memory_nodes row by ID. Returns null if not found. */
+    readNode(id: string): MemoryNode | null;
+    /** Return all direct children of a node, ordered by seq. */
+    getChildNodes(parentId: string): MemoryNode[];
     /** Find a child node by content/title pattern. Returns node ID or null. */
     findChildNode(parentId: string, pattern: string, depth?: number): string | null;
     /** Find a child node of a root entry by content/title pattern. */
     findRootChildNode(rootId: string, pattern: string, depth: number): string | null;
+    /**
+     * Return all non-obsolete P-entries with just id + title.
+     */
+    listProjects(): {
+        id: string;
+        title: string;
+    }[];
+    /**
+     * Move L2 (sessions), L3 (batches), or L4 (exchanges) between O-entries.
+     * Rewrites all IDs in the subtree (node + children + tags + FTS).
+     */
+    moveNodes(nodeIds: string[], targetOId: string): {
+        moved: number;
+        errors: string[];
+    };
+    /**
+     * Find an existing L2 session created on the given date, or create a new one.
+     */
+    private _findOrCreateSessionForDate;
+    /**
+     * Find a batch under the session with room, or create a new one.
+     */
+    private _findOrCreateBatchForDate;
+    /**
+     * Move a subtree (node + all descendants) to a new parent in the target O-entry.
+     * Rewrites all IDs, parent_ids, root_ids, tags, and FTS rowid map entries.
+     */
+    private _moveSubtree;
+    /**
+     * Remove empty L2 (sessions) and L3 (batches) nodes in an O-entry.
+     */
+    private _cleanupEmptyParents;
     bumpAccess(id: string): void;
     /**
      * Auto-purge: physically delete irrelevant entries older than maxAgeDays.
