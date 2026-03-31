@@ -109,6 +109,25 @@ Also check:
 echo '{}' | hmem statusline     # Should show project info
 ```
 
+## Multi-Device Sync (after migrating on the server)
+
+If the migration was run on the sync server (e.g., Strato), other devices don't need to run the migration themselves. Instead, delete the local DB and pull fresh from the server:
+
+```bash
+# 1. Find and delete local hmem file
+AGENT_DIR=~/.hmem/Agents/DEVELOPER
+rm "$AGENT_DIR/DEVELOPER.hmem"
+
+# 2. Pull from server
+hmem-sync pull
+```
+
+This is simpler and safer than running the migration on every device independently. The server has the migrated state — just sync it down.
+
+Do this on every device/agent that syncs with the server. After pulling, verify with `read_memory()` that the O-entries have the correct IDs.
+
+---
+
 ## Step 5: Post-Migration Cleanup
 
 The migration tags old O-entries as `#legacy`. These still use the old flat format but are readable via dual-format support. Options:
