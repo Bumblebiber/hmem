@@ -137,18 +137,32 @@ async function getHmemStatus(): Promise<HmemStatus> {
 
       // Exchange count since last checkpoint
       let exchanges = 0;
-      const oRow = db.prepare(
-        "SELECT id FROM memories WHERE prefix='O' AND active=1 AND obsolete!=1 AND irrelevant!=1 LIMIT 1"
-      ).get() as { id: string } | undefined;
+
+      // Find O-entry matching active project
+      let oRow: { id: string } | undefined;
+      if (projRow) {
+        const projSeq = parseInt(projRow.id.replace(/\D/g, ""), 10);
+        const oId = `O${String(projSeq).padStart(4, "0")}`;
+        oRow = db.prepare("SELECT id FROM memories WHERE id = ?").get(oId) as { id: string } | undefined;
+      }
 
       if (oRow) {
-        const totalExchanges = (db.prepare(
-          "SELECT COUNT(*) as n FROM memory_nodes WHERE root_id = ? AND depth = 2"
-        ).get(oRow.id) as any)?.n ?? 0;
+        // Find the latest L3 batch
+        const latestBatch = db.prepare(
+          `SELECT id FROM memory_nodes WHERE root_id = ? AND depth = 3 ORDER BY created_at DESC LIMIT 1`
+        ).get(oRow.id) as { id: string } | undefined;
 
-        const interval = hmemConfig.checkpointInterval;
-        exchanges = interval > 0 ? totalExchanges % interval : totalExchanges;
-        status = { project, exchanges, interval };
+        if (latestBatch) {
+          const batchExchanges = (db.prepare(
+            "SELECT COUNT(*) as n FROM memory_nodes WHERE parent_id = ? AND depth = 4"
+          ).get(latestBatch.id) as any)?.n ?? 0;
+
+          const interval = hmemConfig.checkpointInterval;
+          exchanges = batchExchanges;
+          status = { project, exchanges, interval };
+        } else {
+          status = { project, exchanges: 0, interval: hmemConfig.checkpointInterval };
+        }
       } else {
         status = { project, exchanges: 0, interval: hmemConfig.checkpointInterval };
       }
