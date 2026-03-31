@@ -114,15 +114,17 @@ echo '{}' | hmem statusline     # Should show project info
 If the migration was run on the sync server (e.g., Strato), other devices don't need to run the migration themselves. Instead, delete the local DB and pull fresh from the server:
 
 ```bash
-# 1. Find and delete local hmem file
+# 1. Delete local hmem file
 AGENT_DIR=~/.hmem/Agents/DEVELOPER
 rm "$AGENT_DIR/DEVELOPER.hmem"
 
-# 2. Pull from server
-hmem-sync pull
+# 2. Pull from server — MUST specify --hmem-path explicitly!
+# Without it, hmem-sync writes to ~/.hmem/memory.hmem (wrong file).
+# hmem-mcp reads from Agents/DEVELOPER/DEVELOPER.hmem — they must match.
+hmem-sync pull --hmem-path "$AGENT_DIR/DEVELOPER.hmem" --force
 ```
 
-This is simpler and safer than running the migration on every device independently. The server has the migrated state — just sync it down.
+**IMPORTANT: Always use `--hmem-path`** when pulling after a DB delete. Without it, hmem-sync auto-detects `~/.hmem/memory.hmem` as the target, but hmem-mcp reads from `Agents/DEVELOPER/DEVELOPER.hmem`. This mismatch causes "No memories found" after pull.
 
 Do this on every device/agent that syncs with the server. After pulling, verify with `read_memory()` that the O-entries have the correct IDs.
 
