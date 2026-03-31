@@ -88,6 +88,42 @@ Check if the user has customized this in `hmem.config.json`. If not, inform them
 
 ---
 
+## Step 2d: HMEM_PATH Migration (v6.0.0+)
+
+v6.0.0 replaced `HMEM_PROJECT_DIR` + `HMEM_AGENT_ID` with a single `HMEM_PATH` env var.
+
+**Check if migration is needed:**
+1. Look at the user's `.mcp.json` or `~/.claude.json` for hmem env vars
+2. If you see `HMEM_PROJECT_DIR` and/or `HMEM_AGENT_ID` → migration needed
+
+**Migration steps:**
+
+1. Determine the current .hmem file path:
+   - With agent ID: `{HMEM_PROJECT_DIR}/Agents/{HMEM_AGENT_ID}/{HMEM_AGENT_ID}.hmem`
+   - Without: `{HMEM_PROJECT_DIR}/memory.hmem`
+
+2. Update MCP config — replace the old env vars with `HMEM_PATH`:
+   ```json
+   {
+     "env": {
+       "HMEM_PATH": "/absolute/path/to/your/file.hmem"
+     }
+   }
+   ```
+   Remove `HMEM_PROJECT_DIR`, `HMEM_AGENT_ID`, and `HMEM_AGENT_ROLE` from the env block.
+
+3. The .hmem file does NOT need to move — `HMEM_PATH` points to it wherever it is.
+
+4. If hmem-sync is installed, also update to v1.0.0+ (`npm update -g hmem-sync`).
+   The `--agent-id` flag was removed — use `--hmem-path` or `HMEM_PATH` instead.
+
+**Also removed in v6.0.0:**
+- `min_role` parameter from `write_memory` and `update_memory` tools
+- Company store role gating (all agents can now write to company store)
+- `HMEM_AGENT_ROLE` / `COUNCIL_AGENT_ROLE` env vars
+
+---
+
 ## Step 3: Entry Migration
 
 Some versions introduce new data formats. Check if migration is needed:
