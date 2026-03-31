@@ -2970,6 +2970,55 @@ export class HmemStore {
     return batchId;
   }
 
+  /**
+   * Append a V2 exchange (3-node chain) under a batch (L3 node).
+   * Creates:
+   *   L4: exchange node — title auto-extracted from userText
+   *   L5.1: user message (raw userText)
+   *   L5.2: agent message (raw agentText)
+   */
+  appendExchangeV2(batchId: string, oId: string, userText: string, agentText: string): { id: string } {
+    this.guardCorrupted();
+    const timestamp = new Date().toISOString();
+
+    // Next seq under batch (direct children only)
+    const maxSeqRow = this.db.prepare(
+      `SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`
+    ).get(batchId + ".", batchId + ".%", batchId + ".%.%") as any;
+    const seq = (maxSeqRow?.m ?? 0) + 1;
+
+    const title = this.autoExtractTitle(userText.split("\n")[0].replace(/[<>\[\]]/g, ""));
+    const l4Id = `${batchId}.${seq}`;
+    const l5UserId = `${l4Id}.1`;
+    const l5AgentId = `${l4Id}.2`;
+
+    const insertNode = this.db.prepare(
+      "INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+
+    this.db.transaction(() => {
+      insertNode.run(l4Id, batchId, oId, 4, seq, title, title, timestamp, timestamp);
+      insertNode.run(l5UserId, l4Id, oId, 5, 1, this.autoExtractTitle(userText), userText, timestamp, timestamp);
+      insertNode.run(l5AgentId, l4Id, oId, 5, 2, this.autoExtractTitle(agentText), agentText, timestamp, timestamp);
+      this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, oId);
+    })();
+
+    return { id: l4Id };
+  }
+
+  /** Read a single memory_nodes row by ID. Returns null if not found. */
+  readNode(id: string): MemoryNode | null {
+    return (this.db.prepare("SELECT * FROM memory_nodes WHERE id = ?").get(id) as MemoryNode) ?? null;
+  }
+
+  /** Return all direct children of a node, ordered by seq. */
+  getChildNodes(parentId: string): MemoryNode[] {
+    return this.db.prepare(
+      "SELECT * FROM memory_nodes WHERE parent_id = ? ORDER BY seq"
+    ).all(parentId) as MemoryNode[];
+  }
+
   /** Find a child node by content/title pattern. Returns node ID or null. */
   findChildNode(parentId: string, pattern: string, depth?: number): string | null {
     const depthClause = depth != null ? " AND depth = ?" : "";

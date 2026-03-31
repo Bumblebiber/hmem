@@ -90,3 +90,56 @@ describe("resolveBatch", () => {
     expect(b1).toBe(b2);
   });
 });
+
+describe("appendExchangeV2", () => {
+  it("creates L4 exchange with L5.1 user + L5.2 agent under a batch", () => {
+    store.writeLinear("P", { l1: "test" }, ["#project"]);
+    const oId = store.resolveProjectO(1);
+    const sessionId = store.resolveSession(oId, "/tmp/t.jsonl");
+    const batchId = store.resolveBatch(sessionId, oId, 5);
+
+    const result = store.appendExchangeV2(batchId, oId, "What is hmem?", "hmem is a memory system.");
+    expect(result.id).toBe("O0001.1.1.1"); // first exchange in first batch
+
+    // Verify L4 node
+    const l4 = store.readNode(result.id);
+    expect(l4).toBeTruthy();
+    expect(l4!.depth).toBe(4);
+
+    // Verify L5 children
+    const children = store.getChildNodes(result.id);
+    expect(children).toHaveLength(2);
+    expect(children[0].content).toBe("What is hmem?");
+    expect(children[0].depth).toBe(5);
+    expect(children[0].seq).toBe(1);
+    expect(children[1].content).toBe("hmem is a memory system.");
+    expect(children[1].depth).toBe(5);
+    expect(children[1].seq).toBe(2);
+  });
+
+  it("increments exchange seq within a batch", () => {
+    store.writeLinear("P", { l1: "test" }, ["#project"]);
+    const oId = store.resolveProjectO(1);
+    const sessionId = store.resolveSession(oId, "/tmp/t.jsonl");
+    const batchId = store.resolveBatch(sessionId, oId, 5);
+
+    store.appendExchangeV2(batchId, oId, "msg1", "resp1");
+    const r2 = store.appendExchangeV2(batchId, oId, "msg2", "resp2");
+    expect(r2.id).toBe("O0001.1.1.2");
+  });
+});
+
+describe("resolveBatch (with appendExchangeV2)", () => {
+  it("creates new batch when current is full", () => {
+    store.writeLinear("P", { l1: "test" }, ["#project"]);
+    const oId = store.resolveProjectO(1);
+    const sessionId = store.resolveSession(oId, "/tmp/t.jsonl");
+    const b1 = store.resolveBatch(sessionId, oId, 3); // batch size 3
+    for (let i = 0; i < 3; i++) {
+      store.appendExchangeV2(b1, oId, `user ${i}`, `agent ${i}`);
+    }
+    const b2 = store.resolveBatch(sessionId, oId, 3);
+    expect(b2).not.toBe(b1);
+    expect(b2).toBe("O0001.1.2"); // second batch
+  });
+});
