@@ -494,6 +494,23 @@ export declare class HmemStore {
         agentText: string;
         created_at: string;
     }[];
+    /**
+     * Find the latest full batch (L3 node with >= batchSize L4 children)
+     * under a given O-entry root. Returns null if no full batch exists.
+     */
+    getLatestFullBatch(oId: string, batchSize: number): {
+        id: string;
+        sessionId: string;
+    } | null;
+    /**
+     * Get the previous batch (L3) sibling within the same session, excluding a given batch.
+     * Returns the batch's id, content, and title.
+     */
+    getPreviousBatch(sessionId: string, excludeBatchId: string): {
+        id: string;
+        content: string;
+        title: string;
+    } | null;
     /** Read a single memory_nodes row by ID. Returns null if not found. */
     readNode(id: string): MemoryNode | null;
     /** Return all direct children of a node, ordered by seq. */

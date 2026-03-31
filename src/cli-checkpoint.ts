@@ -78,169 +78,139 @@ export async function checkpoint(): Promise<void> {
   let mcpConfigPath = "";
 
   try {
-    // 1. Get active O-entry and recent exchanges
-    const activeOId = store.getActiveOId();
-    if (!activeOId) return;
-
-    const exchanges = store.getOEntryExchanges(activeOId, 20);
-    if (exchanges.length < 3) return; // Not enough context
-
-    // 2. Get active project
+    // 1. Get active project and its O-entry
     const activeProject = store.getActiveProject();
-    const projectName = activeProject?.title?.split("|")[0]?.trim() ?? "unknown";
-    const projectId = activeProject?.id ?? "";
+    if (!activeProject) return;
 
-    // 3. Tag skill-dialog exchanges (brainstorming, debugging, TDD, etc.)
+    const projectSeq = parseInt(activeProject.id.replace(/\D/g, ""), 10);
+    const oId = store.resolveProjectO(projectSeq);
+
+    // 2. Find the latest full batch (L3 with >= batchSize L4 children)
+    const batchSize = config.checkpointInterval || 5;
+    const latestFullBatch = store.getLatestFullBatch(oId, batchSize);
+
+    if (!latestFullBatch) return;
+    const batchId = latestFullBatch.id;
+    const sessionId = latestFullBatch.sessionId;
+
+    // 3. Get exchanges from this batch
+    const allExchanges = store.getOEntryExchangesV2(oId, batchSize * 3);
+    const batchExchanges = allExchanges.filter(ex => ex.nodeId.startsWith(batchId + "."));
+    if (batchExchanges.length < 2) return;
+
+    // 4. Tag skill-dialog exchanges
     const skillMarker = "Base directory for this skill:";
-    for (const ex of exchanges) {
+    for (const ex of batchExchanges) {
       if (ex.userText.includes(skillMarker)) {
         store.addTag(ex.nodeId, "#skill-dialog");
       }
     }
 
-    // 4. Get previous checkpoint summaries for rolling compression
-    const prevSummaries = store.getCheckpointSummaries(activeOId, 2);
-    const lastSummarySeq = prevSummaries.length > 0 ? prevSummaries[0].seq : 0;
+    // 5. Get previous batch's rolling summary
+    const prevBatch = store.getPreviousBatch(sessionId, batchId);
 
-    // Only format exchanges AFTER the last summary (those are new)
-    const newExchanges = exchanges.filter(ex => ex.seq > lastSummarySeq);
+    // 6. Get all P-entry titles
+    const allProjects = store.listProjects();
 
-    // Split: last 5 stay verbatim, the rest get summarized
-    const VERBATIM_WINDOW = 5;
-    const toSummarize = newExchanges.length > VERBATIM_WINDOW
-      ? newExchanges.slice(0, -VERBATIM_WINDOW)
-      : [];
-    const verbatimExchanges = newExchanges.slice(-VERBATIM_WINDOW);
+    const projectName = activeProject.title.split("|")[0].trim();
+    const projectId = activeProject.id;
 
-    // 5. Format exchanges (generous limits — Haiku needs context)
-    const formattedExchanges = newExchanges.map((ex, i) => {
-      const user = ex.userText.length > 800 ? ex.userText.substring(0, 800) + "..." : ex.userText;
-      const agent = ex.agentText.length > 1200 ? ex.agentText.substring(0, 1200) + "..." : ex.agentText;
-      const currentTitle = ex.userText.split("\n")[0].replace(/[<>\[\]]/g, "").substring(0, 40);
-      return `--- Exchange ${i + 1} (${ex.nodeId}) [title: "${currentTitle}"] ---\nUSER: ${user}\nAGENT: ${agent}`;
-    }).join("\n\n");
-
-    // Format previous summaries for rolling compression
-    let prevSummaryText = "";
-    if (prevSummaries.length > 0) {
-      const parts = prevSummaries.reverse().map((s, i) => {
-        const label = i === prevSummaries.length - 1 ? "Most recent summary" : "Older summary";
-        return `[${label} — ${s.created_at.substring(0, 16)}]\n${s.content}`;
-      });
-      prevSummaryText = parts.join("\n\n");
-    }
-
-    // 6. Close store before spawning subagent (avoid DB lock)
+    // Close store before spawning subagent
     store.close();
 
-    // 5. Build MCP config for subagent
+    // 7. Build MCP config and prompt
     mcpConfigPath = buildMcpConfig(projectDir, agentId);
 
-    // 7. Build the prompt
-    const summarySection = prevSummaryText
-      ? `\n## Previous checkpoint summaries (oldest first):\n\n${prevSummaryText}\n`
+    const formattedExchanges = batchExchanges.map((ex, i) => {
+      const user = ex.userText.length > 800 ? ex.userText.substring(0, 800) + "..." : ex.userText;
+      const agent = ex.agentText.length > 1200 ? ex.agentText.substring(0, 1200) + "..." : ex.agentText;
+      return `--- Exchange ${i + 1} (${ex.nodeId}) ---\nUSER: ${user}\nAGENT: ${agent}`;
+    }).join("\n\n");
+
+    const projectList = allProjects.map(p => `  ${p.id} ${p.title}`).join("\n");
+
+    const prevSummaryText = prevBatch && prevBatch.content !== prevBatch.title
+      ? `\n## Previous batch rolling summary:\n${prevBatch.content}\n`
       : "";
 
-    // Build exchange listing for titling
-    const exchangeListing = newExchanges.map(ex => {
-      const currentTitle = ex.userText.split("\n")[0].replace(/[<>\[\]]/g, "").substring(0, 40);
-      return `  ${ex.nodeId}: "${currentTitle}"`;
-    }).join("\n");
+    const exchangeListing = batchExchanges.map(ex =>
+      `  ${ex.nodeId}: "${ex.title}"`
+    ).join("\n");
 
-    // Build conditional summary task
-    const hasSummaryWork = toSummarize.length > 0;
-    const summaryNodeIds = toSummarize.map(e => e.nodeId).join(", ");
-    const verbatimNodeIds = verbatimExchanges.map(e => e.nodeId).join(", ");
+    const prompt = `You are a checkpoint agent for "${projectName}" (${projectId}).
+Process batch ${batchId} with ${batchExchanges.length} exchanges.
 
-    const summaryTask = hasSummaryWork
-      ? `### 4. Checkpoint summary (REQUIRED — ${toSummarize.length} exchanges to compress)
-Summarize exchanges ${summaryNodeIds} into a rolling summary.
-${prevSummaryText ? "IMPORTANT: Incorporate the previous summary into your new one — it covers older exchanges. The new summary should be a CUMULATIVE summary of everything so far." : "This is the first summary for this session."}
-append_memory(id="${activeOId}", content="\\t[CP] Rolling summary covering all exchanges through ${toSummarize[toSummarize.length - 1].nodeId}. 3-8 sentences. Match conversation language.")
-The last ${verbatimExchanges.length} exchanges (${verbatimNodeIds}) stay verbatim — do NOT include them in the summary.`
-      : `### 4. Checkpoint summary — SKIP
-Only ${newExchanges.length} exchanges since last summary — all within the verbatim window (last ${VERBATIM_WINDOW}). No summary needed.`;
+== All Projects ==
+${projectList}
 
-    const prompt = `You are a checkpoint agent for "${projectName}" (${projectId}). Process ${newExchanges.length} new exchanges from ${activeOId}.
-${summarySection}
+== Active Project ==
+${projectId} ${projectName}
+${prevSummaryText}
+== Batch Exchanges ==
 ${formattedExchanges}
 
 ## Tasks (execute ALL in order):
 
 ### 1. Title each exchange (REQUIRED)
-Each exchange node needs a descriptive title (max 50 chars, match conversation language).
-Current titles (auto-extracted, usually bad):
+Current titles (auto-extracted):
 ${exchangeListing}
 
-For each: update_memory(id="<nodeId>", content="Descriptive title summarizing the exchange")
-Example: update_memory(id="${newExchanges[0]?.nodeId || "O0XXX.1"}", content="Fix hmem-sync path resolution for HMEM_AGENT_ID")
+For each: update_memory(id="<nodeId>", content="Descriptive title, max 50 chars, match conversation language")
 
-### 2. Extract knowledge (non-obvious only, max 2-3)
-- L: Root-cause lesson (not surface symptoms)
-- E: Bug + root cause + fix
-- D: Architecture decision + rationale
-write_memory(prefix="L/E/D", content="...", tags=[3-5 tags], links=["${projectId}"])
+### 2. Write rolling summary for this batch
+update_memory(id="${batchId}", content="Rolling summary: 3-8 sentences covering this batch${prevBatch ? " + previous summary" : ""}. Match conversation language.")
+${prevBatch ? "IMPORTANT: Incorporate the previous batch summary — your new summary is cumulative." : "This is the first batch."}
+
+### 3. Extract knowledge (non-obvious only, max 2-3)
+write_memory(prefix="<any prefix>", content="...", tags=[3-5 tags], links=["${projectId}", "${batchId}"])
+Valid prefixes: L (lesson), E (error), D (decision), R (rule), C (convention), or any other.
 Skip if nothing non-obvious happened.
 
-### 3. Update project P-entry (IMPORTANT)
-Keep ${projectName} (${projectId}) current:
-- **Protocol** (.7): append_memory(id="${projectId}.7", content="Session YYYY-MM-DD: what happened, what was decided/shipped")
-- **Bugs** (.6): new bugs found → append with reference to E-entry
-- **Open tasks** (.8): tasks completed → update as done; new tasks → append
-- **Overview** (.1): if project state, architecture, or goals changed significantly
-- **Codebase** (.2): if new files/modules added or entry points changed
-Read the P-entry first: read_memory(id="${projectId}") to see current state before updating.
+### 4. Update project P-entry
+read_memory(id="${projectId}") first, then update relevant sections:
+- Protocol (.7): append_memory(id="${projectId}.7", content="Session YYYY-MM-DD: what happened")
+- Bugs (.6), Open Tasks (.8): update as needed
+- Overview (.1): if architecture changed significantly
 
-${summaryTask}
+### 5. Tag exchanges
+For each exchange, consider adding ONE tag if applicable:
+- #skill-dialog: Skill output (brainstorming, TDD, etc.)
+- #irrelevant: No value (greetings, "ok", typo corrections)
+- #planning: Design/architecture discussion
+- #debugging: Bug hunting/fixing
+- #admin: Setup, config, infra work
 
-### 5. Title the O-entry root
-If the O-entry root (${activeOId}) still has a generic title like "unassigned" or just the project name,
-give it a proper session title based on what happened so far:
-update_memory(id="${activeOId}", content="Session title summarizing key topics (max 60 chars)")
+### 6. Title session ${sessionId} (if generic)
+update_memory(id="${sessionId}", content="Session title summarizing key topics, max 60 chars")
 
-### 6. Project relevance check
-Are these exchanges about ${projectName}? If conversation drifted to a different project, note "[DRIFT: topic X]" in the summary.
+### 7. Project relevance check
+Do ALL exchanges belong to ${projectName}?
+Check against the project list above. If an exchange belongs elsewhere, call:
+move_nodes(node_ids=["<exchange_id>"], target_o_id="O00XX")
 
 ## Rules:
-- read_memory() FIRST to avoid duplicates and see current P-entry state
-- Match language of existing entries (likely German)
+- read_memory() FIRST to see current state
+- Match language of existing entries
 - Tags: 3-5 per entry, lowercase with #
-- Only save what's valuable in 6 months
-- Do NOT skip titling — every exchange needs a proper title`;
+- Only save what's valuable in 6 months`;
 
-    // 7. Spawn Haiku with MCP access
+    // 8. Spawn Haiku with MCP access
     const allowedTools = [
       "mcp__hmem__read_memory",
       "mcp__hmem__write_memory",
       "mcp__hmem__append_memory",
       "mcp__hmem__update_memory",
+      "mcp__hmem__list_projects",
+      "mcp__hmem__move_nodes",
     ].join(" ");
     const disallowedTools = "mcp__hmem__flush_context";
 
     try {
       const output = execSync(
         `claude -p --model haiku --mcp-config "${mcpConfigPath}" --allowedTools "${allowedTools}" --disallowedTools "${disallowedTools}" --dangerously-skip-permissions 2>/dev/null`,
-        {
-          input: prompt,
-          encoding: "utf8",
-          timeout: 120_000,
-        }
+        { input: prompt, encoding: "utf8", timeout: 120_000 }
       ).trim();
-
       console.log(`[hmem checkpoint] Haiku: ${output.substring(0, 300)}`);
-
-      // Tag the checkpoint summary node that Haiku wrote via append_memory
-      // Haiku writes it as a [CP] prefixed L2 node under the O-entry
-      try {
-        const postStore = new HmemStore(hmemPath, config);
-        const tagged = postStore.tagNewCheckpointSummaries(activeOId);
-        if (tagged.length > 0) {
-          console.log(`[hmem checkpoint] Tagged checkpoint summaries: ${tagged.join(", ")}`);
-        }
-        postStore.close();
-      } catch (tagErr) {
-        console.error(`[hmem checkpoint] Failed to tag summary: ${tagErr}`);
-      }
     } catch (e: any) {
       const stdout = e.stdout?.toString()?.substring(0, 200) || "";
       console.error(`[hmem checkpoint] Failed (exit ${e.status}): ${stdout}`);
@@ -249,7 +219,6 @@ Are these exchanges about ${projectName}? If conversation drifted to a different
   } catch (e) {
     console.error(`[hmem checkpoint] ${e}`);
   } finally {
-    // Cleanup temp MCP config
     if (mcpConfigPath) {
       try { fs.unlinkSync(mcpConfigPath); } catch {}
     }

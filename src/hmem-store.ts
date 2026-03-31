@@ -3070,6 +3070,30 @@ export class HmemStore {
     return exchanges.reverse(); // chronological order
   }
 
+  /**
+   * Find the latest full batch (L3 node with >= batchSize L4 children)
+   * under a given O-entry root. Returns null if no full batch exists.
+   */
+  getLatestFullBatch(oId: string, batchSize: number): { id: string; sessionId: string } | null {
+    return (this.db.prepare(
+      `SELECT mn.id, mn.parent_id as sessionId FROM memory_nodes mn
+       WHERE mn.root_id = ? AND mn.depth = 3
+       AND (SELECT COUNT(*) FROM memory_nodes c WHERE c.parent_id = mn.id AND c.depth = 4) >= ?
+       ORDER BY mn.created_at DESC LIMIT 1`
+    ).get(oId, batchSize) as { id: string; sessionId: string } | undefined) ?? null;
+  }
+
+  /**
+   * Get the previous batch (L3) sibling within the same session, excluding a given batch.
+   * Returns the batch's id, content, and title.
+   */
+  getPreviousBatch(sessionId: string, excludeBatchId: string): { id: string; content: string; title: string } | null {
+    return (this.db.prepare(
+      `SELECT id, content, title FROM memory_nodes
+       WHERE parent_id = ? AND depth = 3 AND id != ? ORDER BY seq DESC LIMIT 1`
+    ).get(sessionId, excludeBatchId) as { id: string; content: string; title: string } | undefined) ?? null;
+  }
+
   /** Read a single memory_nodes row by ID. Returns null if not found. */
   readNode(id: string): MemoryNode | null {
     return (this.db.prepare("SELECT * FROM memory_nodes WHERE id = ?").get(id) as MemoryNode) ?? null;
