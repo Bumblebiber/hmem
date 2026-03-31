@@ -28,6 +28,7 @@
 import Database from "better-sqlite3";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { HmemConfig } from "./hmem-config.js";
 import { DEFAULT_CONFIG, DEFAULT_PREFIX_DESCRIPTIONS } from "./hmem-config.js";
@@ -4692,6 +4693,38 @@ export function resolveHmemPath(projectDir: string, templateName: string): strin
     if (fs.existsSync(alt)) agentDir = alt;
   }
   return path.join(agentDir, `${templateName}.hmem`);
+}
+
+/**
+ * Resolve the path to the .hmem file using a 3-step priority chain:
+ *   1. HMEM_PATH env var (~ expanded, resolved to absolute)
+ *   2. CWD discovery: exactly 1 .hmem file in cwd → use it; multiple → error
+ *   3. Default fallback: ~/.hmem/memory.hmem
+ */
+export function resolveHmemPathNew(cwdOverride?: string): string {
+  // Priority 1: HMEM_PATH env var
+  const hmemPath = process.env.HMEM_PATH;
+  if (hmemPath) {
+    const expanded = hmemPath.startsWith("~")
+      ? path.join(os.homedir(), hmemPath.slice(1))
+      : hmemPath;
+    return path.resolve(expanded);
+  }
+
+  // Priority 2: CWD discovery
+  const cwd = cwdOverride || process.cwd();
+  try {
+    const files = fs.readdirSync(cwd).filter(f => f.endsWith(".hmem"));
+    if (files.length === 1) return path.resolve(cwd, files[0]);
+    if (files.length > 1) {
+      throw new Error(`Multiple .hmem files in ${cwd}: ${files.join(", ")}. Set HMEM_PATH to pick one.`);
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("Multiple")) throw e;
+  }
+
+  // Priority 3: default
+  return path.resolve(os.homedir(), ".hmem", "memory.hmem");
 }
 
 /**
