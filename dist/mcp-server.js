@@ -85,6 +85,73 @@ function hmemSyncEnabled(hmemPath) {
 function hmemSyncConfig(hmemPath) {
     return path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
 }
+/**
+ * Resolve hmem-sync CLI script path for direct Node invocation.
+ * Avoids shell: true on Windows which causes visible PowerShell windows.
+ * Returns [nodeExe, scriptPath] or null if hmem-sync is not found.
+ */
+let _resolvedSyncBin;
+function resolveHmemSyncBin() {
+    if (_resolvedSyncBin !== undefined)
+        return _resolvedSyncBin;
+    try {
+        // Try which/where to find the hmem-sync script
+        const cmd = process.platform === "win32" ? "where" : "which";
+        const result = spawnSync(cmd, ["hmem-sync"], { encoding: "utf8", shell: false, windowsHide: true });
+        if (result.stdout) {
+            const binPath = result.stdout.trim().split(/\r?\n/)[0];
+            if (binPath.endsWith(".cmd") || binPath.endsWith(".ps1")) {
+                // Windows .cmd wrapper — read it to find the actual JS path
+                const content = fs.readFileSync(binPath, "utf8");
+                const match = content.match(/"([^"]+\.js)"/);
+                if (match) {
+                    _resolvedSyncBin = [process.execPath, match[1]];
+                    return _resolvedSyncBin;
+                }
+            }
+            else {
+                // Unix: resolve symlink to the actual JS file
+                const realPath = fs.realpathSync(binPath);
+                _resolvedSyncBin = [process.execPath, realPath];
+                return _resolvedSyncBin;
+            }
+        }
+    }
+    catch { /* ignore */ }
+    _resolvedSyncBin = null;
+    return null;
+}
+/** Spawn hmem-sync with resolved Node path (no shell). Falls back to shell spawn. */
+function spawnSyncHmemSync(args) {
+    const bin = resolveHmemSyncBin();
+    if (bin) {
+        return spawnSync(bin[0], [bin[1], ...args], {
+            env: { ...process.env }, encoding: "utf8", windowsHide: true,
+        });
+    }
+    // Fallback: shell spawn (legacy behavior)
+    return spawnSync("hmem-sync", args, {
+        env: { ...process.env }, encoding: "utf8",
+        shell: process.platform === "win32", windowsHide: true,
+    });
+}
+/** Spawn hmem-sync detached (async push). No shell needed. */
+function spawnDetachedHmemSync(args) {
+    const bin = resolveHmemSyncBin();
+    if (bin) {
+        const child = spawn(bin[0], [bin[1], ...args], {
+            env: { ...process.env }, stdio: "ignore", detached: true, windowsHide: true,
+        });
+        child.unref();
+    }
+    else {
+        const child = spawn("hmem-sync", args, {
+            env: { ...process.env }, stdio: "ignore", detached: true,
+            shell: process.platform === "win32", windowsHide: true,
+        });
+        child.unref();
+    }
+}
 /** Blocking pull — waits for completion. Skips if called within cooldown window.
  *  Returns newly synced entries AND entries that received new nodes (empty array if skipped or none). */
 function syncPull(hmemPath) {
@@ -113,19 +180,17 @@ function syncPull(hmemPath) {
         for (const s of servers) {
             if (!s.serverUrl || !s.token)
                 continue;
-            const result = spawnSync("hmem-sync", [
+            const result = spawnSyncHmemSync([
                 "pull", "--config", hmemSyncConfig(hmemPath),
                 "--hmem-path", hmemPath,
                 "--server-url", s.serverUrl, "--token", s.token,
-            ], { env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32", windowsHide: true });
+            ]);
             if (result.error)
                 process.stderr.write(`hmem-sync pull error (${s.name ?? s.serverUrl}): ${result.error.message}\n`);
         }
     }
     else {
-        const result = spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath], {
-            env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32", windowsHide: true,
-        });
+        const result = spawnSyncHmemSync(["pull", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath]);
         if (result.error)
             process.stderr.write(`hmem-sync pull error: ${result.error.message}\n`);
     }
@@ -172,17 +237,15 @@ function syncPullThenPush(hmemPath) {
         for (const s of servers) {
             if (!s.serverUrl || !s.token)
                 continue;
-            spawnSync("hmem-sync", [
+            spawnSyncHmemSync([
                 "pull", "--config", hmemSyncConfig(hmemPath),
                 "--hmem-path", hmemPath,
                 "--server-url", s.serverUrl, "--token", s.token,
-            ], { env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32", windowsHide: true });
+            ]);
         }
     }
     else {
-        spawnSync("hmem-sync", ["pull", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath], {
-            env: { ...process.env }, encoding: "utf8", shell: process.platform === "win32", windowsHide: true,
-        });
+        spawnSyncHmemSync(["pull", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath]);
     }
     lastPullAt = Date.now();
 }
@@ -194,19 +257,15 @@ function syncPush(hmemPath) {
         for (const s of servers) {
             if (!s.serverUrl || !s.token)
                 continue;
-            const child = spawn("hmem-sync", [
+            spawnDetachedHmemSync([
                 "push", "--config", hmemSyncConfig(hmemPath),
                 "--hmem-path", hmemPath,
                 "--server-url", s.serverUrl, "--token", s.token,
-            ], { env: { ...process.env }, shell: process.platform === "win32", stdio: "ignore", detached: true, windowsHide: true });
-            child.unref();
+            ]);
         }
     }
     else {
-        const child = spawn("hmem-sync", ["push", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath], {
-            env: { ...process.env }, shell: process.platform === "win32", stdio: "ignore", detached: true, windowsHide: true,
-        });
-        child.unref();
+        spawnDetachedHmemSync(["push", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath]);
     }
 }
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
@@ -2434,10 +2493,11 @@ function checkForUpdates() {
         const lastCheck = state["hmem-mcp"] ? new Date(state["hmem-mcp"]).getTime() : 0;
         if (Date.now() - lastCheck < UPDATE_CHECK_INTERVAL_MS)
             return;
-        const child = spawn("npm", ["show", "hmem-mcp", "version"], {
+        // On Windows, npm is a .cmd wrapper — use shell only as last resort
+        const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+        const child = spawn(npmCmd, ["show", "hmem-mcp", "version"], {
             stdio: ["ignore", "pipe", "ignore"],
             detached: true,
-            shell: process.platform === "win32",
             windowsHide: true,
         });
         child.unref();
