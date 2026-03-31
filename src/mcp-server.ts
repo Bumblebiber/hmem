@@ -21,7 +21,7 @@ import { spawnSync, spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import { searchMemory } from "./memory-search.js";
 import { openCompanyMemory, resolveHmemPath, resolveHmemPathNew, routeTask, HmemStore } from "./hmem-store.js";
-import type { AgentRole, MemoryEntry, MemoryNode } from "./hmem-store.js";
+import type { MemoryEntry, MemoryNode } from "./hmem-store.js";
 import { loadHmemConfig, formatPrefixList, getSyncServers } from "./hmem-config.js";
 import type { HmemConfig } from "./hmem-config.js";
 import { SessionCache } from "./session-cache.js";
@@ -546,16 +546,12 @@ server.tool(
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Target store: 'personal' or 'company'"
     ),
-    min_role: z.enum(["worker", "al", "pl", "ceo"]).default("worker").describe(
-      "Minimum role to see this entry"
-    ),
     force: z.coerce.boolean().optional().describe(
       "Force creation of a new root entry even if existing entries share tags. " +
       "Only use when you intentionally want a separate entry, not a child of an existing one."
     ),
   },
-  async ({ prefix, content, links, favorite, tags, pinned, store: storeName, min_role: minRole, force }) => {
-    const agentRole = "worker" as AgentRole;
+  async ({ prefix, content, links, favorite, tags, pinned, store: storeName, force }) => {
     const isFirstTime = !fs.existsSync(HMEM_PATH);
 
     // O-prefix is reserved for flush_context
@@ -594,17 +590,6 @@ server.tool(
       }
     }
 
-    // Company store: only AL+ can write
-    if (storeName === "company") {
-      const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
-      if ((ROLE_LEVEL[agentRole] || 0) < 1) {
-        return {
-          content: [{ type: "text" as const, text: "ERROR: Only AL, PL, and CEO roles can write to company memory." }],
-          isError: true,
-        };
-      }
-    }
-
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
@@ -622,11 +607,10 @@ server.tool(
           };
         }
 
-        const effectiveMinRole = storeName === "company" ? (minRole as AgentRole) : ("worker" as AgentRole);
         if (storeName === "personal") syncPullThenPush(HMEM_PATH);
-        const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite, tags, pinned, force);
+        const result = hmemStore.write(prefix, content, links, undefined, favorite, tags, pinned, force);
         const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
-        log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix}, min_role=${effectiveMinRole})`);
+        log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix})`);
         if (storeName === "personal") syncPush(HMEM_PATH);
         const firstTimeNote = isFirstTime
           ? `\nMemory store created: ${HMEM_PATH}`
@@ -637,7 +621,6 @@ server.tool(
             type: "text" as const,
             text: `Memory saved: ${result.id} (${result.timestamp.substring(0, 19)})\n` +
               `Store: ${storeLabel} | Category: ${prefix}` +
-              (storeName === "company" ? ` | Clearance: ${effectiveMinRole}+` : "") +
               firstTimeNote,
           }],
         };
@@ -706,18 +689,6 @@ server.tool(
     ),
   },
   async ({ id, content, links, obsolete, favorite, irrelevant, tags, pinned, active, store: storeName }) => {
-    const agentRole = "worker" as AgentRole;
-
-    if (storeName === "company") {
-      const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
-      if ((ROLE_LEVEL[agentRole] || 0) < 1) {
-        return {
-          content: [{ type: "text" as const, text: "ERROR: Only AL, PL, and CEO roles can write to company memory." }],
-          isError: true,
-        };
-      }
-    }
-
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
@@ -913,18 +884,6 @@ server.tool(
     ),
   },
   async ({ id, content, store: storeName }) => {
-    const agentRole = "worker" as AgentRole;
-
-    if (storeName === "company") {
-      const ROLE_LEVEL: Record<string, number> = { worker: 0, al: 1, pl: 2, ceo: 3 };
-      if ((ROLE_LEVEL[agentRole] || 0) < 1) {
-        return {
-          content: [{ type: "text" as const, text: "ERROR: Only AL, PL, and CEO roles can write to company memory." }],
-          isError: true,
-        };
-      }
-    }
-
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
@@ -1046,7 +1005,6 @@ server.tool(
     ),
   },
   async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator, show_all, tag, stale_days, context_for, min_tag_score }) => {
-    const agentRole = "worker" as AgentRole;
 
     // Pull before read to get latest from server (30s cooldown)
     const newEntries = storeName === "personal" ? syncPull(HMEM_PATH) : [];
@@ -1062,11 +1020,9 @@ server.tool(
 
         // Context-for: load source entry expanded + all related entries
         if (context_for) {
-          const effectiveRole = storeName === "company" ? agentRole : undefined;
           const sourceEntries = hmemStore.read({
             id: context_for,
             expand: true,
-            agentRole: effectiveRole,
           });
           if (sourceEntries.length === 0) {
             return {
@@ -1161,7 +1117,6 @@ server.tool(
         const entries = hmemStore.read({
           id, depth: effectiveDepth, prefix, after, before, search,
           limit: maxResults,
-          agentRole: storeName === "company" ? agentRole : undefined,
           time, period, timeAround: time_around,
           showObsolete: show_obsolete,
           showObsoletePath: show_obsolete_path,
@@ -1356,7 +1311,7 @@ server.tool(
         const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
           `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}${modeInfo}${cacheInfo}${tokenInfo}${staleHint}\n`;
 
-        log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole}${cacheInfo})`);
+        log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}${cacheInfo})`);
 
         return trackTokens({
           content: [{
@@ -1665,7 +1620,6 @@ server.tool(
           id,
           depth: 3,
           expand: true,
-          agentRole: "worker" as AgentRole,
         });
 
         if (entries.length === 0) {
@@ -1753,7 +1707,6 @@ server.tool(
         const ruleEntries = hmemStore.read({
           prefix: "R",
           depth: 1,
-          agentRole: "worker" as AgentRole,
         }).filter(r => !r.obsolete && !r.irrelevant);
         if (ruleEntries.length > 0) {
           lines.push("  Rules:");
@@ -1781,7 +1734,7 @@ server.tool(
         // Inject universal conventions (C-entries tagged #universal)
         try {
           const conventions = hmemStore.read({
-            prefix: "C", depth: 2, agentRole: "worker" as AgentRole,
+            prefix: "C", depth: 2,
           }).filter(c => !c.obsolete && !c.irrelevant && c.tags?.includes("#universal"));
           if (conventions.length > 0) {
             lines.push("  Conventions (#universal):");
@@ -2228,12 +2181,11 @@ server.tool(
       const lines: string[] = [`## Memory: ${agent_name} (${stats.total} entries, depth=${depth || 3})\n`];
       for (const e of entries) {
         const date = e.created_at.substring(0, 10);
-        const role = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
         const access = e.access_count > 0 ? ` (${e.access_count}x)` : "";
         const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
         const irrelevantTag = e.irrelevant ? " [- IRRELEVANT]" : "";
         const favTag = e.favorite ? " [♥]" : "";
-        lines.push(`[${e.id}] ${date}${role}${favTag}${obsoleteTag}${irrelevantTag}${access}`);
+        lines.push(`[${e.id}] ${date}${favTag}${obsoleteTag}${irrelevantTag}${access}`);
         lines.push(`  ${e.title}`);
         if (e.level_1 && e.level_1 !== e.title) {
           for (const bodyLine of e.level_1.split("\n")) {
@@ -2265,7 +2217,7 @@ server.tool(
   "fix_agent_memory",
   "CURATOR ONLY (ceo role). Correct a specific entry or node in any agent's memory.\n\n" +
     "Accepts both root IDs ('L0003') and compound node IDs ('L0003.2'):\n" +
-    "- Root ID: updates L1 summary text, min_role clearance, obsolete/irrelevant/favorite flags\n" +
+    "- Root ID: updates L1 summary text, obsolete/irrelevant/favorite flags\n" +
     "- Compound node ID: updates the content of that specific node\n\n" +
     "To fix wrong prefix: delete + re-add (prefix cannot be changed in-place).\n" +
     "To consolidate fragmented P entries: use read_agent_memory to read them, " +
@@ -2280,9 +2232,6 @@ server.tool(
       "New text content. For root entries: replaces the L1 summary. " +
       "For node IDs: replaces that node's content."
     ),
-    min_role: z.enum(["worker", "al", "pl", "ceo"]).optional().describe(
-      "Update access clearance (root entries only)."
-    ),
     obsolete: z.coerce.boolean().optional().describe(
       "Mark or unmark as obsolete (root entries only). " +
       "Obsolete entries stay in memory but are shown with [⚠ OBSOLETE]."
@@ -2294,7 +2243,7 @@ server.tool(
       "Mark or unmark as irrelevant (root entries only). Irrelevant entries are hidden from bulk reads. No correction entry needed."
     ),
   },
-  async ({ agent_name, entry_id, content, min_role, obsolete, favorite, irrelevant }) => {
+  async ({ agent_name, entry_id, content, obsolete, favorite, irrelevant }) => {
     if (!isCurator()) {
       return {
         content: [{ type: "text" as const, text: "ERROR: fix_agent_memory is only available to the ceo/curator role." }],
@@ -2328,9 +2277,9 @@ server.tool(
         if (ok) changed.push("content");
       } else {
         // Root entry — update memories table
-        if (!content && min_role === undefined && obsolete === undefined && favorite === undefined && irrelevant === undefined) {
+        if (!content && obsolete === undefined && favorite === undefined && irrelevant === undefined) {
           return {
-            content: [{ type: "text" as const, text: "ERROR: Provide at least one of: content, min_role, obsolete, favorite, irrelevant." }],
+            content: [{ type: "text" as const, text: "ERROR: Provide at least one of: content, obsolete, favorite, irrelevant." }],
             isError: true,
           };
         }
@@ -2342,13 +2291,11 @@ server.tool(
           if (irrelevant !== undefined) changed.push("irrelevant");
         } else {
           const fields: any = {};
-          if (min_role !== undefined) fields.min_role = min_role;
           if (obsolete !== undefined) fields.obsolete = obsolete;
           if (favorite !== undefined) fields.favorite = favorite;
           if (irrelevant !== undefined) fields.irrelevant = irrelevant;
           ok = store.update(entry_id, fields);
         }
-        if (min_role !== undefined) changed.push("min_role");
         if (!content && obsolete !== undefined) changed.push("obsolete");
         if (!content && favorite !== undefined) changed.push("favorite");
         if (!content && irrelevant !== undefined) changed.push("irrelevant");
@@ -2692,8 +2639,7 @@ function renderEntryFormatted(lines: string[], e: MemoryEntry, curator: boolean,
       const irrelevantTag = e.irrelevant ? " [- IRRELEVANT]" : "";
       const date = e.created_at.substring(0, 10);
       const accessed = e.access_count > 0 ? ` (${e.access_count}x accessed)` : "";
-      const roleTag = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
-      lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}${accessed}`);
+      lines.push(`[${e.id}] ${date}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}${accessed}`);
       lines.push(`  ${e.title}${tagStr}`);
     } else {
       const promotedTag = e.promoted === "favorite" ? " [♥]" : e.promoted === "access" ? " [★]" : e.promoted === "subnode" ? " [≡]" : e.promoted === "task" ? " [⚡]" : "";

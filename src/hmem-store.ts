@@ -17,7 +17,7 @@
  * Prefixes: P=Project, L=Lesson, T=Task, E=Error, D=Decision, M=Milestone, S=Skill, N=Navigator
  *
  * Role hierarchy: worker < al < pl < ceo
- * Each entry has a min_role — agents only see entries at or below their clearance.
+ * Each entry has a min_role column (kept in DB, no longer used for filtering).
  *
  * read_memory(id) semantics:
  *   Always returns the node + its DIRECT children only.
@@ -127,7 +127,8 @@ export interface ReadOptions {
   before?: string;            // ISO date
   search?: string;            // full-text search across all levels
   limit?: number;             // max results, default from config
-  agentRole?: AgentRole;      // filter by role clearance (company store)
+  /** @deprecated No longer used — role filtering removed. Kept for API compat. */
+  agentRole?: AgentRole;
   /** Internal: skip link resolution to prevent circular references. Default: true for ID queries. */
   resolveLinks?: boolean;
   /** How many levels of link resolution (default 1). 0 = none. Linked entries decrement this. */
@@ -191,17 +192,7 @@ export interface ImportResult {
 
 // Prefixes are now loaded from config — see this.cfg.prefixes
 
-const ROLE_LEVEL: Record<AgentRole, number> = {
-  worker: 0, al: 1, pl: 2, ceo: 3,
-};
-
 // (limits are now instance-level via this.cfg.maxCharsPerLevel)
-
-/** All roles that a given role may see (itself + below). */
-function allowedRoles(role: AgentRole): AgentRole[] {
-  const level = ROLE_LEVEL[role];
-  return (Object.keys(ROLE_LEVEL) as AgentRole[]).filter(r => ROLE_LEVEL[r] <= level);
-}
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS memories (
@@ -399,7 +390,7 @@ export class HmemStore {
    * Each indented line → its own memory_nodes row with compound ID
    * Multiple lines at the same indent depth → siblings (new capability)
    */
-  write(prefix: string, content: string, links?: string[], minRole: AgentRole = "worker", favorite?: boolean, tags?: string[], pinned?: boolean, force?: boolean): WriteResult {
+  write(prefix: string, content: string, links?: string[], _minRole?: AgentRole, favorite?: boolean, tags?: string[], pinned?: boolean, force?: boolean): WriteResult {
     this.guardCorrupted();
     prefix = prefix.toUpperCase();
     if (!this.cfg.prefixes[prefix]) {
@@ -532,7 +523,7 @@ export class HmemStore {
         rootId, prefix, seq, timestamp, timestamp,
         title, level1,
         links ? JSON.stringify(links) : null,
-        minRole,
+        "worker",
         favorite ? 1 : 0,
         pinned ? 1 : 0
       );
@@ -642,7 +633,6 @@ export class HmemStore {
    */
   read(opts: ReadOptions = {}): MemoryEntry[] {
     const limit = opts.limit; // undefined = no limit (all entries)
-    const roleFilter = this.buildRoleFilter(opts.agentRole);
 
     // Single entry by ID (root or compound node)
     if (opts.id) {
@@ -672,8 +662,8 @@ export class HmemStore {
         return [entry];
       } else {
         // Root ID — fetch from memories
-        const sql = `SELECT * FROM memories WHERE id = ?${roleFilter.sql ? ` AND ${roleFilter.sql}` : ""}`;
-        const row = this.db.prepare(sql).get(opts.id, ...roleFilter.params) as any;
+        const sql = `SELECT * FROM memories WHERE id = ?`;
+        const row = this.db.prepare(sql).get(opts.id) as any;
         if (!row) return [];
 
         // ── Obsolete chain resolution ──
@@ -687,7 +677,7 @@ export class HmemStore {
               // Return ALL entries in the chain
               const entries: MemoryEntry[] = [];
               for (const chainId of chain) {
-                const chainRow = this.db.prepare(sql).get(chainId, ...roleFilter.params) as any;
+                const chainRow = this.db.prepare(sql).get(chainId) as any;
                 if (!chainRow) continue;
                 const children = this.fetchChildren(chainId);
                 const entry = this.rowToEntry(chainRow, children);
@@ -700,7 +690,7 @@ export class HmemStore {
             } else {
               // Return ONLY the final valid entry
               this.bumpAccess(finalId);
-              const finalRow = this.db.prepare(sql).get(finalId, ...roleFilter.params) as any;
+              const finalRow = this.db.prepare(sql).get(finalId) as any;
               if (!finalRow) return []; // correction target inaccessible
               const children = this.fetchChildren(finalId);
               const entry = this.rowToEntry(finalRow, children);
@@ -771,7 +761,6 @@ export class HmemStore {
 
       const conditions: string[] = ["seq > 0", "created_at >= ?", "created_at <= ?"];
       const params: any[] = [start.toISOString(), end.toISOString()];
-      if (roleFilter.sql) { conditions.push(roleFilter.sql); params.push(...roleFilter.params); }
 
       const where = `WHERE ${conditions.join(" AND ")}`;
       const rows = this.db.prepare(
@@ -807,12 +796,12 @@ export class HmemStore {
 
       const idPlaceholders = [...ftsRootIds].map(() => "?").join(", ");
       const baseWhere = `id IN (${idPlaceholders}) AND seq > 0`;
-      const where = roleFilter.sql ? `WHERE ${baseWhere} AND ${roleFilter.sql}` : `WHERE ${baseWhere}`;
+      const where = `WHERE ${baseWhere}`;
       const limitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
 
       const rows = this.db.prepare(
         `SELECT * FROM memories ${where} ORDER BY created_at DESC${limitClause}`
-      ).all(...ftsRootIds, ...roleFilter.params) as any[];
+      ).all(...ftsRootIds) as any[];
 
       for (const row of rows) this.bumpAccess(row.id);
       return rows.map(r => this.rowToEntry(r));
@@ -822,10 +811,6 @@ export class HmemStore {
     const conditions: string[] = ["seq > 0"];
     const params: any[] = [];
 
-    if (roleFilter.sql) {
-      conditions.push(roleFilter.sql);
-      params.push(...roleFilter.params);
-    }
     if (opts.prefix) {
       conditions.push("prefix = ?");
       params.push(opts.prefix.toUpperCase());
@@ -1372,12 +1357,10 @@ export class HmemStore {
    * Get all Level 1 entries for injection at agent startup.
    * Does NOT bump access_count (routine injection).
    */
-  getLevel1All(agentRole?: AgentRole): string {
-    const roleFilter = this.buildRoleFilter(agentRole);
-    const where = roleFilter.sql ? `WHERE seq > 0 AND ${roleFilter.sql}` : "WHERE seq > 0";
+  getLevel1All(): string {
     const rows = this.db.prepare(
-      `SELECT id, created_at, level_1 FROM memories ${where} ORDER BY created_at DESC`
-    ).all(...roleFilter.params) as any[];
+      `SELECT id, created_at, level_1 FROM memories WHERE seq > 0 ORDER BY created_at DESC`
+    ).all() as any[];
 
     if (rows.length === 0) return "";
 
@@ -1422,8 +1405,7 @@ export class HmemStore {
 
       const date = row.created_at.substring(0, 10);
       const accessed = row.access_count > 0 ? ` (accessed ${row.access_count}x)` : "";
-      const role = row.min_role !== "worker" ? ` [${row.min_role}+]` : "";
-      md += `### [${row.id}] ${date}${role}${accessed}\n`;
+      md += `### [${row.id}] ${date}${accessed}\n`;
       md += `${row.level_1}\n`;
 
       // Include tree nodes (pre-fetched)
@@ -1898,7 +1880,7 @@ export class HmemStore {
   /**
    * Update specific fields of an existing root entry (curator use only).
    */
-  update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite" | "irrelevant" | "active">>): boolean {
+  update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "obsolete" | "favorite" | "irrelevant" | "active">>): boolean {
     this.guardCorrupted();
     const sets: string[] = [];
     const params: any[] = [];
@@ -2756,12 +2738,6 @@ export class HmemStore {
     }
   }
 
-  private buildRoleFilter(agentRole?: AgentRole): { sql: string; params: string[] } {
-    if (!agentRole) return { sql: "", params: [] };
-    const roles = allowedRoles(agentRole);
-    const placeholders = roles.map(() => "?").join(", ");
-    return { sql: `min_role IN (${placeholders})`, params: roles };
-  }
 
   private nextSeq(prefix: string): number {
     const row = this.db.prepare(
@@ -2786,7 +2762,6 @@ export class HmemStore {
         try {
           return this.read({
             id: linkId,
-            agentRole: opts.agentRole,
             linkDepth: linkDepth - 1,
             _visitedLinks: visited,
             followObsolete: false, // don't chain-resolve inside link resolution

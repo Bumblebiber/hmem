@@ -23,7 +23,6 @@ import { execFileSync, spawn } from "node:child_process";
 import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
-import type { AgentRole } from "./hmem-store.js";
 
 export async function contextInject(): Promise<void> {
   // Resolve env defaults (HMEM_PATH, HMEM_PROJECT_DIR)
@@ -55,7 +54,7 @@ export async function contextInject(): Promise<void> {
     const lines: string[] = [];
 
     // 1. Compact project overview — one line per P-entry
-    const allProjects = store.read({ prefix: "P", depth: 1, agentRole: "worker" as AgentRole })
+    const allProjects = store.read({ prefix: "P", depth: 1 })
       .filter(e => !e.obsolete && !e.irrelevant);
 
     const activeProject = allProjects.find(e => e.active);
@@ -69,7 +68,7 @@ export async function contextInject(): Promise<void> {
     }
 
     // 2. R-entries (rules) — compact, one line each
-    const rules = store.read({ prefix: "R", depth: 1, agentRole: "worker" as AgentRole })
+    const rules = store.read({ prefix: "R", depth: 1 })
       .filter(r => !r.obsolete && !r.irrelevant);
     if (rules.length > 0) {
       lines.push("\n## Rules:");
