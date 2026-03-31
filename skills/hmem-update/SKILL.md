@@ -202,9 +202,31 @@ hmem-sync pull      # test pull
 
 ---
 
-## Step 7: Smoke Test
+## Step 7: Restart Prompt
 
-Verify everything works after the update:
+**IMPORTANT:** The smoke test must run against the NEW MCP server version. Since the MCP
+server is loaded into the host process (Claude Code, Gemini CLI, etc.), an npm update does
+NOT take effect until the tool is restarted.
+
+Tell the user:
+
+```
+All migration steps complete. Please restart Claude Code now to load the new MCP server.
+After restart, run /hmem-update again — I'll skip straight to the smoke test.
+```
+
+**If already on latest version** (detected in Step 1): Skip this step — the MCP server
+is already running the current version. Proceed directly to the smoke test.
+
+**After restart:** When `/hmem-update` runs again and Step 1 shows "already on latest",
+proceed to the smoke test immediately.
+
+---
+
+## Step 8: Smoke Test
+
+Verify everything works after the update. **Only run this after the restart** (or if no
+update was installed — i.e., already on latest version).
 
 ```
 read_memory()                           # bulk read works
@@ -220,9 +242,10 @@ If any step fails: report the error to the user. Do not proceed with normal work
 
 ---
 
-## Step 8: Report
+## Step 9: Report
 
-Tell the user what was done:
+Tell the user what was done. **Always remind to restart** if an actual update was
+installed and the user hasn't restarted yet.
 
 ```
 hmem-mcp updated: v5.1.2 → v5.1.4
@@ -231,7 +254,7 @@ Changes applied:
 - Skills synced (2 new, 3 updated)
 - 5 P-entries checked against R0009 schema (2 fixed)
 - 12 O-entries curated (4 titles fixed, 3 summaries added)
-- Smoke test passed
+- Smoke test passed ✓
 
 New features in this version:
 - Rolling checkpoint summaries

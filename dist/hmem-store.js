@@ -2398,6 +2398,92 @@ export class HmemStore {
     getActiveProject() {
         return this.db.prepare("SELECT id, title FROM memories WHERE prefix = 'P' AND active = 1 AND obsolete != 1 LIMIT 1").get() ?? null;
     }
+    /**
+     * Read a root entry from the memories table by ID. Returns null if not found.
+     */
+    readEntry(id) {
+        return this.db.prepare("SELECT id, prefix, seq, level_1, links FROM memories WHERE id = ?").get(id) ?? null;
+    }
+    /**
+     * Find or create the O-entry for a given project sequence number.
+     * O0048 belongs to P0048, O0000 is the non-project catch-all.
+     * Does NOT use the active flag — O is derived purely from P's seq.
+     */
+    resolveProjectO(projectSeq) {
+        const oId = `O${String(projectSeq).padStart(4, "0")}`;
+        const existing = this.db.prepare("SELECT id FROM memories WHERE id = ?").get(oId);
+        if (existing)
+            return oId;
+        const timestamp = new Date().toISOString();
+        const title = projectSeq === 0 ? "Non-project sessions" : `O-entry for P${String(projectSeq).padStart(4, "0")}`;
+        // Find linked P-entry if projectSeq > 0
+        const pId = projectSeq > 0 ? `P${String(projectSeq).padStart(4, "0")}` : null;
+        const pExists = pId ? this.db.prepare("SELECT id FROM memories WHERE id = ?").get(pId) : null;
+        const links = pExists ? JSON.stringify([pId]) : null;
+        this.db.prepare(`INSERT INTO memories (id, prefix, seq, created_at, updated_at, title, level_1, links, min_role)
+       VALUES (?, 'O', ?, ?, ?, ?, ?, ?, 'worker')`).run(oId, projectSeq, timestamp, timestamp, title, title, links);
+        return oId;
+    }
+    /**
+     * Find or create a session (L2 node) under an O-entry.
+     * Sessions are tracked via a temp file keyed by O-entry ID hash.
+     * A new transcript_path means a new Claude Code session.
+     */
+    resolveSession(oId, transcriptPath) {
+        const crypto = require("node:crypto");
+        const hash = crypto.createHash("md5").update(oId).digest("hex").substring(0, 8);
+        const stateFile = `/tmp/.hmem_session_${hash}.json`;
+        // Check cached state
+        let cached = null;
+        try {
+            const raw = fs.readFileSync(stateFile, "utf8");
+            cached = JSON.parse(raw);
+        }
+        catch {
+            // File doesn't exist or is invalid — treat as no cache
+        }
+        if (cached && cached.transcriptPath === transcriptPath) {
+            // Verify the session node still exists in the DB
+            const nodeExists = this.db.prepare("SELECT id FROM memory_nodes WHERE id = ?").get(cached.sessionId);
+            if (nodeExists)
+                return cached.sessionId;
+        }
+        // Create new L2 session node under oId
+        const maxSeqRow = this.db.prepare(`SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`).get(oId + ".", oId + ".%", oId + ".%.%");
+        const seq = (maxSeqRow?.m ?? 0) + 1;
+        const sessionId = `${oId}.${seq}`;
+        const timestamp = new Date().toISOString();
+        const title = `Session ${timestamp.substring(0, 10)}`;
+        this.db.prepare("INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, 2, ?, ?, ?, ?, ?)").run(sessionId, oId, oId, seq, title, title, timestamp, timestamp);
+        this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, oId);
+        // Write state file
+        fs.writeFileSync(stateFile, JSON.stringify({ transcriptPath, sessionId }), "utf8");
+        return sessionId;
+    }
+    /**
+     * Find or create a batch (L3 node) under a session.
+     * Creates a new batch if the current one is full (has >= batchSize L4 children).
+     */
+    resolveBatch(sessionId, oId, batchSize) {
+        // Find latest L3 under session
+        const latestBatch = this.db.prepare("SELECT id FROM memory_nodes WHERE parent_id = ? AND depth = 3 ORDER BY seq DESC LIMIT 1").get(sessionId);
+        if (latestBatch) {
+            // Count L4 children in this batch
+            const countRow = this.db.prepare("SELECT COUNT(*) as n FROM memory_nodes WHERE parent_id = ? AND depth = 4").get(latestBatch.id);
+            if (countRow.n < batchSize)
+                return latestBatch.id;
+        }
+        // Create new L3 batch node under session
+        const maxSeqRow = this.db.prepare(`SELECT MAX(CAST(SUBSTR(id, LENGTH(?) + 1) AS INTEGER)) as m
+       FROM memory_nodes WHERE id LIKE ? AND id NOT LIKE ?`).get(sessionId + ".", sessionId + ".%", sessionId + ".%.%");
+        const seq = (maxSeqRow?.m ?? 0) + 1;
+        const batchId = `${sessionId}.${seq}`;
+        const timestamp = new Date().toISOString();
+        const title = `Batch ${seq}`;
+        this.db.prepare("INSERT INTO memory_nodes (id, parent_id, root_id, depth, seq, title, content, created_at, updated_at) VALUES (?, ?, ?, 3, ?, ?, ?, ?, ?)").run(batchId, sessionId, oId, seq, title, title, timestamp, timestamp);
+        return batchId;
+    }
     /** Find a child node by content/title pattern. Returns node ID or null. */
     findChildNode(parentId, pattern, depth) {
         const depthClause = depth != null ? " AND depth = ?" : "";

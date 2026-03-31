@@ -339,7 +339,7 @@ function writeConfigFile(filePath: string, config: Record<string, unknown>): voi
 
 /**
  * Parse CLI flags for non-interactive mode.
- * Flags: --global, --local, --tools tool1,tool2, --dir /path, --no-example
+ * Flags: --global, --local, --tools tool1,tool2, --dir /path, --no-example, --hooks, --no-hooks
  */
 function parseInitFlags(args: string[]): Record<string, string> {
   const flags: Record<string, string> = {};
@@ -350,6 +350,8 @@ function parseInitFlags(args: string[]): Record<string, string> {
     else if (args[i] === "--dir" && args[i + 1]) flags["dir"] = args[++i];
     else if (args[i] === "--no-example") flags["no-example"] = "true";
     else if (args[i] === "--agent-id" && args[i + 1]) flags["agent-id"] = args[++i];
+    else if (args[i] === "--hooks") flags["hooks"] = "true";
+    else if (args[i] === "--no-hooks") flags["hooks"] = "false";
   }
   return flags;
 }
@@ -589,17 +591,28 @@ export async function runInit(args: string[] = []): Promise<void> {
 
     // Step 8: Install auto-memory hooks (Claude Code only)
     if (selectedTools.includes("claude-code")) {
-      const hookChoice = await askChoice(
-        "Install auto-memory hooks? (Claude Code only)\n" +
-        "  This adds hooks for:\n" +
-        "  - Session start: remind agent to call read_memory()\n" +
-        "  - Every N messages: remind agent to save knowledge (configurable)\n" +
-        "  - Every response: log user/agent exchanges to session history (O-entries)\n" +
-        "  - After /clear: re-inject project context automatically\n" +
-        "  - Async: auto-title untitled session logs via Haiku",
-        ["Yes — install hooks", "No — I'll set them up manually"]
-      );
-      if (hookChoice === 0) {
+      let installHooks: boolean;
+      if (flags["hooks"] === "true") {
+        installHooks = true;
+      } else if (flags["hooks"] === "false") {
+        installHooks = false;
+      } else if (nonInteractive) {
+        // Non-interactive without explicit --hooks/--no-hooks: install by default
+        installHooks = true;
+      } else {
+        const hookChoice = await askChoice(
+          "Install auto-memory hooks? (Claude Code only)\n" +
+          "  This adds hooks for:\n" +
+          "  - Session start: remind agent to call read_memory()\n" +
+          "  - Every N messages: remind agent to save knowledge (configurable)\n" +
+          "  - Every response: log user/agent exchanges to session history (O-entries)\n" +
+          "  - After /clear: re-inject project context automatically\n" +
+          "  - Async: auto-title untitled session logs via Haiku",
+          ["Yes — install hooks", "No — I'll set them up manually"]
+        );
+        installHooks = hookChoice === 0;
+      }
+      if (installHooks) {
         const hooksDir = path.join(HOME, ".claude", "hooks");
         fs.mkdirSync(hooksDir, { recursive: true });
 

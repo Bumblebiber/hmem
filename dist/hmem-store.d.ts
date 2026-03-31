@@ -445,6 +445,33 @@ export declare class HmemStore {
         id: string;
         title: string;
     } | null;
+    /**
+     * Read a root entry from the memories table by ID. Returns null if not found.
+     */
+    readEntry(id: string): {
+        id: string;
+        prefix: string;
+        seq: number;
+        level_1: string;
+        links: string | null;
+    } | null;
+    /**
+     * Find or create the O-entry for a given project sequence number.
+     * O0048 belongs to P0048, O0000 is the non-project catch-all.
+     * Does NOT use the active flag — O is derived purely from P's seq.
+     */
+    resolveProjectO(projectSeq: number): string;
+    /**
+     * Find or create a session (L2 node) under an O-entry.
+     * Sessions are tracked via a temp file keyed by O-entry ID hash.
+     * A new transcript_path means a new Claude Code session.
+     */
+    resolveSession(oId: string, transcriptPath: string): string;
+    /**
+     * Find or create a batch (L3 node) under a session.
+     * Creates a new batch if the current one is full (has >= batchSize L4 children).
+     */
+    resolveBatch(sessionId: string, oId: string, batchSize: number): string;
     /** Find a child node by content/title pattern. Returns node ID or null. */
     findChildNode(parentId: string, pattern: string, depth?: number): string | null;
     /** Find a child node of a root entry by content/title pattern. */
