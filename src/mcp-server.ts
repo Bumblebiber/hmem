@@ -1631,45 +1631,54 @@ server.tool(
         }
 
         // Custom compact rendering for project briefing: L2 content + L3 titles, no dates, compact IDs
+        // ID format: each level shows only its own segment (e.g. .7 → .40 → .1 instead of .7.40.1)
         const e = entries[0];
         const syncThreshold = getSyncThreshold();
         const syncTag = syncThreshold && e.updated_at && e.updated_at <= syncThreshold ? " ✓" : "";
         const lines: string[] = [];
+        const lastSeg = (nodeId: string) => "." + nodeId.split(".").pop();
         lines.push(`${e.id}${syncTag}  ${e.title}`);
         if (e.level_1 && e.level_1 !== e.title) lines.push(`  ${e.level_1}`);
         if (e.children) {
           const { withBody, withChildren } = hmemConfig.loadProjectExpand;
+          // Sections where only tail children are shown (e.g. Protocol)
+          const TAIL_SECTIONS = [7]; // .7 Protocol — only last 5
+          const TAIL_COUNT = 5;
+          // Sections where L3 children are hidden entirely (e.g. Ideas)
+          const HIDE_CHILDREN_SECTIONS = [9]; // .9 Ideas
           for (const child of (e.children as MemoryNode[]).filter(c => !c.irrelevant)) {
-            const cId = child.id.replace(e.id, "");
+            const cId = lastSeg(child.id);
             const expandBody = withBody.includes(child.seq);
             const expandChildTitles = withChildren.includes(child.seq);
+            const hideChildren = HIDE_CHILDREN_SECTIONS.includes(child.seq);
             lines.push(`  ${cId}  ${child.title || child.content.substring(0, 60)}`);
+            if (hideChildren) continue; // Skip children entirely for this section
             if (child.children && child.children.length > 0) {
-              for (const gc of child.children.filter((g: any) => !g.irrelevant)) {
-                const gcId = gc.id.replace(e.id, "");
+              let grandchildren = child.children.filter((g: any) => !g.irrelevant);
+              // For tail sections, only show the last N children
+              if (TAIL_SECTIONS.includes(child.seq) && grandchildren.length > TAIL_COUNT) {
+                grandchildren = grandchildren.slice(-TAIL_COUNT);
+              }
+              for (const gc of grandchildren) {
+                const gcId = lastSeg(gc.id);
                 if (expandBody) {
                   // Show L3 title + body content
                   lines.push(`    ${gcId}  ${gc.title || gc.content.substring(0, 80)}`);
                   if (gc.content && gc.content !== gc.title) {
-                    // Show body lines indented
                     for (const bodyLine of gc.content.split("\n")) {
                       lines.push(`      ${bodyLine}`);
                     }
                   }
-                } else if (expandChildTitles) {
-                  // Show all L3 children as titles
-                  const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
-                  lines.push(`    ${gcId}  ${gcTitle}`);
                 } else {
-                  // Default: compact titles only
+                  // Compact title
                   const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
                   lines.push(`    ${gcId}  ${gcTitle}`);
                 }
-                // L4 children titles (already loaded via depth=4)
+                // L4 children titles
                 if (gc.children && gc.children.length > 0) {
                   const visibleL4 = gc.children.filter((l4: any) => !l4.irrelevant);
                   for (const l4 of visibleL4) {
-                    const l4Id = l4.id.replace(e.id, "");
+                    const l4Id = lastSeg(l4.id);
                     const l4Title = l4.title || (l4.content?.length > 60 ? l4.content.substring(0, 60) + "…" : l4.content || "");
                     lines.push(`      ${l4Id}  ${l4Title}`);
                   }
