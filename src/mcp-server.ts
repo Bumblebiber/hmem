@@ -2037,6 +2037,63 @@ server.tool(
   }
 );
 
+// ---- Tool: list_projects ----
+
+server.tool(
+  "list_projects",
+  "List all projects (P-entries) with their IDs and titles. Minimal output for checkpoint agents.",
+  {
+    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
+  },
+  async ({ store }) => {
+    try {
+      const hmemStore = store === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+      try {
+        const projects = hmemStore.listProjects();
+        const text = projects.map(p => `${p.id} ${p.title}`).join("\n");
+        return { content: [{ type: "text" as const, text: text || "No projects found." }] };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+    }
+  }
+);
+
+// ---- Tool: move_nodes ----
+
+server.tool(
+  "move_nodes",
+  "Move session (L2), batch (L3), or exchange (L4) nodes between O-entries. Handles ID rewriting, tag migration, and cleanup of empty parents.",
+  {
+    node_ids: z.array(z.string()).describe("IDs of nodes to move (L2, L3, or L4)"),
+    target_o_id: z.string().describe("Target O-entry ID (e.g. O0048)"),
+    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
+  },
+  async ({ node_ids, target_o_id, store }) => {
+    try {
+      const hmemStore = store === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+      try {
+        const result = hmemStore.moveNodes(node_ids, target_o_id);
+        let text = `Moved ${result.moved} node(s) to ${target_o_id}.`;
+        if (result.errors.length > 0) {
+          text += `\nErrors:\n${result.errors.join("\n")}`;
+        }
+        return { content: [{ type: "text" as const, text }] };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+    }
+  }
+);
+
 // ---- Curator Tools (ceo role only) ----
 
 const AUDIT_STATE_FILE = process.env.HMEM_AUDIT_STATE_PATH
