@@ -3116,6 +3116,12 @@ export class HmemStore {
     let moved = 0;
     const errors: string[] = [];
 
+    // Validate target exists
+    const targetExists = this.db.prepare("SELECT id FROM memories WHERE id = ?").get(targetOId);
+    if (!targetExists) {
+      return { moved: 0, errors: [`Target ${targetOId} does not exist`] };
+    }
+
     const doMove = this.db.transaction(() => {
       for (const nodeId of nodeIds) {
         const node = this.readNode(nodeId);
