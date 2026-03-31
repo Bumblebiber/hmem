@@ -354,11 +354,13 @@ function trackTokens(result) {
     return result;
 }
 /**
- * Format recent O-entries block: latest O-entry with full exchanges, rest as titles.
+ * Format recent O-entries block using the 5-level hierarchy.
+ * Shows sessions (L2), last batch rolling summary (L3), and recent exchanges (L4→L5).
  * @param store - HmemStore instance
  * @param limit - total O-entries to show
  * @param exchangeCount - number of exchanges to show from the latest O-entry
  * @param linkedTo - optional project ID filter
+ * @param expandAll - if true, expand all O-entries (not just the first)
  * @returns formatted string + list of O-entry IDs for cache registration
  */
 function formatRecentOEntries(store, limit, exchangeCount, linkedTo, expandAll) {
@@ -372,22 +374,50 @@ function formatRecentOEntries(store, limit, exchangeCount, linkedTo, expandAll) 
     for (let i = 0; i < recentO.length; i++) {
         const o = recentO[i];
         lines.push(`  ${o.id}  ${o.created_at.substring(0, 10)}  ${o.title}`);
-        // Expand exchanges: all entries when expandAll, otherwise only latest
+        // Expand: all entries when expandAll, otherwise only latest
         if (expandAll || i === 0) {
-            // Check for checkpoint summaries — if present, show summary + only exchanges after it
-            // Always show: latest summary (if any) + last 5 exchanges verbatim
-            const VERBATIM_WINDOW = 5;
-            const summaries = store.getCheckpointSummaries(o.id, 1);
-            if (summaries.length > 0) {
-                lines.push(`    [Summary] ${summaries[0].content}`);
+            // Show sessions (L2 nodes) — most recent first, up to 3
+            const sessions = store.getChildNodes(o.id)
+                .filter(n => n.depth === 2)
+                .sort((a, b) => b.seq - a.seq)
+                .slice(0, 3);
+            for (const session of sessions) {
+                const sessDate = session.created_at.substring(0, 10);
+                lines.push(`    [Session ${sessDate}] ${session.title}`);
+                // Show session summary (L2 body) if different from title
+                if (session.content && session.content !== session.title) {
+                    const summaryShort = session.content.length > 300 ? session.content.substring(0, 300) + "..." : session.content;
+                    lines.push(`      Summary: ${summaryShort}`);
+                }
             }
-            const exchanges = store.getOEntryExchanges(o.id, VERBATIM_WINDOW, true);
+            // Show last batch's rolling summary (L3 body) from the most recent session
+            if (sessions.length > 0) {
+                const latestSession = sessions[0];
+                const batches = store.getChildNodes(latestSession.id)
+                    .filter(n => n.depth === 3)
+                    .sort((a, b) => b.seq - a.seq);
+                if (batches.length > 0 && batches[0].content && batches[0].content !== batches[0].title) {
+                    const batchSummary = batches[0].content.length > 500 ? batches[0].content.substring(0, 500) + "..." : batches[0].content;
+                    lines.push(`    [Rolling Summary] ${batchSummary}`);
+                }
+            }
+            // Show last N exchanges (L4→L5) using V2 reader
+            const exchanges = store.getOEntryExchangesV2(o.id, exchangeCount, {
+                skipIrrelevant: true,
+                titleOnlyTags: ["#skill-dialog", "#admin"],
+            });
             for (const ex of exchanges) {
-                const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
-                const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
-                lines.push(`    USER: ${userShort}`);
-                if (agentShort)
-                    lines.push(`    AGENT: ${agentShort}`);
+                if (!ex.userText && !ex.agentText) {
+                    // Title-only exchange (skill-dialog, admin, etc.)
+                    lines.push(`    [${ex.title}]`);
+                }
+                else {
+                    const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
+                    const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
+                    lines.push(`    USER: ${userShort}`);
+                    if (agentShort)
+                        lines.push(`    AGENT: ${agentShort}`);
+                }
             }
         }
     }
@@ -1520,13 +1550,19 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                     lines.push(`    ${r.id}  ${r.title}`);
                 }
             }
-            // Inject the most recent O-entry linked to this project with last N exchanges
+            // Inject recent O-entries linked to THIS project
             // Purpose: seamless continuation of the previous session's conversation
             if (hmemConfig.recentOEntries > 0) {
-                const { text, ids } = formatRecentOEntries(hmemStore, 1, hmemConfig.recentOEntries, id, true);
-                if (text) {
-                    lines.push("  " + text.replace(/\n/g, "\n  "));
-                    sessionCache.registerDelivered(ids);
+                const projectSeq = parseInt(id.replace(/\D/g, ""), 10);
+                const projectOId = `O${String(projectSeq).padStart(4, "0")}`;
+                const oExists = hmemStore.readEntry(projectOId);
+                if (oExists) {
+                    const { text: oText, ids } = formatRecentOEntries(hmemStore, 1, 5, id, true);
+                    if (oText.trim()) {
+                        lines.push("  --- Recent Session Context ---");
+                        lines.push("  " + oText.replace(/\n/g, "\n  "));
+                        sessionCache.registerDelivered(ids);
+                    }
                 }
             }
             // Inject universal conventions (C-entries tagged #universal)
@@ -1759,6 +1795,53 @@ server.tool("rename_id", "Atomically rename an entry ID and update ALL reference
                         text: `Renamed ${old_id} → ${new_id} (${result.affected} rows affected).\nAll child nodes, tags, links, and FTS index updated.`,
                     }],
             };
+        }
+        finally {
+            hmemStore.close();
+        }
+    }
+    catch (e) {
+        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+    }
+});
+// ---- Tool: list_projects ----
+server.tool("list_projects", "List all projects (P-entries) with their IDs and titles. Minimal output for checkpoint agents.", {
+    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
+}, async ({ store }) => {
+    try {
+        const hmemStore = store === "company"
+            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        try {
+            const projects = hmemStore.listProjects();
+            const text = projects.map(p => `${p.id} ${p.title}`).join("\n");
+            return { content: [{ type: "text", text: text || "No projects found." }] };
+        }
+        finally {
+            hmemStore.close();
+        }
+    }
+    catch (e) {
+        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+    }
+});
+// ---- Tool: move_nodes ----
+server.tool("move_nodes", "Move session (L2), batch (L3), or exchange (L4) nodes between O-entries. Handles ID rewriting, tag migration, and cleanup of empty parents.", {
+    node_ids: z.array(z.string()).describe("IDs of nodes to move (L2, L3, or L4)"),
+    target_o_id: z.string().describe("Target O-entry ID (e.g. O0048)"),
+    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
+}, async ({ node_ids, target_o_id, store }) => {
+    try {
+        const hmemStore = store === "company"
+            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+        try {
+            const result = hmemStore.moveNodes(node_ids, target_o_id);
+            let text = `Moved ${result.moved} node(s) to ${target_o_id}.`;
+            if (result.errors.length > 0) {
+                text += `\nErrors:\n${result.errors.join("\n")}`;
+            }
+            return { content: [{ type: "text", text }] };
         }
         finally {
             hmemStore.close();
@@ -2256,8 +2339,8 @@ function renderEntryFormatted(lines, e, curator, expand = false) {
     // Use read_memory(id="O0042") to drill in explicitly.
     if (e.prefix === "O" && !expand) {
         const mmdd = e.created_at.substring(5, 10);
-        const childCount = e.children?.length ?? 0;
-        lines.push(`${e.id} ${mmdd}  ${e.title}${childCount > 0 ? ` (${childCount} exchanges)` : ""}`);
+        const sessionCount = e.children?.length ?? 0;
+        lines.push(`${e.id} ${mmdd}  ${e.title}${sessionCount > 0 ? ` (${sessionCount} sessions)` : ""}`);
         lines.push("");
         return;
     }
