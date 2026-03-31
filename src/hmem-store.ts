@@ -3008,6 +3008,12 @@ export class HmemStore {
     return { id: l4Id };
   }
 
+  countBatchExchanges(batchId: string): number {
+    return (this.db.prepare(
+      "SELECT COUNT(*) as n FROM memory_nodes WHERE parent_id = ? AND depth = 4"
+    ).get(batchId) as any)?.n ?? 0;
+  }
+
   getOEntryExchangesV2(
     oId: string,
     limit: number,

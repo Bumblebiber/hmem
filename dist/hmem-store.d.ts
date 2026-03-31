@@ -483,6 +483,7 @@ export declare class HmemStore {
     appendExchangeV2(batchId: string, oId: string, userText: string, agentText: string): {
         id: string;
     };
+    countBatchExchanges(batchId: string): number;
     getOEntryExchangesV2(oId: string, limit: number, opts?: {
         skipIrrelevant?: boolean;
         titleOnlyTags?: string[];

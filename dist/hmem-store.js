@@ -2512,6 +2512,9 @@ export class HmemStore {
         })();
         return { id: l4Id };
     }
+    countBatchExchanges(batchId) {
+        return this.db.prepare("SELECT COUNT(*) as n FROM memory_nodes WHERE parent_id = ? AND depth = 4").get(batchId)?.n ?? 0;
+    }
     getOEntryExchangesV2(oId, limit, opts) {
         if (limit <= 0)
             return [];
@@ -2592,6 +2595,11 @@ export class HmemStore {
     moveNodes(nodeIds, targetOId) {
         let moved = 0;
         const errors = [];
+        // Validate target exists
+        const targetExists = this.db.prepare("SELECT id FROM memories WHERE id = ?").get(targetOId);
+        if (!targetExists) {
+            return { moved: 0, errors: [`Target ${targetOId} does not exist`] };
+        }
         const doMove = this.db.transaction(() => {
             for (const nodeId of nodeIds) {
                 const node = this.readNode(nodeId);

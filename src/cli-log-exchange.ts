@@ -162,28 +162,34 @@ export async function logExchange(): Promise<void> {
 
   const store = new HmemStore(hmemPath, hmemConfig);
   try {
-    // Auto-purge irrelevant entries older than 30 days (~1% chance per exchange to avoid overhead)
+    // Auto-purge irrelevant entries older than 30 days (~1% chance)
     if (Math.random() < 0.01) {
       const purged = store.purgeIrrelevant(30);
       if (purged > 0) console.error(`[hmem] purged ${purged} irrelevant entries`);
     }
 
-    // Find or create active O-entry
-    const activeOId = store.getActiveO();
+    // Step 1: Resolve project O-entry
+    const activeProject = store.getActiveProject();
+    const projectSeq = activeProject ? parseInt(activeProject.id.replace(/\D/g, ""), 10) : 0;
+    const oId = store.resolveProjectO(projectSeq);
 
-    // appendExchange stores raw text without newline parsing
-    store.appendExchange(activeOId, userMessage, input.last_assistant_message!);
+    // Step 2: Resolve session (transcript_path tracking)
+    const sessionId = store.resolveSession(oId, input.transcript_path!);
 
-    // Periodic checkpoint: count exchanges in active O-entry (project-based, not session-based)
-    const saveInterval = hmemConfig.checkpointInterval;
+    // Step 3: Resolve batch (create new if full)
+    const batchSize = hmemConfig.checkpointInterval || 5;
+    const batchId = store.resolveBatch(sessionId, oId, batchSize);
+
+    // Step 4: Append exchange (L4 + L5.1 user + L5.2 agent)
+    store.appendExchangeV2(batchId, oId, userMessage, input.last_assistant_message!);
+
+    // Step 5: Trigger checkpoint if batch just became full
     const checkpointMode = hmemConfig.checkpointMode;
+    if (batchSize > 0) {
+      const exchangeCount = store.countBatchExchanges(batchId);
 
-    if (saveInterval > 0) {
-      const exchangeCount = store.countDirectChildren(activeOId);
-
-      if (exchangeCount > 0 && exchangeCount % saveInterval === 0) {
+      if (exchangeCount >= batchSize) {
         if (checkpointMode === "auto") {
-          // Spawn background checkpoint — Haiku extracts L/D/E + titles + P-updates
           const child = spawn(process.execPath, [HMEM_BIN, "checkpoint"], {
             detached: true,
             stdio: "ignore",
@@ -191,10 +197,9 @@ export async function logExchange(): Promise<void> {
           });
           child.unref();
         } else {
-          // "remind" mode: block agent and ask it to save manually
           const nudge = {
             decision: "block",
-            reason: `${exchangeCount} exchanges in this project session. Write key learnings to memory using write_memory (L for lessons, E for errors, D for decisions) before continuing. Keep it brief — just the important stuff.`,
+            reason: `Batch ${batchId} ist voll (${exchangeCount} exchanges). Schreibe wichtige Erkenntnisse in den Speicher (write_memory). Aktueller Batch: ${batchId}`,
           };
           process.stdout.write(JSON.stringify(nudge));
         }
