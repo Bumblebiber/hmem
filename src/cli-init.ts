@@ -638,11 +638,14 @@ export async function runInit(args: string[] = []): Promise<void> {
 
         let changed = migrated;
 
+        // Use --hmem-path flag so hooks find the correct .hmem file (cross-platform)
+        const pathFlag = `--hmem-path ${hmemFilePath}`;
+
         // UserPromptSubmit — startup + checkpoint (cross-platform Node.js)
         if (!settings.hooks.UserPromptSubmit) settings.hooks.UserPromptSubmit = [];
         if (!hasHookCmd("UserPromptSubmit", "hmem hook-startup")) {
           settings.hooks.UserPromptSubmit.push({
-            hooks: [{ type: "command", command: "hmem hook-startup", timeout: 5 }],
+            hooks: [{ type: "command", command: `hmem ${pathFlag} hook-startup`, timeout: 5 }],
           });
           changed = true;
         }
@@ -651,7 +654,7 @@ export async function runInit(args: string[] = []): Promise<void> {
         if (!settings.hooks.Stop) settings.hooks.Stop = [];
         if (!hasHookCmd("Stop", "hmem log-exchange")) {
           settings.hooks.Stop.unshift({
-            hooks: [{ type: "command", command: "hmem log-exchange", timeout: 10, async: true }],
+            hooks: [{ type: "command", command: `hmem ${pathFlag} log-exchange`, timeout: 10, async: true }],
           });
           changed = true;
         }
@@ -659,7 +662,7 @@ export async function runInit(args: string[] = []): Promise<void> {
         // Stop — checkpoint (async, runs after log-exchange to extract knowledge)
         if (!hasHookCmd("Stop", "hmem checkpoint")) {
           settings.hooks.Stop.push({
-            hooks: [{ type: "command", command: "hmem checkpoint", timeout: 120, async: true }],
+            hooks: [{ type: "command", command: `hmem ${pathFlag} checkpoint`, timeout: 120, async: true }],
           });
           changed = true;
         }
@@ -669,7 +672,7 @@ export async function runInit(args: string[] = []): Promise<void> {
         if (!hasHookCmd("SessionStart", "hmem context-inject")) {
           settings.hooks.SessionStart.push({
             matcher: "clear",
-            hooks: [{ type: "command", command: "hmem context-inject", timeout: 10 }],
+            hooks: [{ type: "command", command: `hmem ${pathFlag} context-inject`, timeout: 10 }],
           });
           changed = true;
         }

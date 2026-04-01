@@ -1,7 +1,7 @@
 node_modules/
 dist/
 *.hmem
-!hmem_developer.hmem
+!example.hmem
 *.tmp
 .env
 skills/hmem-release/

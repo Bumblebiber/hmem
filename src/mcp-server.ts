@@ -373,49 +373,62 @@ function formatRecentOEntries(
 
     // Expand: all entries when expandAll, otherwise only latest
     if (expandAll || i === 0) {
-      // Show sessions (L2 nodes) — most recent first, up to 3
+      // Show sessions (L2 nodes) — chronological (oldest first), up to 5
       const sessions = store.getChildNodes(o.id)
         .filter(n => n.depth === 2)
-        .sort((a, b) => b.seq - a.seq)
-        .slice(0, 3);
+        .sort((a, b) => a.seq - b.seq)
+        .slice(-5);
+
+      const latestSession = sessions[sessions.length - 1];
 
       for (const session of sessions) {
+        const hasBody = session.content && session.content !== session.title;
+        const batches = !hasBody ? store.getChildNodes(session.id)
+          .filter(n => n.depth === 3 && n.content && n.content !== n.title)
+          .sort((a, b) => a.seq - b.seq) : [];
+        const isLatest = session === latestSession;
+
+        // Skip older sessions that have no summary and no batch summaries
+        if (!isLatest && !hasBody && batches.length === 0) continue;
+
         const sessDate = session.created_at.substring(0, 10);
         lines.push(`    [Session ${sessDate}] ${session.title.trim()}`);
-        // Show session summary (L2 body) if different from title
-        if (session.content && session.content !== session.title) {
-          const summaryShort = session.content.trim().length > 300 ? session.content.trim().substring(0, 300) + "..." : session.content.trim();
-          lines.push(`      Summary: ${summaryShort}`);
+        if (hasBody) {
+          lines.push(`      Summary: ${session.content.trim()}`);
+        } else {
+          for (const batch of batches) {
+            lines.push(`      [Batch ${batch.title.trim()}] ${batch.content.trim()}`);
+          }
+        }
+
+        // Show rolling summary + exchanges only for the latest session
+        if (session === latestSession) {
+          // Rolling summary (L3 body) — only if session has a proper summary (otherwise batches shown above)
+          const hasSessionSummary = session.content && session.content !== session.title;
+          if (hasSessionSummary) {
+            const batches = store.getChildNodes(session.id)
+              .filter(n => n.depth === 3)
+              .sort((a, b) => b.seq - a.seq);
+            if (batches.length > 0 && batches[0].content && batches[0].content !== batches[0].title) {
+              lines.push(`    [Rolling Summary] ${batches[0].content}`);
+            }
+          }
         }
       }
 
-      // Show last batch's rolling summary (L3 body) from the most recent session
-      if (sessions.length > 0) {
-        const latestSession = sessions[0];
-        const batches = store.getChildNodes(latestSession.id)
-          .filter(n => n.depth === 3)
-          .sort((a, b) => b.seq - a.seq);
-        if (batches.length > 0 && batches[0].content && batches[0].content !== batches[0].title) {
-          const batchSummary = batches[0].content.length > 500 ? batches[0].content.substring(0, 500) + "..." : batches[0].content;
-          lines.push(`    [Rolling Summary] ${batchSummary}`);
-        }
-      }
-
-      // Show last N exchanges (L4→L5) using V2 reader
-      const exchanges = store.getOEntryExchangesV2(o.id, exchangeCount, {
+      // Show last N exchanges (L4→L5) — only from the latest session
+      const exchanges = latestSession ? store.getOEntryExchangesV2(o.id, exchangeCount, {
         skipIrrelevant: true,
-        titleOnlyTags: ["#skill-dialog", "#admin"],
-      });
+        titleOnlyTags: ["#skill-dialog", "#admin", "#meta", "#repetition"],
+        sessionScope: [latestSession.id],
+      }) : [];
       for (const ex of exchanges) {
         if (!ex.userText && !ex.agentText) {
-          // Title-only exchange (skill-dialog, admin, etc.)
-          lines.push(`    [${ex.title}]`);
-        } else {
-          const userShort = ex.userText.length > 300 ? ex.userText.substring(0, 300) + "..." : ex.userText;
-          const agentShort = ex.agentText.length > 500 ? ex.agentText.substring(0, 500) + "..." : ex.agentText;
-          lines.push(`    USER: ${userShort}`);
-          if (agentShort) lines.push(`    AGENT: ${agentShort}`);
+          // Title-only exchange — skip, already covered by batch/session summary
+          continue;
         }
+        lines.push(`    USER: ${ex.userText}`);
+        if (ex.agentText) lines.push(`    AGENT: ${ex.agentText}`);
       }
     }
   }
@@ -652,7 +665,7 @@ server.tool(
     "- Mark as irrelevant: update_memory(id='L0042', content='...', irrelevant=true)\n" +
     "  No correction entry needed (unlike obsolete). Hidden from bulk reads.\n\n" +
     "To add new child nodes, use append_memory. " +
-    "To replace the entire tree, use delete_agent_memory + write_memory (curator only).",
+    "To replace the entire tree, use delete_agent_memory + write_memory.",
   {
     id: z.string().describe("ID of the entry or node to update, e.g. 'L0003' or 'L0003.2'"),
     content: z.string().min(1).describe("New text content for this node (plain text, no indentation)"),
@@ -1613,6 +1626,17 @@ server.tool(
           };
         }
 
+        // Check if project is obsolete
+        const isObsolete = (hmemStore.db.prepare(
+          "SELECT obsolete FROM memories WHERE id = ? AND obsolete = 1"
+        ).get(id) as any);
+        if (isObsolete) {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: ${id} is obsolete. Use the current version instead.` }],
+            isError: true,
+          };
+        }
+
         // Activate the project
         hmemStore.update(id, { active: true });
 
@@ -1641,23 +1665,32 @@ server.tool(
         if (e.level_1 && e.level_1 !== e.title) lines.push(`  ${e.level_1}`);
         if (e.children) {
           const { withBody, withChildren } = hmemConfig.loadProjectExpand;
-          // Sections where only tail children are shown (e.g. Protocol)
-          const TAIL_SECTIONS = [7]; // .7 Protocol — only last 5
+          // Sections completely hidden from load_project output
+          const SKIP_SECTIONS = [7]; // .7 Protocol — maintained but not shown in project briefing
+          const TAIL_SECTIONS: number[] = []; // tail-only sections (show last N children)
           const TAIL_COUNT = 3;
           // Sections where L3 children are hidden entirely (e.g. Ideas)
           const HIDE_CHILDREN_SECTIONS = [9, 2]; // .9 Ideas, .2 Codebase (title-only modules → noise)
           // Sections where completed items (title starts with ✓) are filtered out
           const FILTER_DONE_SECTIONS = [8]; // .8 Open tasks
           for (const child of (e.children as MemoryNode[]).filter(c => !c.irrelevant)) {
+            if (SKIP_SECTIONS.includes(child.seq)) continue;
             const cId = lastSeg(child.id);
             const expandBody = withBody.includes(child.seq);
             const expandChildTitles = withChildren.includes(child.seq);
             const hideChildren = HIDE_CHILDREN_SECTIONS.includes(child.seq);
             lines.push(`  ${cId}  ${child.title || child.content.substring(0, 60)}`);
             // For hidden sections: show body text but skip children
+            // If no body and no children with content, skip the section entirely
             if (hideChildren) {
-              if (child.content && child.content !== child.title) {
+              const childCount = child.children ? child.children.filter((g: any) => !g.irrelevant).length : 0;
+              if (childCount > 0) {
+                // Replace section title with count hint
+                lines[lines.length - 1] += ` (${childCount} entries)`;
+              } else if (child.content && child.content !== child.title) {
                 lines.push(`    ${child.content}`);
+              } else {
+                lines.pop(); // nothing to show, remove section title
               }
               continue;
             }
@@ -2519,21 +2552,25 @@ server.tool(
 
 server.tool(
   "delete_agent_memory",
-  "CURATOR ONLY (ceo role). Delete an entry from any agent's memory. " +
+  "Delete an entry from an agent's memory. " +
+    "Own entries: always allowed. Other agents: curator/ceo role required. " +
     "Use sparingly — only for exact duplicates or entries that are factually wrong and cannot be fixed.",
   {
     agent_name: z.string().describe("Template name of the agent, e.g. 'THOR'"),
     entry_id: z.string().describe("Entry ID to delete, e.g. 'E0007'"),
   },
   async ({ agent_name, entry_id }) => {
-    if (!isCurator()) {
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
+    const isOwnMemory = hmemPath === HMEM_PATH;
+
+    // Curator can delete any agent's entries; non-curators can only delete their own
+    if (!isOwnMemory && !isCurator()) {
       return {
-        content: [{ type: "text" as const, text: "ERROR: delete_agent_memory is only available to the ceo/curator role." }],
+        content: [{ type: "text" as const, text: "ERROR: delete_agent_memory for other agents is only available to the ceo/curator role. To delete your own entries, use your own agent_name." }],
         isError: true,
       };
     }
 
-    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
     if (!fs.existsSync(hmemPath)) {
       return {
         content: [{ type: "text" as const, text: `No .hmem found for agent "${agent_name}".` }],
@@ -2544,7 +2581,7 @@ server.tool(
     const store = new HmemStore(hmemPath, hmemConfig);
     try {
       const ok = store.delete(entry_id);
-      log(`delete_agent_memory [CURATOR]: ${agent_name} ${entry_id} → ${ok ? "deleted" : "not found"}`);
+      log(`delete_agent_memory [${isOwnMemory ? "SELF" : "CURATOR"}]: ${agent_name} ${entry_id} → ${ok ? "deleted" : "not found"}`);
 
       return {
         content: [{

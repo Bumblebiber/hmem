@@ -104,7 +104,7 @@ async function getHmemStatus(): Promise<HmemStatus> {
     const db = new Database(hmemPath, { readonly: true });
     try {
       // Active project
-      let projRow = db.prepare("SELECT id, title FROM memories WHERE prefix='P' AND active=1 LIMIT 1").get() as any;
+      let projRow = db.prepare("SELECT id, title FROM memories WHERE prefix='P' AND active=1 AND obsolete!=1 LIMIT 1").get() as any;
       if (!projRow) {
         projRow = db.prepare(
           "SELECT id, title FROM memories WHERE prefix='P' AND obsolete!=1 AND irrelevant!=1 ORDER BY updated_at DESC LIMIT 1"

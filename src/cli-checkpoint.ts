@@ -180,8 +180,8 @@ For each exchange, consider adding ONE tag if applicable:
 - #meta: Discussion ABOUT the project's tooling/memory/config, not actual project work (e.g. hmem config, sync issues, memory curation, entry cleanup)
 - #repetition: User repeating something already known/stored — redundant exchange, don't include in summary
 
-### 6. Title session ${sessionId} (if generic)
-update_memory(id="${sessionId}", content="Session title summarizing key topics, max 60 chars")
+### 6. Update session ${sessionId} — title AND summary
+update_memory(id="${sessionId}", content="Short session title, max 60 chars\n> Cumulative session summary: 3-10 sentences covering ALL batches so far. Key decisions, outcomes, what changed, what's next. This is what load_project shows — make it count.")
 
 ### 7. Project relevance check
 Do ALL exchanges belong to ${projectName}?

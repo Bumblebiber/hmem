@@ -505,6 +505,7 @@ export declare class HmemStore {
     getOEntryExchangesV2(oId: string, limit: number, opts?: {
         skipIrrelevant?: boolean;
         titleOnlyTags?: string[];
+        sessionScope?: string[];
     }): {
         nodeId: string;
         title: string;

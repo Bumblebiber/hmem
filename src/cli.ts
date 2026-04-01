@@ -6,7 +6,15 @@
  * Created:   2026-02-21
  */
 
-const command = process.argv[2];
+// Parse --hmem-path flag (cross-platform alternative to HMEM_PATH=... env prefix)
+const args = process.argv.slice(2);
+const pathIdx = args.indexOf("--hmem-path");
+if (pathIdx !== -1 && args[pathIdx + 1]) {
+  process.env.HMEM_PATH = args[pathIdx + 1];
+  args.splice(pathIdx, 2);
+}
+
+const command = args[0];
 
 switch (command) {
   case "serve":

@@ -2581,12 +2581,23 @@ export class HmemStore {
         const titleOnlyTags = opts?.titleOnlyTags ?? [];
         // Get L4 exchange nodes, newest first
         let query = `SELECT id, title, created_at FROM memory_nodes WHERE root_id = ? AND depth = 4`;
+        // Scope to specific sessions: only return L4 nodes whose ID starts with one of the session prefixes
+        if (opts?.sessionScope && opts.sessionScope.length > 0) {
+            const conditions = opts.sessionScope.map(() => `id LIKE ?`).join(" OR ");
+            query += ` AND (${conditions})`;
+        }
         if (excludeTags.length > 0) {
             const tagList = excludeTags.map(t => `'${t}'`).join(",");
             query += ` AND id NOT IN (SELECT entry_id FROM memory_tags WHERE tag IN (${tagList}))`;
         }
         query += ` ORDER BY created_at DESC, id DESC LIMIT ?`;
-        const l4Nodes = this.db.prepare(query).all(oId, limit);
+        const params = [oId];
+        if (opts?.sessionScope && opts.sessionScope.length > 0) {
+            for (const sid of opts.sessionScope)
+                params.push(`${sid}.%`);
+        }
+        params.push(limit);
+        const l4Nodes = this.db.prepare(query).all(...params);
         const exchanges = [];
         for (const l4 of l4Nodes) {
             let isTitleOnly = false;
@@ -3951,7 +3962,22 @@ export function resolveHmemPath(cwdOverride) {
         if (e instanceof Error && e.message.startsWith("Multiple"))
             throw e;
     }
-    // Priority 3: default
+    // Priority 3: ~/.hmem/Agents/ — if there's exactly one agent, use its .hmem file
+    const agentsDir = path.resolve(safeHomedir(), ".hmem", "Agents");
+    try {
+        const agents = fs.readdirSync(agentsDir).filter(d => {
+            const agentPath = path.join(agentsDir, d);
+            return fs.statSync(agentPath).isDirectory() && !d.startsWith(".");
+        });
+        if (agents.length === 1) {
+            const agentDir = path.join(agentsDir, agents[0]);
+            const hmemFiles = fs.readdirSync(agentDir).filter(f => f.endsWith(".hmem") && !f.includes("backup"));
+            if (hmemFiles.length === 1)
+                return path.resolve(agentDir, hmemFiles[0]);
+        }
+    }
+    catch { }
+    // Priority 4: default fallback
     return path.resolve(safeHomedir(), ".hmem", "memory.hmem");
 }
 /**
