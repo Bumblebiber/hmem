@@ -1747,7 +1747,7 @@ server.tool(
           const projectOId = `O${String(projectSeq).padStart(4, "0")}`;
           const oExists = hmemStore.readEntry(projectOId);
           if (oExists) {
-            const { text: oText, ids } = formatRecentOEntries(hmemStore, 1, 0, id, true);
+            const { text: oText, ids } = formatRecentOEntries(hmemStore, 1, 5, id, true);
             if (oText.trim()) {
               lines.push("  --- Recent Session Context ---");
               lines.push("  " + oText.replace(/\n/g, "\n  "));
