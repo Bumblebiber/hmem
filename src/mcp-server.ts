@@ -381,38 +381,52 @@ function formatRecentOEntries(
 
       const latestSession = sessions[sessions.length - 1];
 
+      // Find the last NON-CURRENT session with a summary body
+      // The current session may have a batch summary but won't have a rolling summary yet
+      const summarizedSessions = sessions
+        .filter(s => s !== latestSession && s.content && s.content !== s.title);
+      const lastSummarized = summarizedSessions.length > 0 ? summarizedSessions[summarizedSessions.length - 1] : null;
+
+      // Find rolling summary: highest-seq L3 child of the last summarized session
+      let rollingSum: string | null = null;
+      if (lastSummarized) {
+        const rsBatches = store.getChildNodes(lastSummarized.id)
+          .filter(n => n.depth === 3)
+          .sort((a, b) => b.seq - a.seq);
+        if (rsBatches.length > 0 && rsBatches[0].content && rsBatches[0].content !== rsBatches[0].title) {
+          rollingSum = rsBatches[0].content;
+        }
+      }
+
       for (const session of sessions) {
         const hasBody = session.content && session.content !== session.title;
         const batches = !hasBody ? store.getChildNodes(session.id)
           .filter(n => n.depth === 3 && n.content && n.content !== n.title)
           .sort((a, b) => a.seq - b.seq) : [];
         const isLatest = session === latestSession;
+        const isLastSummarized = session === lastSummarized;
+
+        // Keep: latest session (current), last summarized session, and sessions without summary but with batches
+        // Skip: older summarized sessions when a rolling summary exists (it covers them)
+        if (!isLatest && !isLastSummarized && rollingSum) continue;
 
         // Skip older sessions that have no summary and no batch summaries
         if (!isLatest && !hasBody && batches.length === 0) continue;
 
         const sessDate = session.created_at.substring(0, 10);
         lines.push(`    [Session ${sessDate}] ${session.title.trim()}`);
-        if (hasBody) {
+        if (hasBody && !(isLastSummarized && rollingSum)) {
+          // Show session summary, but skip it when rolling summary supersedes it
           lines.push(`      Summary: ${session.content.trim()}`);
-        } else {
+        } else if (!hasBody) {
           for (const batch of batches) {
             lines.push(`      [Batch ${batch.title.trim()}] ${batch.content.trim()}`);
           }
         }
 
-        // Show rolling summary + exchanges only for the latest session
-        if (session === latestSession) {
-          // Rolling summary (L3 body) — only if session has a proper summary (otherwise batches shown above)
-          const hasSessionSummary = session.content && session.content !== session.title;
-          if (hasSessionSummary) {
-            const batches = store.getChildNodes(session.id)
-              .filter(n => n.depth === 3)
-              .sort((a, b) => b.seq - a.seq);
-            if (batches.length > 0 && batches[0].content && batches[0].content !== batches[0].title) {
-              lines.push(`    [Rolling Summary] ${batches[0].content}`);
-            }
-          }
+        // Show rolling summary after the last summarized session
+        if (isLastSummarized && rollingSum) {
+          lines.push(`    [Rolling Summary] ${rollingSum}`);
         }
       }
 
@@ -715,6 +729,13 @@ server.tool(
         }
 
         if (storeName === "personal") syncPullThenPush(HMEM_PATH);
+        // Auto-mark completed tasks as irrelevant (✓ DONE in title)
+        if (irrelevant === undefined && content) {
+          const trimmed = content.split("\n")[0].trim();
+          if (trimmed.startsWith("✓ DONE") || trimmed.startsWith("DONE:")) {
+            irrelevant = true;
+          }
+        }
         const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant, tags, pinned, active);
         const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
         log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${irrelevant ? " (marked irrelevant)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}${active !== undefined ? ` (active=${active})` : ""}`);
@@ -2560,7 +2581,9 @@ server.tool(
     entry_id: z.string().describe("Entry ID to delete, e.g. 'E0007'"),
   },
   async ({ agent_name, entry_id }) => {
-    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
+    let hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
+    // If legacy path doesn't exist, assume agent means own memory
+    if (!fs.existsSync(hmemPath)) hmemPath = HMEM_PATH;
     const isOwnMemory = hmemPath === HMEM_PATH;
 
     // Curator can delete any agent's entries; non-curators can only delete their own
