@@ -9,14 +9,14 @@
  * Usage: echo '{"transcript_path":"...","last_assistant_message":"..."}' | hmem log-exchange
  *
  * Requires env:
- *   HMEM_PROJECT_DIR — root directory for .hmem files
- *   HMEM_AGENT_ID    — agent identifier (optional)
+ *   HMEM_PATH        — path to .hmem file (auto-detected)
+ *   HMEM_PROJECT_DIR — directory for config + company.hmem
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { HmemStore, resolveHmemPath } from "./hmem-store.js";
+import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -115,7 +115,7 @@ export async function logExchange() {
     catch {
         process.exit(0);
     }
-    // Resolve env defaults (HMEM_PROJECT_DIR, HMEM_AGENT_ID)
+    // Resolve env defaults (HMEM_PATH, HMEM_PROJECT_DIR)
     resolveEnvDefaults();
     // Guards
     if (input.stop_hook_active)
@@ -144,17 +144,33 @@ export async function logExchange() {
     if (userMessage.startsWith("Generate a concise one-line title"))
         process.exit(0);
     // Open hmem store
-    const projectDir = process.env.HMEM_PROJECT_DIR || process.env.COUNCIL_PROJECT_DIR;
+    const projectDir = process.env.HMEM_PROJECT_DIR;
     if (!projectDir)
         process.exit(0);
-    const agentId = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "";
-    const templateName = agentId.replace(/_\d+$/, "");
-    const hmemPath = resolveHmemPath(projectDir, templateName);
+    const hmemPath = process.env.HMEM_PATH;
     if (!fs.existsSync(hmemPath))
         process.exit(0);
     const hmemConfig = loadHmemConfig(path.dirname(hmemPath));
-    const store = new HmemStore(hmemPath, hmemConfig);
+    let store;
     try {
+        store = new HmemStore(hmemPath, hmemConfig);
+    }
+    catch (e) {
+        // DB locked (Windows WAL locking) or other open failure → queue for later
+        const pendingPath = path.join(path.dirname(hmemPath), "pending-exchanges.jsonl");
+        const entry = {
+            ts: new Date().toISOString(),
+            userMessage,
+            agentMessage: input.last_assistant_message,
+            transcriptPath: input.transcript_path,
+        };
+        fs.appendFileSync(pendingPath, JSON.stringify(entry) + "\n");
+        console.error(`[hmem log-exchange] DB locked, queued to ${pendingPath}: ${e}`);
+        process.exit(0);
+    }
+    try {
+        // Process any previously queued exchanges first
+        store.processPendingExchanges();
         // Auto-purge irrelevant entries older than 30 days (~1% chance)
         if (Math.random() < 0.01) {
             const purged = store.purgeIrrelevant(30);
@@ -181,7 +197,7 @@ export async function logExchange() {
                     const child = spawn(process.execPath, [HMEM_BIN, "checkpoint"], {
                         detached: true,
                         stdio: "ignore",
-                        env: { ...process.env, HMEM_PROJECT_DIR: projectDir, HMEM_AGENT_ID: agentId },
+                        env: { ...process.env, HMEM_PROJECT_DIR: projectDir, HMEM_PATH: process.env.HMEM_PATH },
                     });
                     child.unref();
                 }

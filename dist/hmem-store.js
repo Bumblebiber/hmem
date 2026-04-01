@@ -17,7 +17,7 @@
  * Prefixes: P=Project, L=Lesson, T=Task, E=Error, D=Decision, M=Milestone, S=Skill, N=Navigator
  *
  * Role hierarchy: worker < al < pl < ceo
- * Each entry has a min_role — agents only see entries at or below their clearance.
+ * Each entry has a min_role column (kept in DB, no longer used for filtering).
  *
  * read_memory(id) semantics:
  *   Always returns the node + its DIRECT children only.
@@ -27,18 +27,11 @@
 import Database from "better-sqlite3";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { DEFAULT_CONFIG, DEFAULT_PREFIX_DESCRIPTIONS } from "./hmem-config.js";
 // Prefixes are now loaded from config — see this.cfg.prefixes
-const ROLE_LEVEL = {
-    worker: 0, al: 1, pl: 2, ceo: 3,
-};
 // (limits are now instance-level via this.cfg.maxCharsPerLevel)
-/** All roles that a given role may see (itself + below). */
-function allowedRoles(role) {
-    const level = ROLE_LEVEL[role];
-    return Object.keys(ROLE_LEVEL).filter(r => ROLE_LEVEL[r] <= level);
-}
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS memories (
     id            TEXT PRIMARY KEY,
@@ -212,6 +205,12 @@ export class HmemStore {
         this.migrateHeaders();
         this.migrateObsoleteAccessCount();
         this.migrateFts5();
+        // Process any pending exchanges queued by hooks that couldn't open the DB
+        // (e.g. Windows WAL locking). Cheap no-op when no pending file exists.
+        try {
+            this.processPendingExchanges();
+        }
+        catch { /* non-critical */ }
     }
     /** Throw if the database is corrupted — prevents silent data loss on write operations. */
     guardCorrupted() {
@@ -227,7 +226,7 @@ export class HmemStore {
      * Each indented line → its own memory_nodes row with compound ID
      * Multiple lines at the same indent depth → siblings (new capability)
      */
-    write(prefix, content, links, minRole = "worker", favorite, tags, pinned, force) {
+    write(prefix, content, links, _minRole, favorite, tags, pinned, force) {
         this.guardCorrupted();
         prefix = prefix.toUpperCase();
         if (!this.cfg.prefixes[prefix]) {
@@ -343,7 +342,7 @@ export class HmemStore {
         }
         // Run in a transaction
         this.db.transaction(() => {
-            insertRoot.run(rootId, prefix, seq, timestamp, timestamp, title, level1, links ? JSON.stringify(links) : null, minRole, favorite ? 1 : 0, pinned ? 1 : 0);
+            insertRoot.run(rootId, prefix, seq, timestamp, timestamp, title, level1, links ? JSON.stringify(links) : null, "worker", favorite ? 1 : 0, pinned ? 1 : 0);
             for (const node of nodes) {
                 insertNode.run(node.id, node.parent_id, rootId, node.depth, node.seq, node.title, node.content, timestamp, timestamp);
             }
@@ -433,7 +432,6 @@ export class HmemStore {
      */
     read(opts = {}) {
         const limit = opts.limit; // undefined = no limit (all entries)
-        const roleFilter = this.buildRoleFilter(opts.agentRole);
         // Single entry by ID (root or compound node)
         if (opts.id) {
             const isNode = opts.id.includes(".");
@@ -463,8 +461,8 @@ export class HmemStore {
             }
             else {
                 // Root ID — fetch from memories
-                const sql = `SELECT * FROM memories WHERE id = ?${roleFilter.sql ? ` AND ${roleFilter.sql}` : ""}`;
-                const row = this.db.prepare(sql).get(opts.id, ...roleFilter.params);
+                const sql = `SELECT * FROM memories WHERE id = ?`;
+                const row = this.db.prepare(sql).get(opts.id);
                 if (!row)
                     return [];
                 // ── Obsolete chain resolution ──
@@ -477,7 +475,7 @@ export class HmemStore {
                             // Return ALL entries in the chain
                             const entries = [];
                             for (const chainId of chain) {
-                                const chainRow = this.db.prepare(sql).get(chainId, ...roleFilter.params);
+                                const chainRow = this.db.prepare(sql).get(chainId);
                                 if (!chainRow)
                                     continue;
                                 const children = this.fetchChildren(chainId);
@@ -492,7 +490,7 @@ export class HmemStore {
                         else {
                             // Return ONLY the final valid entry
                             this.bumpAccess(finalId);
-                            const finalRow = this.db.prepare(sql).get(finalId, ...roleFilter.params);
+                            const finalRow = this.db.prepare(sql).get(finalId);
                             if (!finalRow)
                                 return []; // correction target inaccessible
                             const children = this.fetchChildren(finalId);
@@ -563,10 +561,6 @@ export class HmemStore {
             const { start, end } = this.parseTimeWindow(refDate, opts.period ?? "both");
             const conditions = ["seq > 0", "created_at >= ?", "created_at <= ?"];
             const params = [start.toISOString(), end.toISOString()];
-            if (roleFilter.sql) {
-                conditions.push(roleFilter.sql);
-                params.push(...roleFilter.params);
-            }
             const where = `WHERE ${conditions.join(" AND ")}`;
             const rows = this.db.prepare(`SELECT * FROM memories ${where} ORDER BY created_at DESC`).all(...params);
             return rows.map(r => this.rowToEntry(r));
@@ -590,9 +584,9 @@ export class HmemStore {
                 return [];
             const idPlaceholders = [...ftsRootIds].map(() => "?").join(", ");
             const baseWhere = `id IN (${idPlaceholders}) AND seq > 0`;
-            const where = roleFilter.sql ? `WHERE ${baseWhere} AND ${roleFilter.sql}` : `WHERE ${baseWhere}`;
+            const where = `WHERE ${baseWhere}`;
             const limitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
-            const rows = this.db.prepare(`SELECT * FROM memories ${where} ORDER BY created_at DESC${limitClause}`).all(...ftsRootIds, ...roleFilter.params);
+            const rows = this.db.prepare(`SELECT * FROM memories ${where} ORDER BY created_at DESC${limitClause}`).all(...ftsRootIds);
             for (const row of rows)
                 this.bumpAccess(row.id);
             return rows.map(r => this.rowToEntry(r));
@@ -600,10 +594,6 @@ export class HmemStore {
         // Build filtered bulk query (exclude headers: seq > 0)
         const conditions = ["seq > 0"];
         const params = [];
-        if (roleFilter.sql) {
-            conditions.push(roleFilter.sql);
-            params.push(...roleFilter.params);
-        }
         if (opts.prefix) {
             conditions.push("prefix = ?");
             params.push(opts.prefix.toUpperCase());
@@ -1107,10 +1097,8 @@ export class HmemStore {
      * Get all Level 1 entries for injection at agent startup.
      * Does NOT bump access_count (routine injection).
      */
-    getLevel1All(agentRole) {
-        const roleFilter = this.buildRoleFilter(agentRole);
-        const where = roleFilter.sql ? `WHERE seq > 0 AND ${roleFilter.sql}` : "WHERE seq > 0";
-        const rows = this.db.prepare(`SELECT id, created_at, level_1 FROM memories ${where} ORDER BY created_at DESC`).all(...roleFilter.params);
+    getLevel1All() {
+        const rows = this.db.prepare(`SELECT id, created_at, level_1 FROM memories WHERE seq > 0 ORDER BY created_at DESC`).all();
         if (rows.length === 0)
             return "";
         return rows.map(r => {
@@ -1146,8 +1134,7 @@ export class HmemStore {
             }
             const date = row.created_at.substring(0, 10);
             const accessed = row.access_count > 0 ? ` (accessed ${row.access_count}x)` : "";
-            const role = row.min_role !== "worker" ? ` [${row.min_role}+]` : "";
-            md += `### [${row.id}] ${date}${role}${accessed}\n`;
+            md += `### [${row.id}] ${date}${accessed}\n`;
             md += `${row.level_1}\n`;
             // Include tree nodes (pre-fetched)
             const nodes = nodesByRoot.get(row.id) ?? [];
@@ -2313,13 +2300,6 @@ export class HmemStore {
             };
         }
     }
-    buildRoleFilter(agentRole) {
-        if (!agentRole)
-            return { sql: "", params: [] };
-        const roles = allowedRoles(agentRole);
-        const placeholders = roles.map(() => "?").join(", ");
-        return { sql: `min_role IN (${placeholders})`, params: roles };
-    }
     nextSeq(prefix) {
         const row = this.db.prepare("SELECT MAX(seq) as maxSeq FROM memories WHERE prefix = ?").get(prefix);
         return (row?.maxSeq || 0) + 1;
@@ -2340,7 +2320,6 @@ export class HmemStore {
                 try {
                     return this.read({
                         id: linkId,
-                        agentRole: opts.agentRole,
                         linkDepth: linkDepth - 1,
                         _visitedLinks: visited,
                         followObsolete: false, // don't chain-resolve inside link resolution
@@ -2541,6 +2520,57 @@ export class HmemStore {
     }
     countBatchExchanges(batchId) {
         return this.db.prepare("SELECT COUNT(*) as n FROM memory_nodes WHERE parent_id = ? AND depth = 4").get(batchId)?.n ?? 0;
+    }
+    /**
+     * Process pending exchanges queued by hooks that couldn't open the DB
+     * (e.g. Windows WAL locking when MCP server holds the DB).
+     * File: {hmemDir}/pending-exchanges.jsonl — one JSON object per line.
+     */
+    processPendingExchanges() {
+        const pendingPath = path.join(path.dirname(this.dbPath), "pending-exchanges.jsonl");
+        if (!fs.existsSync(pendingPath))
+            return 0;
+        let raw;
+        try {
+            raw = fs.readFileSync(pendingPath, "utf8").trim();
+        }
+        catch {
+            return 0;
+        }
+        if (!raw)
+            return 0;
+        const lines = raw.split("\n").filter(l => l.trim());
+        let processed = 0;
+        for (const line of lines) {
+            try {
+                const entry = JSON.parse(line);
+                if (!entry.userMessage || !entry.agentMessage)
+                    continue;
+                // Resolve O-entry and session/batch like log-exchange would
+                const activeProject = this.getActiveProject();
+                const projectSeq = activeProject ? parseInt(activeProject.id.replace(/\D/g, ""), 10) : 0;
+                const oId = this.resolveProjectO(projectSeq);
+                const sessionId = entry.transcriptPath
+                    ? this.resolveSession(oId, entry.transcriptPath)
+                    : this.resolveSession(oId, `pending-${entry.ts}`);
+                const batchSize = this.cfg.checkpointInterval || 5;
+                const batchId = this.resolveBatch(sessionId, oId, batchSize);
+                this.appendExchangeV2(batchId, oId, entry.userMessage, entry.agentMessage);
+                processed++;
+            }
+            catch (e) {
+                console.error(`[hmem] Failed to process pending exchange: ${e}`);
+            }
+        }
+        // Remove the pending file after processing
+        try {
+            fs.unlinkSync(pendingPath);
+        }
+        catch { /* ignore */ }
+        if (processed > 0) {
+            console.error(`[hmem] Processed ${processed} pending exchanges from queue`);
+        }
+        return processed;
     }
     getOEntryExchangesV2(oId, limit, opts) {
         if (limit <= 0)
@@ -3868,7 +3898,11 @@ export class HmemStore {
     }
 }
 // ---- Convenience: resolve .hmem path for an agent ----
-export function resolveHmemPath(projectDir, templateName) {
+/**
+ * @deprecated Use resolveHmemPath() (no args) instead. Will be removed in v7.0.
+ */
+export function resolveHmemPathLegacy(projectDir, templateName) {
+    console.error("[hmem] DEPRECATED: resolveHmemPathLegacy(projectDir, templateName) — use HMEM_PATH env var instead");
     // No agent name configured → use memory.hmem directly in project root
     if (!templateName || templateName === "UNKNOWN") {
         return path.join(projectDir, "memory.hmem");
@@ -3883,10 +3917,49 @@ export function resolveHmemPath(projectDir, templateName) {
     return path.join(agentDir, `${templateName}.hmem`);
 }
 /**
- * Open (or create) an HmemStore for an agent's personal memory.
+ * Resolve the path to the personal .hmem database file.
+ * Priority: HMEM_PATH env var > CWD discovery > ~/.hmem/memory.hmem
+ */
+/** Reliable home directory — on Windows, prefer USERPROFILE over os.homedir()
+ *  because os.homedir() respects HOME env which may point to a network drive (H:\). */
+function safeHomedir() {
+    if (process.platform === "win32" && process.env.USERPROFILE) {
+        return process.env.USERPROFILE;
+    }
+    return os.homedir();
+}
+export function resolveHmemPath(cwdOverride) {
+    // Priority 1: HMEM_PATH env var
+    const hmemPath = process.env.HMEM_PATH;
+    if (hmemPath) {
+        const expanded = hmemPath.startsWith("~")
+            ? path.join(safeHomedir(), hmemPath.slice(1))
+            : hmemPath;
+        return path.resolve(expanded);
+    }
+    // Priority 2: CWD discovery
+    const cwd = cwdOverride || process.cwd();
+    try {
+        const files = fs.readdirSync(cwd).filter(f => f.endsWith(".hmem"));
+        if (files.length === 1)
+            return path.resolve(cwd, files[0]);
+        if (files.length > 1) {
+            throw new Error(`Multiple .hmem files in ${cwd}: ${files.join(", ")}. Set HMEM_PATH to pick one.`);
+        }
+    }
+    catch (e) {
+        if (e instanceof Error && e.message.startsWith("Multiple"))
+            throw e;
+    }
+    // Priority 3: default
+    return path.resolve(safeHomedir(), ".hmem", "memory.hmem");
+}
+/**
+ * @deprecated Use `new HmemStore(resolveHmemPath(), config)` instead.
  */
 export function openAgentMemory(projectDir, templateName, config) {
-    const hmemPath = resolveHmemPath(projectDir, templateName);
+    console.error("[hmem] DEPRECATED: openAgentMemory() — use new HmemStore(resolveHmemPath(), config)");
+    const hmemPath = resolveHmemPathLegacy(projectDir, templateName);
     return new HmemStore(hmemPath, config);
 }
 /**
@@ -3898,6 +3971,9 @@ export function openCompanyMemory(projectDir, config) {
 }
 /**
  * Route a task to the best-matching agent based on memory content.
+ * @deprecated This function scans the Agents/ directory structure which is being phased out.
+ * Future versions will use a config-based file list instead.
+ *
  * Scans all agent .hmem files in the project directory and scores them
  * against the provided tags and/or search keywords.
  *

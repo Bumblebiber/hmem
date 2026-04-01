@@ -9,7 +9,7 @@
  * Usage: echo '{"transcript_path":"...","last_assistant_message":"..."}' | hmem log-exchange
  *
  * Requires env:
- *   HMEM_PROJECT_DIR — root directory for .hmem files
- *   HMEM_AGENT_ID    — agent identifier (optional)
+ *   HMEM_PATH        — path to .hmem file (auto-detected)
+ *   HMEM_PROJECT_DIR — directory for config + company.hmem
  */
 export declare function logExchange(): Promise<void>;

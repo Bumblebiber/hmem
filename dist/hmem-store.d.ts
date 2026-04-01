@@ -17,7 +17,7 @@
  * Prefixes: P=Project, L=Lesson, T=Task, E=Error, D=Decision, M=Milestone, S=Skill, N=Navigator
  *
  * Role hierarchy: worker < al < pl < ceo
- * Each entry has a min_role — agents only see entries at or below their clearance.
+ * Each entry has a min_role column (kept in DB, no longer used for filtering).
  *
  * read_memory(id) semantics:
  *   Always returns the node + its DIRECT children only.
@@ -120,6 +120,7 @@ export interface ReadOptions {
     before?: string;
     search?: string;
     limit?: number;
+    /** @deprecated No longer used — role filtering removed. Kept for API compat. */
     agentRole?: AgentRole;
     /** Internal: skip link resolution to prevent circular references. Default: true for ID queries. */
     resolveLinks?: boolean;
@@ -202,7 +203,7 @@ export declare class HmemStore {
      * Each indented line → its own memory_nodes row with compound ID
      * Multiple lines at the same indent depth → siblings (new capability)
      */
-    write(prefix: string, content: string, links?: string[], minRole?: AgentRole, favorite?: boolean, tags?: string[], pinned?: boolean, force?: boolean): WriteResult;
+    write(prefix: string, content: string, links?: string[], _minRole?: AgentRole, favorite?: boolean, tags?: string[], pinned?: boolean, force?: boolean): WriteResult;
     /**
      * Write a linear entry with explicit content at each level (no tree branching).
      * Used by flush_context for O-prefix entries. Each level is a single node forming
@@ -242,7 +243,7 @@ export declare class HmemStore {
      * Get all Level 1 entries for injection at agent startup.
      * Does NOT bump access_count (routine injection).
      */
-    getLevel1All(agentRole?: AgentRole): string;
+    getLevel1All(): string;
     /**
      * Export entire memory to Markdown for git tracking.
      */
@@ -293,7 +294,7 @@ export declare class HmemStore {
     /**
      * Update specific fields of an existing root entry (curator use only).
      */
-    update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "min_role" | "obsolete" | "favorite" | "irrelevant" | "active">>): boolean;
+    update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "obsolete" | "favorite" | "irrelevant" | "active">>): boolean;
     /**
      * Delete an entry by ID (curator use only).
      * Also deletes all associated memory_nodes.
@@ -423,7 +424,6 @@ export declare class HmemStore {
      * period: "+4h" (4h future), "-2h" (2h past), "4h" (±4h symmetric), "both" (±2h default)
      */
     private parseTimeWindow;
-    private buildRoleFilter;
     private nextSeq;
     /** Clear all active markers — called at MCP server start so each session starts neutral. */
     clearAllActive(): void;
@@ -496,6 +496,12 @@ export declare class HmemStore {
         id: string;
     };
     countBatchExchanges(batchId: string): number;
+    /**
+     * Process pending exchanges queued by hooks that couldn't open the DB
+     * (e.g. Windows WAL locking when MCP server holds the DB).
+     * File: {hmemDir}/pending-exchanges.jsonl — one JSON object per line.
+     */
+    processPendingExchanges(): number;
     getOEntryExchangesV2(oId: string, limit: number, opts?: {
         skipIrrelevant?: boolean;
         titleOnlyTags?: string[];
@@ -765,9 +771,13 @@ export declare class HmemStore {
         idMap: Record<string, string>;
     };
 }
-export declare function resolveHmemPath(projectDir: string, templateName: string): string;
 /**
- * Open (or create) an HmemStore for an agent's personal memory.
+ * @deprecated Use resolveHmemPath() (no args) instead. Will be removed in v7.0.
+ */
+export declare function resolveHmemPathLegacy(projectDir: string, templateName: string): string;
+export declare function resolveHmemPath(cwdOverride?: string): string;
+/**
+ * @deprecated Use `new HmemStore(resolveHmemPath(), config)` instead.
  */
 export declare function openAgentMemory(projectDir: string, templateName: string, config?: HmemConfig): HmemStore;
 /**
@@ -786,6 +796,9 @@ export interface AgentRouteResult {
 }
 /**
  * Route a task to the best-matching agent based on memory content.
+ * @deprecated This function scans the Agents/ directory structure which is being phased out.
+ * Future versions will use a config-based file list instead.
+ *
  * Scans all agent .hmem files in the project directory and scores them
  * against the provided tags and/or search keywords.
  *

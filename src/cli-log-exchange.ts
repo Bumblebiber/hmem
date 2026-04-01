@@ -158,8 +158,27 @@ export async function logExchange(): Promise<void> {
 
   const hmemConfig = loadHmemConfig(path.dirname(hmemPath));
 
-  const store = new HmemStore(hmemPath, hmemConfig);
+  let store: HmemStore;
   try {
+    store = new HmemStore(hmemPath, hmemConfig);
+  } catch (e) {
+    // DB locked (Windows WAL locking) or other open failure → queue for later
+    const pendingPath = path.join(path.dirname(hmemPath), "pending-exchanges.jsonl");
+    const entry = {
+      ts: new Date().toISOString(),
+      userMessage,
+      agentMessage: input.last_assistant_message,
+      transcriptPath: input.transcript_path,
+    };
+    fs.appendFileSync(pendingPath, JSON.stringify(entry) + "\n");
+    console.error(`[hmem log-exchange] DB locked, queued to ${pendingPath}: ${e}`);
+    process.exit(0);
+  }
+
+  try {
+    // Process any previously queued exchanges first
+    store.processPendingExchanges();
+
     // Auto-purge irrelevant entries older than 30 days (~1% chance)
     if (Math.random() < 0.01) {
       const purged = store.purgeIrrelevant(30);

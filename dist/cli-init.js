@@ -220,18 +220,13 @@ function resolveMcpServerPath() {
     // This file (cli-init.js) is in dist/ — mcp-server.js is a sibling
     return path.join(path.dirname(new URL(import.meta.url).pathname), "mcp-server.js");
 }
-function standardMcpEntry(projectDir, agentId) {
-    const env = {
-        HMEM_PROJECT_DIR: projectDir,
-    };
-    if (agentId)
-        env.HMEM_AGENT_ID = agentId;
+function standardMcpEntry(hmemPath) {
     return {
         mcpServers: {
             hmem: {
                 command: resolveNodePath(),
                 args: [resolveMcpServerPath()],
-                env,
+                env: { HMEM_PATH: hmemPath },
             },
         },
     };
@@ -239,18 +234,13 @@ function standardMcpEntry(projectDir, agentId) {
 /**
  * Generates the MCP config entry for OpenCode (different schema).
  */
-function opencodeMcpEntry(projectDir, agentId) {
-    const env = {
-        HMEM_PROJECT_DIR: projectDir,
-    };
-    if (agentId)
-        env.HMEM_AGENT_ID = agentId;
+function opencodeMcpEntry(hmemPath) {
     return {
         mcp: {
             hmem: {
                 type: "local",
                 command: [resolveNodePath(), resolveMcpServerPath()],
-                environment: env,
+                environment: { HMEM_PATH: hmemPath },
                 enabled: true,
                 timeout: 30000,
             },
@@ -307,8 +297,6 @@ function parseInitFlags(args) {
             flags["dir"] = args[++i];
         else if (args[i] === "--no-example")
             flags["no-example"] = "true";
-        else if (args[i] === "--agent-id" && args[i + 1])
-            flags["agent-id"] = args[++i];
         else if (args[i] === "--hooks")
             flags["hooks"] = "true";
         else if (args[i] === "--no-hooks")
@@ -417,37 +405,25 @@ export async function runInit(args = []) {
                 }
             }
         }
-        // Step 4c: Agent ID
-        // Auto-detect from existing Agents/ directory, or ask interactively
-        let agentId;
+        // Step 4c: Memory file path
+        // Auto-detect existing .hmem files or use default
+        const existingHmemFiles = fs.readdirSync(absMemDir)
+            .filter(f => f.endsWith(".hmem"))
+            .map(f => path.join(absMemDir, f));
+        let hmemFilePath;
         if (nonInteractive) {
-            agentId = flags["agent-id"] || undefined;
+            hmemFilePath = existingHmemFiles[0] || memoryPath;
+        }
+        else if (existingHmemFiles.length === 0) {
+            hmemFilePath = memoryPath; // will be created on first write
+        }
+        else if (existingHmemFiles.length === 1) {
+            hmemFilePath = existingHmemFiles[0];
+            console.log(`\n  Found memory file: ${hmemFilePath}`);
         }
         else {
-            const agentsDir = path.join(absMemDir, "Agents");
-            const existingAgents = fs.existsSync(agentsDir)
-                ? fs.readdirSync(agentsDir).filter(d => fs.statSync(path.join(agentsDir, d)).isDirectory())
-                : [];
-            if (existingAgents.length === 1) {
-                agentId = existingAgents[0];
-                console.log(`\n  Auto-detected agent: ${agentId}`);
-            }
-            else if (existingAgents.length > 1) {
-                const agentIdx = await askChoice("Multiple agents found. Which one should the MCP server use?", existingAgents);
-                agentId = existingAgents[agentIdx];
-            }
-            else {
-                const inputId = await ask("\n  Agent ID (name for your memory partition, e.g. 'DEVELOPER'; press Enter to skip): ");
-                agentId = inputId.trim() || undefined;
-            }
-        }
-        if (agentId) {
-            // Ensure agent directory exists
-            const agentDir = path.join(absMemDir, "Agents", agentId);
-            if (!fs.existsSync(agentDir)) {
-                fs.mkdirSync(agentDir, { recursive: true });
-                console.log(`  Created agent directory: ${agentDir}`);
-            }
+            const fileIdx = await askChoice("Multiple memory files found. Which one should the MCP server use?", existingHmemFiles.map(f => path.basename(f)));
+            hmemFilePath = existingHmemFiles[fileIdx];
         }
         // Step 5: Write MCP configs
         console.log("\n  Writing MCP configuration...\n");
@@ -464,8 +440,8 @@ export async function runInit(args = []) {
             }
             // Generate MCP entry
             const entry = tool.format === "opencode"
-                ? opencodeMcpEntry(absMemDir, agentId)
-                : standardMcpEntry(absMemDir, agentId);
+                ? opencodeMcpEntry(hmemFilePath)
+                : standardMcpEntry(hmemFilePath);
             // Read existing config (if any) and merge
             let existing = {};
             if (fs.existsSync(configPath)) {

@@ -79,8 +79,8 @@ Usage:
   hmem version        Show version
 
 Environment variables (for serve):
-  HMEM_PROJECT_DIR   Root directory for .hmem files (required)
-  HMEM_AGENT_ID      Agent identifier (optional)
+  HMEM_PATH          Path to .hmem file (optional, auto-detected)
+  HMEM_PROJECT_DIR   Directory for config + company.hmem (derived from HMEM_PATH)
   HMEM_AGENT_ROLE    Role: worker | al | pl | ceo (default: worker)
 
 Non-interactive init flags:

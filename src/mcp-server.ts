@@ -381,10 +381,10 @@ function formatRecentOEntries(
 
       for (const session of sessions) {
         const sessDate = session.created_at.substring(0, 10);
-        lines.push(`    [Session ${sessDate}] ${session.title}`);
+        lines.push(`    [Session ${sessDate}] ${session.title.trim()}`);
         // Show session summary (L2 body) if different from title
         if (session.content && session.content !== session.title) {
-          const summaryShort = session.content.length > 300 ? session.content.substring(0, 300) + "..." : session.content;
+          const summaryShort = session.content.trim().length > 300 ? session.content.trim().substring(0, 300) + "..." : session.content.trim();
           lines.push(`      Summary: ${summaryShort}`);
         }
       }
@@ -1643,18 +1643,33 @@ server.tool(
           const { withBody, withChildren } = hmemConfig.loadProjectExpand;
           // Sections where only tail children are shown (e.g. Protocol)
           const TAIL_SECTIONS = [7]; // .7 Protocol — only last 5
-          const TAIL_COUNT = 5;
+          const TAIL_COUNT = 3;
           // Sections where L3 children are hidden entirely (e.g. Ideas)
-          const HIDE_CHILDREN_SECTIONS = [9]; // .9 Ideas
+          const HIDE_CHILDREN_SECTIONS = [9, 2]; // .9 Ideas, .2 Codebase (title-only modules → noise)
+          // Sections where completed items (title starts with ✓) are filtered out
+          const FILTER_DONE_SECTIONS = [8]; // .8 Open tasks
           for (const child of (e.children as MemoryNode[]).filter(c => !c.irrelevant)) {
             const cId = lastSeg(child.id);
             const expandBody = withBody.includes(child.seq);
             const expandChildTitles = withChildren.includes(child.seq);
             const hideChildren = HIDE_CHILDREN_SECTIONS.includes(child.seq);
             lines.push(`  ${cId}  ${child.title || child.content.substring(0, 60)}`);
-            if (hideChildren) continue; // Skip children entirely for this section
+            // For hidden sections: show body text but skip children
+            if (hideChildren) {
+              if (child.content && child.content !== child.title) {
+                lines.push(`    ${child.content}`);
+              }
+              continue;
+            }
             if (child.children && child.children.length > 0) {
               let grandchildren = child.children.filter((g: any) => !g.irrelevant);
+              // For open-tasks sections, filter out completed items
+              if (FILTER_DONE_SECTIONS.includes(child.seq)) {
+                grandchildren = grandchildren.filter((g: any) => {
+                  const t = (g.title || g.content || "").trim();
+                  return !t.startsWith("✓") && !t.startsWith("DONE");
+                });
+              }
               // For tail sections, only show the last N children
               if (TAIL_SECTIONS.includes(child.seq) && grandchildren.length > TAIL_COUNT) {
                 grandchildren = grandchildren.slice(-TAIL_COUNT);
@@ -1732,7 +1747,7 @@ server.tool(
           const projectOId = `O${String(projectSeq).padStart(4, "0")}`;
           const oExists = hmemStore.readEntry(projectOId);
           if (oExists) {
-            const { text: oText, ids } = formatRecentOEntries(hmemStore, 1, 5, id, true);
+            const { text: oText, ids } = formatRecentOEntries(hmemStore, 1, 0, id, true);
             if (oText.trim()) {
               lines.push("  --- Recent Session Context ---");
               lines.push("  " + oText.replace(/\n/g, "\n  "));

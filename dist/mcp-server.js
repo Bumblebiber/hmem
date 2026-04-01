@@ -3,16 +3,12 @@
  * hmem — Humanlike Memory MCP Server.
  *
  * Provides persistent, hierarchical memory for AI agents via MCP.
- * SQLite-backed, 5-level lazy loading, role-based access control.
+ * SQLite-backed, 5-level lazy loading.
  *
  * Environment variables:
- *   HMEM_PROJECT_DIR         — Root directory where .hmem files are stored (required)
- *   HMEM_AGENT_ID            — Agent identifier (optional; defaults to memory.hmem)
- *   HMEM_AGENT_ROLE          — Role: worker | al | pl | ceo (default: worker)
+ *   HMEM_PATH                — Full path to .hmem file (auto-resolved if not set)
+ *   HMEM_PROJECT_DIR         — Root directory (fallback: dirname of HMEM_PATH)
  *   HMEM_AUDIT_STATE_PATH    — Path to audit_state.json (default: {PROJECT_DIR}/audit_state.json)
- *
- * Legacy fallbacks (Das Althing):
- *   COUNCIL_PROJECT_DIR, COUNCIL_AGENT_ID, COUNCIL_AGENT_ROLE
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -23,41 +19,30 @@ import { fileURLToPath } from "node:url";
 import { spawnSync, spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import { searchMemory } from "./memory-search.js";
-import { openAgentMemory, openCompanyMemory, resolveHmemPath, routeTask, HmemStore } from "./hmem-store.js";
+import { openCompanyMemory, resolveHmemPath, resolveHmemPathLegacy, routeTask, HmemStore } from "./hmem-store.js";
 import { loadHmemConfig, formatPrefixList, getSyncServers } from "./hmem-config.js";
 import { SessionCache } from "./session-cache.js";
 // ---- Environment ----
-// HMEM_* vars are the canonical names; COUNCIL_* kept for backwards compatibility
-const PROJECT_DIR = process.env.HMEM_PROJECT_DIR || process.env.COUNCIL_PROJECT_DIR || "";
-if (!PROJECT_DIR) {
-    console.error("FATAL: HMEM_PROJECT_DIR not set");
-    process.exit(1);
-}
-// Empty string → resolveHmemPath uses memory.hmem (no agent name required)
-let AGENT_ID = process.env.HMEM_AGENT_ID || process.env.COUNCIL_AGENT_ID || "";
-let DEPTH = parseInt(process.env.HMEM_DEPTH || process.env.COUNCIL_DEPTH || "0", 10);
-let ROLE = process.env.HMEM_AGENT_ROLE || process.env.COUNCIL_AGENT_ROLE || "worker";
-// Optional: PID-based identity override (used by Das Althing orchestrator)
+const HMEM_PATH = process.env.HMEM_PATH || resolveHmemPath();
+const PROJECT_DIR = process.env.HMEM_PROJECT_DIR || path.dirname(HMEM_PATH);
+let DEPTH = parseInt(process.env.HMEM_DEPTH || "0", 10);
+// Legacy: PID-based identity override (Das Althing orchestrator)
 const ppid = process.ppid;
 const ctxFile = path.join(PROJECT_DIR, "orchestrator", ".mcp_contexts", `${ppid}.json`);
 try {
     if (fs.existsSync(ctxFile)) {
         const ctx = JSON.parse(fs.readFileSync(ctxFile, "utf-8"));
-        AGENT_ID = ctx.agent_id || AGENT_ID;
         DEPTH = ctx.depth ?? DEPTH;
-        ROLE = ctx.role || ROLE;
     }
 }
-catch {
-    // Fallback to env vars — context file is optional
-}
+catch { }
 function log(msg) {
-    console.error(`[hmem:${AGENT_ID || "default"}] ${msg}`);
+    const name = path.basename(HMEM_PATH, ".hmem");
+    console.error(`[hmem:${name}] ${msg}`);
 }
 // ---- Session-start mtime snapshot (for [NEW] markers) ----
 // Captured before any syncPull so we can detect entries created after our last local write.
-const _tmpl = AGENT_ID.replace(/_\d+$/, "");
-const _hmemPathAtStart = resolveHmemPath(PROJECT_DIR, _tmpl);
+const _hmemPathAtStart = HMEM_PATH;
 const dbMtimeAtStart = (() => {
     try {
         if (fs.existsSync(_hmemPathAtStart)) {
@@ -383,10 +368,10 @@ function formatRecentOEntries(store, limit, exchangeCount, linkedTo, expandAll) 
                 .slice(0, 3);
             for (const session of sessions) {
                 const sessDate = session.created_at.substring(0, 10);
-                lines.push(`    [Session ${sessDate}] ${session.title}`);
+                lines.push(`    [Session ${sessDate}] ${session.title.trim()}`);
                 // Show session summary (L2 body) if different from title
                 if (session.content && session.content !== session.title) {
-                    const summaryShort = session.content.length > 300 ? session.content.substring(0, 300) + "..." : session.content;
+                    const summaryShort = session.content.trim().length > 300 ? session.content.trim().substring(0, 300) + "..." : session.content.trim();
                     lines.push(`      Summary: ${summaryShort}`);
                 }
             }
@@ -446,7 +431,7 @@ server.tool("search_memory", "Searches the collective memory: agent memories (le
         .optional()
         .describe("Max results (default: 10)"),
 }, async ({ query, scope, max_results }) => {
-    log(`search_memory: query="${query}", scope=${scope || "all"}, by=${AGENT_ID}`);
+    log(`search_memory: query="${query}", scope=${scope || "all"}`);
     const results = searchMemory(PROJECT_DIR, query, {
         scope: scope || "all",
         maxResults: max_results || 10,
@@ -512,13 +497,10 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
     pinned: z.coerce.boolean().optional().describe("Mark this entry as pinned [P] (super-favorite). Pinned entries show full L2 content in bulk reads. " +
         "Use for reference entries you need to see in full every session."),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
-    min_role: z.enum(["worker", "al", "pl", "ceo"]).default("worker").describe("Minimum role to see this entry"),
     force: z.coerce.boolean().optional().describe("Force creation of a new root entry even if existing entries share tags. " +
         "Only use when you intentionally want a separate entry, not a child of an existing one."),
-}, async ({ prefix, content, links, favorite, tags, pinned, store: storeName, min_role: minRole, force }) => {
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
-    const agentRole = (ROLE || "worker");
-    const isFirstTime = !AGENT_ID && !fs.existsSync(resolveHmemPath(PROJECT_DIR, ""));
+}, async ({ prefix, content, links, favorite, tags, pinned, store: storeName, force }) => {
+    const isFirstTime = !fs.existsSync(HMEM_PATH);
     // O-prefix is reserved for flush_context
     if (prefix.toUpperCase() === "O") {
         return {
@@ -551,20 +533,10 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
             }
         }
     }
-    // Company store: only AL+ can write
-    if (storeName === "company") {
-        const ROLE_LEVEL = { worker: 0, al: 1, pl: 2, ceo: 3 };
-        if ((ROLE_LEVEL[agentRole] || 0) < 1) {
-            return {
-                content: [{ type: "text", text: "ERROR: Only AL, PL, and CEO roles can write to company memory." }],
-                isError: true,
-            };
-        }
-    }
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             // Warn if database is corrupted
             if (hmemStore.corrupted) {
@@ -575,24 +547,21 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
                     isError: true,
                 };
             }
-            const effectiveMinRole = storeName === "company" ? minRole : "worker";
-            const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
             if (storeName === "personal")
-                syncPullThenPush(hmemPath);
-            const result = hmemStore.write(prefix, content, links, effectiveMinRole, favorite, tags, pinned, force);
-            const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
-            log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix}, min_role=${effectiveMinRole})`);
+                syncPullThenPush(HMEM_PATH);
+            const result = hmemStore.write(prefix, content, links, undefined, favorite, tags, pinned, force);
+            const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
+            log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix})`);
             if (storeName === "personal")
-                syncPush(hmemPath);
+                syncPush(HMEM_PATH);
             const firstTimeNote = isFirstTime
-                ? `\nMemory store created: ${hmemPath}\nTo use a custom name, set HMEM_AGENT_ID in your .mcp.json.`
+                ? `\nMemory store created: ${HMEM_PATH}`
                 : "";
             return {
                 content: [{
                         type: "text",
                         text: `Memory saved: ${result.id} (${result.timestamp.substring(0, 19)})\n` +
                             `Store: ${storeLabel} | Category: ${prefix}` +
-                            (storeName === "company" ? ` | Clearance: ${effectiveMinRole}+` : "") +
                             firstTimeNote,
                     }],
             };
@@ -641,21 +610,10 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
         "Non-active entries in the same prefix are shown as title-only (no children)."),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
 }, async ({ id, content, links, obsolete, favorite, irrelevant, tags, pinned, active, store: storeName }) => {
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
-    const agentRole = (ROLE || "worker");
-    if (storeName === "company") {
-        const ROLE_LEVEL = { worker: 0, al: 1, pl: 2, ceo: 3 };
-        if ((ROLE_LEVEL[agentRole] || 0) < 1) {
-            return {
-                content: [{ type: "text", text: "ERROR: Only AL, PL, and CEO roles can write to company memory." }],
-                isError: true,
-            };
-        }
-    }
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             if (hmemStore.corrupted) {
                 return {
@@ -663,11 +621,10 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                     isError: true,
                 };
             }
-            const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
             if (storeName === "personal")
-                syncPullThenPush(hmemPath);
+                syncPullThenPush(HMEM_PATH);
             const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant, tags, pinned, active);
-            const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
+            const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
             log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${irrelevant ? " (marked irrelevant)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}${active !== undefined ? ` (active=${active})` : ""}`);
             if (!ok) {
                 return {
@@ -699,7 +656,7 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
             if (tags !== undefined)
                 parts.push(tags.length > 0 ? `tags: ${tags.join(" ")}` : "tags cleared");
             if (storeName === "personal")
-                syncPush(hmemPath);
+                syncPush(HMEM_PATH);
             return { content: [{ type: "text", text: parts.join(" | ") }] };
         }
         finally {
@@ -723,15 +680,13 @@ server.tool("update_many", "Batch-update multiple memory entries at once. Applie
     pinned: z.coerce.boolean().optional().describe("Set or clear [P] pinned on all"),
     store: z.enum(["personal", "company"]).default("personal"),
 }, async ({ ids, irrelevant, favorite, active, pinned, store: storeName }) => {
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
-            const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
             if (storeName === "personal")
-                syncPullThenPush(hmemPath);
+                syncPullThenPush(HMEM_PATH);
             let updated = 0;
             let notFound = 0;
             for (const id of ids) {
@@ -741,7 +696,7 @@ server.tool("update_many", "Batch-update multiple memory entries at once. Applie
                 else
                     notFound++;
             }
-            const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
+            const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
             const flags = [
                 irrelevant !== undefined ? `irrelevant=${irrelevant}` : "",
                 favorite !== undefined ? `favorite=${favorite}` : "",
@@ -750,7 +705,7 @@ server.tool("update_many", "Batch-update multiple memory entries at once. Applie
             ].filter(Boolean).join(", ");
             log(`update_many [${storeLabel}]: ${updated}/${ids.length} updated (${flags})`);
             if (storeName === "personal")
-                syncPush(hmemPath);
+                syncPush(HMEM_PATH);
             const result = `Updated ${updated} of ${ids.length} entries (${flags})`;
             return {
                 content: [{ type: "text", text: notFound > 0 ? `${result}\n${notFound} not found` : result }],
@@ -781,16 +736,14 @@ server.tool("flush_context", "Store a conversation chunk as linear context histo
     tags: z.array(z.string()).min(1).describe("Required hashtags for discovery. E.g. ['#hmem', '#context-for', '#ux']"),
     links: z.array(z.string()).optional().describe("Link to related entries. E.g. ['P0029', 'D0120']"),
 }, async ({ l1, l2, l3, l4, l5, tags, links }) => {
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
     try {
-        const hmemStore = openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+        const hmemStore = new HmemStore(HMEM_PATH, hmemConfig);
         try {
-            const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
-            syncPullThenPush(hmemPath);
+            syncPullThenPush(HMEM_PATH);
             const result = hmemStore.writeLinear("O", { l1, l2, l3, l4, l5 }, tags, links);
             const levels = [l1, l2, l3, l4, l5].filter(Boolean).length;
             log(`flush_context: ${result.id} (${levels} levels, ${tags.join(" ")})`);
-            syncPush(hmemPath);
+            syncPush(HMEM_PATH);
             return trackTokens({
                 content: [{
                         type: "text",
@@ -828,21 +781,10 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
         "Example: 'New point\\n\\tSub-detail'"),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
 }, async ({ id, content, store: storeName }) => {
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
-    const agentRole = (ROLE || "worker");
-    if (storeName === "company") {
-        const ROLE_LEVEL = { worker: 0, al: 1, pl: 2, ceo: 3 };
-        if ((ROLE_LEVEL[agentRole] || 0) < 1) {
-            return {
-                content: [{ type: "text", text: "ERROR: Only AL, PL, and CEO roles can write to company memory." }],
-                isError: true,
-            };
-        }
-    }
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             if (hmemStore.corrupted) {
                 return {
@@ -850,11 +792,10 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
                     isError: true,
                 };
             }
-            const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
             if (storeName === "personal")
-                syncPullThenPush(hmemPath);
+                syncPullThenPush(HMEM_PATH);
             const result = hmemStore.appendChildren(id, content);
-            const storeLabel = storeName === "company" ? "company" : (templateName || "memory");
+            const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
             log(`append_memory [${storeLabel}]: ${id} + ${result.count} nodes → [${result.ids.join(", ")}]`);
             if (result.count === 0) {
                 return {
@@ -862,7 +803,7 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
                 };
             }
             if (storeName === "personal")
-                syncPush(hmemPath);
+                syncPush(HMEM_PATH);
             return {
                 content: [{
                         type: "text",
@@ -934,31 +875,21 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
     min_tag_score: z.number().optional().describe("Minimum weighted tag score for context_for matches (default: 5). " +
         "Score 4 = e.g. 2 medium tags, or 1 rare + 1 common. Lower = more results, higher = stricter."),
 }, async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator, show_all, tag, stale_days, context_for, min_tag_score }) => {
-    if (AGENT_ID === "UNKNOWN") {
-        return {
-            content: [{ type: "text", text: "ERROR: Agent-ID unknown. read_memory is only available for spawned agents." }],
-            isError: true,
-        };
-    }
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
-    const agentRole = (ROLE || "worker");
     // Pull before read to get latest from server (30s cooldown)
-    const newEntries = storeName === "personal" ? syncPull(resolveHmemPath(PROJECT_DIR, templateName)) : [];
+    const newEntries = storeName === "personal" ? syncPull(HMEM_PATH) : [];
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const corruptionWarning = hmemStore.corrupted
                 ? "⚠ WARNING: Memory database is corrupted! Reads may be incomplete. A backup (.corrupt) was saved.\n\n"
                 : "";
             // Context-for: load source entry expanded + all related entries
             if (context_for) {
-                const effectiveRole = storeName === "company" ? agentRole : undefined;
                 const sourceEntries = hmemStore.read({
                     id: context_for,
                     expand: true,
-                    agentRole: effectiveRole,
                 });
                 if (sourceEntries.length === 0) {
                     return {
@@ -1008,7 +939,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                         }
                     }
                 }
-                const storeLabel = storeName === "company" ? "company" : templateName;
+                const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
                 const output = lines.join("\n");
                 // Add token estimate to header line (2nd line)
                 const fmtTok = (n) => n < 1000 ? String(n) : n < 10000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
@@ -1032,7 +963,6 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             const entries = hmemStore.read({
                 id, depth: effectiveDepth, prefix, after, before, search,
                 limit: maxResults,
-                agentRole: storeName === "company" ? agentRole : undefined,
                 time, period, timeAround: time_around,
                 showObsolete: show_obsolete,
                 showObsoletePath: show_obsolete_path,
@@ -1050,10 +980,10 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             if (entries.length === 0) {
                 const hmemPath = storeName === "company"
                     ? path.join(PROJECT_DIR, "company.hmem")
-                    : resolveHmemPath(PROJECT_DIR, templateName);
+                    : HMEM_PATH;
                 const dbExists = fs.existsSync(hmemPath);
-                const label = storeName === "company" ? "company" : templateName;
-                const storeInfo = `\nStore: ${label} | Agent: ${templateName || "(none)"} | DB: ${hmemPath}${dbExists ? "" : " [FILE NOT FOUND]"}`;
+                const label = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
+                const storeInfo = `\nStore: ${label} | DB: ${hmemPath}${dbExists ? "" : " [FILE NOT FOUND]"}`;
                 // Sync hint: if memory is empty and hmem-sync is not configured, suggest it
                 let syncHint = "";
                 if (!id && !search && !time_around) {
@@ -1084,7 +1014,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                     ? formatGroupedOutput(hmemStore, entries, curator ?? false, hmemConfig)
                     : formatFlatOutput(entries, curator ?? false, expand ?? false);
             const stats = hmemStore.stats();
-            const storeLabel = storeName === "company" ? "company" : templateName;
+            const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
             const visibleCount = entries.length;
             // Cache status in header (when active)
             const hiddenCount = hiddenIds?.size ?? 0;
@@ -1204,7 +1134,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             }
             const header = `## Memory: ${storeLabel} (${stats.total} total entries)\n` +
                 `Query: ${id ? `id=${id}` : ""}${prefix ? `prefix=${prefix}` : ""}${search ? `search="${search}"` : ""}${time_around ? `time_around=${time_around}` : ""}${after ? ` after=${after}` : ""}${before ? ` before=${before}` : ""}${time ? ` time=${time}` : ""} | Depth: ${effectiveDepth} | Results: ${visibleCount}${modeInfo}${cacheInfo}${tokenInfo}${staleHint}\n`;
-            log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}, role=${agentRole}${cacheInfo})`);
+            log(`read_memory [${storeLabel}]: ${visibleCount} results (depth=${effectiveDepth}${cacheInfo})`);
             return trackTokens({
                 content: [{
                         type: "text",
@@ -1254,7 +1184,7 @@ server.tool("export_memory", "Export your memory, excluding secret entries and s
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             if (format === "hmem") {
                 const defaultPath = path.join(path.dirname(hmemStore.getDbPath()), "export.hmem");
@@ -1288,7 +1218,7 @@ server.tool("import_memory", "Import entries from a .hmem file into your memory.
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const result = hmemStore.importFromHmem(source_path, dry_run);
             const mode = dry_run ? "preview" : "imported";
@@ -1324,16 +1254,15 @@ server.tool("memory_stats", "Shows budget status of your memory: total entries b
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const s = hmemStore.getStats();
-            const agentName = AGENT_ID.replace(/_\d+$/, "");
             const hmemPath = storeName === "company"
                 ? path.join(PROJECT_DIR, "company.hmem")
-                : resolveHmemPath(PROJECT_DIR, agentName);
+                : HMEM_PATH;
             const lines = [];
             lines.push(`Memory stats (${storeName}):`);
-            lines.push(`  Agent: ${agentName || "(none)"} | DB: ${hmemPath}`);
+            lines.push(`  DB: ${hmemPath}`);
             lines.push(`  Total entries: ${s.totalEntries}`);
             const prefixLine = Object.entries(s.byPrefix).map(([p, c]) => `${p}:${c}`).join(", ");
             if (prefixLine)
@@ -1372,7 +1301,7 @@ server.tool("find_related", "Find entries related to the given entry. " +
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const results = hmemStore.findRelatedCombined(id, limit);
             if (results.length === 0) {
@@ -1394,7 +1323,8 @@ server.tool("find_related", "Find entries related to the given entry. " +
         return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
     }
 });
-server.tool("route_task", "Multi-agent only: find the best agent for a task based on memory content. " +
+server.tool("route_task", "[DEPRECATED: route_task requires the legacy Agents/ directory structure. Future versions will use config-based agent discovery.]\n\n" +
+    "Multi-agent only: find the best agent for a task based on memory content. " +
     "Scans all agent .hmem files in the Agents/ directory and scores them against tags + keywords. " +
     "Only useful in multi-agent setups (Heimdall, Das Althing) — single-agent users should ignore this tool.\n\n" +
     "Example: route_task(tags=['#backend', '#sqlite'], keywords='connection pooling bug')\n" +
@@ -1435,10 +1365,9 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
 }, async ({ id, store: storeName }) => {
     try {
-        const templateName = AGENT_ID.replace(/_\d+$/, "");
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             // Validate it's a P-entry
             if (!id.startsWith("P")) {
@@ -1454,7 +1383,6 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                 id,
                 depth: 3,
                 expand: true,
-                agentRole: (ROLE || "worker"),
             });
             if (entries.length === 0) {
                 return {
@@ -1463,48 +1391,71 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                 };
             }
             // Custom compact rendering for project briefing: L2 content + L3 titles, no dates, compact IDs
+            // ID format: each level shows only its own segment (e.g. .7 → .40 → .1 instead of .7.40.1)
             const e = entries[0];
             const syncThreshold = getSyncThreshold();
             const syncTag = syncThreshold && e.updated_at && e.updated_at <= syncThreshold ? " ✓" : "";
             const lines = [];
+            const lastSeg = (nodeId) => "." + nodeId.split(".").pop();
             lines.push(`${e.id}${syncTag}  ${e.title}`);
             if (e.level_1 && e.level_1 !== e.title)
                 lines.push(`  ${e.level_1}`);
             if (e.children) {
                 const { withBody, withChildren } = hmemConfig.loadProjectExpand;
+                // Sections where only tail children are shown (e.g. Protocol)
+                const TAIL_SECTIONS = [7]; // .7 Protocol — only last 5
+                const TAIL_COUNT = 3;
+                // Sections where L3 children are hidden entirely (e.g. Ideas)
+                const HIDE_CHILDREN_SECTIONS = [9, 2]; // .9 Ideas, .2 Codebase (title-only modules → noise)
+                // Sections where completed items (title starts with ✓) are filtered out
+                const FILTER_DONE_SECTIONS = [8]; // .8 Open tasks
                 for (const child of e.children.filter(c => !c.irrelevant)) {
-                    const cId = child.id.replace(e.id, "");
+                    const cId = lastSeg(child.id);
                     const expandBody = withBody.includes(child.seq);
                     const expandChildTitles = withChildren.includes(child.seq);
+                    const hideChildren = HIDE_CHILDREN_SECTIONS.includes(child.seq);
                     lines.push(`  ${cId}  ${child.title || child.content.substring(0, 60)}`);
+                    // For hidden sections: show body text but skip children
+                    if (hideChildren) {
+                        if (child.content && child.content !== child.title) {
+                            lines.push(`    ${child.content}`);
+                        }
+                        continue;
+                    }
                     if (child.children && child.children.length > 0) {
-                        for (const gc of child.children.filter((g) => !g.irrelevant)) {
-                            const gcId = gc.id.replace(e.id, "");
+                        let grandchildren = child.children.filter((g) => !g.irrelevant);
+                        // For open-tasks sections, filter out completed items
+                        if (FILTER_DONE_SECTIONS.includes(child.seq)) {
+                            grandchildren = grandchildren.filter((g) => {
+                                const t = (g.title || g.content || "").trim();
+                                return !t.startsWith("✓") && !t.startsWith("DONE");
+                            });
+                        }
+                        // For tail sections, only show the last N children
+                        if (TAIL_SECTIONS.includes(child.seq) && grandchildren.length > TAIL_COUNT) {
+                            grandchildren = grandchildren.slice(-TAIL_COUNT);
+                        }
+                        for (const gc of grandchildren) {
+                            const gcId = lastSeg(gc.id);
                             if (expandBody) {
                                 // Show L3 title + body content
                                 lines.push(`    ${gcId}  ${gc.title || gc.content.substring(0, 80)}`);
                                 if (gc.content && gc.content !== gc.title) {
-                                    // Show body lines indented
                                     for (const bodyLine of gc.content.split("\n")) {
                                         lines.push(`      ${bodyLine}`);
                                     }
                                 }
                             }
-                            else if (expandChildTitles) {
-                                // Show all L3 children as titles
-                                const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
-                                lines.push(`    ${gcId}  ${gcTitle}`);
-                            }
                             else {
-                                // Default: compact titles only
+                                // Compact title
                                 const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
                                 lines.push(`    ${gcId}  ${gcTitle}`);
                             }
-                            // L4 children titles (already loaded via depth=4)
+                            // L4 children titles
                             if (gc.children && gc.children.length > 0) {
                                 const visibleL4 = gc.children.filter((l4) => !l4.irrelevant);
                                 for (const l4 of visibleL4) {
-                                    const l4Id = l4.id.replace(e.id, "");
+                                    const l4Id = lastSeg(l4.id);
                                     const l4Title = l4.title || (l4.content?.length > 60 ? l4.content.substring(0, 60) + "…" : l4.content || "");
                                     lines.push(`      ${l4Id}  ${l4Title}`);
                                 }
@@ -1542,7 +1493,6 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             const ruleEntries = hmemStore.read({
                 prefix: "R",
                 depth: 1,
-                agentRole: (ROLE || "worker"),
             }).filter(r => !r.obsolete && !r.irrelevant);
             if (ruleEntries.length > 0) {
                 lines.push("  Rules:");
@@ -1557,7 +1507,7 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                 const projectOId = `O${String(projectSeq).padStart(4, "0")}`;
                 const oExists = hmemStore.readEntry(projectOId);
                 if (oExists) {
-                    const { text: oText, ids } = formatRecentOEntries(hmemStore, 1, 5, id, true);
+                    const { text: oText, ids } = formatRecentOEntries(hmemStore, 1, 0, id, true);
                     if (oText.trim()) {
                         lines.push("  --- Recent Session Context ---");
                         lines.push("  " + oText.replace(/\n/g, "\n  "));
@@ -1568,7 +1518,7 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             // Inject universal conventions (C-entries tagged #universal)
             try {
                 const conventions = hmemStore.read({
-                    prefix: "C", depth: 2, agentRole: (ROLE || "worker"),
+                    prefix: "C", depth: 2,
                 }).filter(c => !c.obsolete && !c.irrelevant && c.tags?.includes("#universal"));
                 if (conventions.length > 0) {
                     lines.push("  Conventions (#universal):");
@@ -1588,9 +1538,8 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             const tokenInfo = ` | ${(outputTokens / 1000).toFixed(1)}k/${(totalTokens / 1000).toFixed(0)}k tokens`;
             log(`load_project: ${id} activated and loaded (depth=3)`);
             // Sync if enabled
-            const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
             if (storeName === "personal")
-                syncPush(hmemPath);
+                syncPush(HMEM_PATH);
             return trackTokens({
                 content: [{
                         type: "text",
@@ -1616,7 +1565,7 @@ server.tool("memory_health", "Audit report for your memory: broken links (links 
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const h = hmemStore.healthCheck();
             const lines = [`Memory health report (${storeName}):`];
@@ -1690,7 +1639,7 @@ server.tool("tag_bulk", "Apply tag changes (add and/or remove) to all entries ma
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const count = hmemStore.tagBulk(filter, add_tags, remove_tags);
             const added = add_tags?.length ? `+[${add_tags.join(", ")}]` : "";
@@ -1719,7 +1668,7 @@ server.tool("tag_rename", "Rename a hashtag across all entries and nodes. " +
     try {
         const hmemStore = storeName === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const count = hmemStore.tagRename(old_tag, new_tag);
             return {
@@ -1750,7 +1699,7 @@ server.tool("move_memory", "Move a sub-node (and its entire subtree) to a differ
     try {
         const hmemStore = store === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const result = hmemStore.moveNode(source_id, target_parent_id);
             const idLines = Object.entries(result.idMap)
@@ -1782,7 +1731,7 @@ server.tool("rename_id", "Atomically rename an entry ID and update ALL reference
     try {
         const hmemStore = store === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const result = hmemStore.renameId(old_id, new_id);
             if (!result.ok) {
@@ -1811,7 +1760,7 @@ server.tool("list_projects", "List all projects (P-entries) with their IDs and t
     try {
         const hmemStore = store === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const projects = hmemStore.listProjects();
             const text = projects.map(p => `${p.id} ${p.title}`).join("\n");
@@ -1834,7 +1783,7 @@ server.tool("move_nodes", "Move session (L2), batch (L3), or exchange (L4) nodes
     try {
         const hmemStore = store === "company"
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : openAgentMemory(PROJECT_DIR, AGENT_ID.replace(/_\d+$/, ""), hmemConfig);
+            : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const result = hmemStore.moveNodes(node_ids, target_o_id);
             let text = `Moved ${result.moved} node(s) to ${target_o_id}.`;
@@ -1872,7 +1821,7 @@ function saveAuditState(state) {
     fs.renameSync(tmp, AUDIT_STATE_FILE);
 }
 function isCurator() {
-    return ROLE === "ceo";
+    return process.env.HMEM_AGENT_ROLE === "ceo";
 }
 server.tool("get_audit_queue", "CURATOR ONLY (ceo role). Returns agents whose .hmem has changed since last audit. " +
     "Use this at the start of each curation run to get the list of agents to process. " +
@@ -1942,7 +1891,7 @@ server.tool("read_agent_memory", "CURATOR ONLY (ceo role). Read the full memory 
             isError: true,
         };
     }
-    const hmemPath = resolveHmemPath(PROJECT_DIR, agent_name);
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
     if (!fs.existsSync(hmemPath)) {
         return {
             content: [{ type: "text", text: `No .hmem found for agent "${agent_name}" (expected: ${hmemPath}).` }],
@@ -1958,12 +1907,11 @@ server.tool("read_agent_memory", "CURATOR ONLY (ceo role). Read the full memory 
         const lines = [`## Memory: ${agent_name} (${stats.total} entries, depth=${depth || 3})\n`];
         for (const e of entries) {
             const date = e.created_at.substring(0, 10);
-            const role = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
             const access = e.access_count > 0 ? ` (${e.access_count}x)` : "";
             const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
             const irrelevantTag = e.irrelevant ? " [- IRRELEVANT]" : "";
             const favTag = e.favorite ? " [♥]" : "";
-            lines.push(`[${e.id}] ${date}${role}${favTag}${obsoleteTag}${irrelevantTag}${access}`);
+            lines.push(`[${e.id}] ${date}${favTag}${obsoleteTag}${irrelevantTag}${access}`);
             lines.push(`  ${e.title}`);
             if (e.level_1 && e.level_1 !== e.title) {
                 for (const bodyLine of e.level_1.split("\n")) {
@@ -1992,7 +1940,7 @@ server.tool("read_agent_memory", "CURATOR ONLY (ceo role). Read the full memory 
 });
 server.tool("fix_agent_memory", "CURATOR ONLY (ceo role). Correct a specific entry or node in any agent's memory.\n\n" +
     "Accepts both root IDs ('L0003') and compound node IDs ('L0003.2'):\n" +
-    "- Root ID: updates L1 summary text, min_role clearance, obsolete/irrelevant/favorite flags\n" +
+    "- Root ID: updates L1 summary text, obsolete/irrelevant/favorite flags\n" +
     "- Compound node ID: updates the content of that specific node\n\n" +
     "To fix wrong prefix: delete + re-add (prefix cannot be changed in-place).\n" +
     "To consolidate fragmented P entries: use read_agent_memory to read them, " +
@@ -2002,19 +1950,18 @@ server.tool("fix_agent_memory", "CURATOR ONLY (ceo role). Correct a specific ent
         "Node IDs update memory_nodes.content directly."),
     content: z.string().optional().describe("New text content. For root entries: replaces the L1 summary. " +
         "For node IDs: replaces that node's content."),
-    min_role: z.enum(["worker", "al", "pl", "ceo"]).optional().describe("Update access clearance (root entries only)."),
     obsolete: z.coerce.boolean().optional().describe("Mark or unmark as obsolete (root entries only). " +
         "Obsolete entries stay in memory but are shown with [⚠ OBSOLETE]."),
     favorite: z.coerce.boolean().optional().describe("Set or clear the [♥] favorite flag (root entries only)."),
     irrelevant: z.coerce.boolean().optional().describe("Mark or unmark as irrelevant (root entries only). Irrelevant entries are hidden from bulk reads. No correction entry needed."),
-}, async ({ agent_name, entry_id, content, min_role, obsolete, favorite, irrelevant }) => {
+}, async ({ agent_name, entry_id, content, obsolete, favorite, irrelevant }) => {
     if (!isCurator()) {
         return {
             content: [{ type: "text", text: "ERROR: fix_agent_memory is only available to the ceo/curator role." }],
             isError: true,
         };
     }
-    const hmemPath = resolveHmemPath(PROJECT_DIR, agent_name);
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
     if (!fs.existsSync(hmemPath)) {
         return {
             content: [{ type: "text", text: `No .hmem found for agent "${agent_name}".` }],
@@ -2040,9 +1987,9 @@ server.tool("fix_agent_memory", "CURATOR ONLY (ceo role). Correct a specific ent
         }
         else {
             // Root entry — update memories table
-            if (!content && min_role === undefined && obsolete === undefined && favorite === undefined && irrelevant === undefined) {
+            if (!content && obsolete === undefined && favorite === undefined && irrelevant === undefined) {
                 return {
-                    content: [{ type: "text", text: "ERROR: Provide at least one of: content, min_role, obsolete, favorite, irrelevant." }],
+                    content: [{ type: "text", text: "ERROR: Provide at least one of: content, obsolete, favorite, irrelevant." }],
                     isError: true,
                 };
             }
@@ -2058,8 +2005,6 @@ server.tool("fix_agent_memory", "CURATOR ONLY (ceo role). Correct a specific ent
             }
             else {
                 const fields = {};
-                if (min_role !== undefined)
-                    fields.min_role = min_role;
                 if (obsolete !== undefined)
                     fields.obsolete = obsolete;
                 if (favorite !== undefined)
@@ -2068,8 +2013,6 @@ server.tool("fix_agent_memory", "CURATOR ONLY (ceo role). Correct a specific ent
                     fields.irrelevant = irrelevant;
                 ok = store.update(entry_id, fields);
             }
-            if (min_role !== undefined)
-                changed.push("min_role");
             if (!content && obsolete !== undefined)
                 changed.push("obsolete");
             if (!content && favorite !== undefined)
@@ -2108,7 +2051,7 @@ server.tool("append_agent_memory", "CURATOR ONLY (ceo role). Append new child no
             isError: true,
         };
     }
-    const hmemPath = resolveHmemPath(PROJECT_DIR, agent_name);
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
     if (!fs.existsSync(hmemPath)) {
         return {
             content: [{ type: "text", text: `No .hmem found for agent "${agent_name}".` }],
@@ -2153,7 +2096,7 @@ server.tool("delete_agent_memory", "CURATOR ONLY (ceo role). Delete an entry fro
             isError: true,
         };
     }
-    const hmemPath = resolveHmemPath(PROJECT_DIR, agent_name);
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
     if (!fs.existsSync(hmemPath)) {
         return {
             content: [{ type: "text", text: `No .hmem found for agent "${agent_name}".` }],
@@ -2371,8 +2314,7 @@ function renderEntryFormatted(lines, e, curator, expand = false) {
             const irrelevantTag = e.irrelevant ? " [- IRRELEVANT]" : "";
             const date = e.created_at.substring(0, 10);
             const accessed = e.access_count > 0 ? ` (${e.access_count}x accessed)` : "";
-            const roleTag = e.min_role !== "worker" ? ` [${e.min_role}+]` : "";
-            lines.push(`[${e.id}] ${date}${roleTag}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}${accessed}`);
+            lines.push(`[${e.id}] ${date}${promotedTag}${activeTag}${pinnedTag}${obsoleteTag}${irrelevantTag}${accessed}`);
             lines.push(`  ${e.title}${tagStr}`);
         }
         else {
@@ -2617,13 +2559,11 @@ async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
     // Startup diagnostics — helps debug "0 entries" issues
-    const templateName = AGENT_ID.replace(/_\d+$/, "");
-    const hmemPath = resolveHmemPath(PROJECT_DIR, templateName);
-    const dbExists = fs.existsSync(hmemPath);
+    const dbExists = fs.existsSync(HMEM_PATH);
     let entryCount = 0;
     if (dbExists) {
         try {
-            const store = openAgentMemory(PROJECT_DIR, templateName, hmemConfig);
+            const store = new HmemStore(HMEM_PATH, hmemConfig);
             try {
                 entryCount = store.stats().total;
                 // Reset all active markers — each session starts neutral, agent picks project
@@ -2636,15 +2576,11 @@ async function main() {
         catch { }
     }
     if (!dbExists) {
-        log(`WARNING: DB not found at ${hmemPath}`);
-        if (templateName && templateName !== "UNKNOWN") {
-            log(`  HMEM_AGENT_ID="${templateName}" → expects: ${PROJECT_DIR}/Agents/${templateName}/${templateName}.hmem`);
-            log(`  Without HMEM_AGENT_ID: would use ${PROJECT_DIR}/memory.hmem`);
-        }
-        log(`  Check HMEM_PROJECT_DIR and HMEM_AGENT_ID in your .mcp.json`);
+        log(`WARNING: DB not found at ${HMEM_PATH}`);
+        log(`  Check HMEM_PATH in your .mcp.json (current: ${HMEM_PATH})`);
         log(`  The DB will be created on first write_memory() call.`);
     }
-    log(`MCP Server running on stdio | Agent: ${templateName || "(none)"} | Role: ${ROLE || "worker"} | DB: ${hmemPath}${dbExists ? ` (${entryCount} entries)` : " [NOT FOUND — see warnings above]"}`);
+    log(`MCP Server running on stdio | DB: ${HMEM_PATH}${dbExists ? ` (${entryCount} entries)` : " [NOT FOUND]"}`);
     checkForUpdates();
 }
 main().catch((error) => {

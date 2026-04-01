@@ -44,7 +44,7 @@
     "start": "node dist/mcp-server.js",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "postinstall": "node scripts/use-prebuild.cjs && node dist/cli.js update-skills 2>/dev/null || true"
+    "postinstall": "node scripts/use-prebuild.cjs && node -e \"try{require('child_process').execSync('node dist/cli.js update-skills',{stdio:'ignore'})}catch(e){}\""
   },
   "type": "module",
   "engines": {

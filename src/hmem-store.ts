@@ -373,6 +373,10 @@ export class HmemStore {
     this.migrateHeaders();
     this.migrateObsoleteAccessCount();
     this.migrateFts5();
+
+    // Process any pending exchanges queued by hooks that couldn't open the DB
+    // (e.g. Windows WAL locking). Cheap no-op when no pending file exists.
+    try { this.processPendingExchanges(); } catch { /* non-critical */ }
   }
 
   /** Throw if the database is corrupted — prevents silent data loss on write operations. */
@@ -3024,6 +3028,60 @@ export class HmemStore {
     ).get(batchId) as any)?.n ?? 0;
   }
 
+  /**
+   * Process pending exchanges queued by hooks that couldn't open the DB
+   * (e.g. Windows WAL locking when MCP server holds the DB).
+   * File: {hmemDir}/pending-exchanges.jsonl — one JSON object per line.
+   */
+  processPendingExchanges(): number {
+    const pendingPath = path.join(path.dirname(this.dbPath), "pending-exchanges.jsonl");
+    if (!fs.existsSync(pendingPath)) return 0;
+
+    let raw: string;
+    try {
+      raw = fs.readFileSync(pendingPath, "utf8").trim();
+    } catch { return 0; }
+    if (!raw) return 0;
+
+    const lines = raw.split("\n").filter(l => l.trim());
+    let processed = 0;
+
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line) as {
+          ts: string;
+          userMessage: string;
+          agentMessage: string;
+          transcriptPath?: string;
+        };
+        if (!entry.userMessage || !entry.agentMessage) continue;
+
+        // Resolve O-entry and session/batch like log-exchange would
+        const activeProject = this.getActiveProject();
+        const projectSeq = activeProject ? parseInt(activeProject.id.replace(/\D/g, ""), 10) : 0;
+        const oId = this.resolveProjectO(projectSeq);
+        const sessionId = entry.transcriptPath
+          ? this.resolveSession(oId, entry.transcriptPath)
+          : this.resolveSession(oId, `pending-${entry.ts}`);
+        const batchSize = this.cfg.checkpointInterval || 5;
+        const batchId = this.resolveBatch(sessionId, oId, batchSize);
+
+        this.appendExchangeV2(batchId, oId, entry.userMessage, entry.agentMessage);
+        processed++;
+      } catch (e) {
+        console.error(`[hmem] Failed to process pending exchange: ${e}`);
+      }
+    }
+
+    // Remove the pending file after processing
+    try { fs.unlinkSync(pendingPath); } catch { /* ignore */ }
+
+    if (processed > 0) {
+      console.error(`[hmem] Processed ${processed} pending exchanges from queue`);
+    }
+    return processed;
+  }
+
   getOEntryExchangesV2(
     oId: string,
     limit: number,
@@ -4678,12 +4736,21 @@ export function resolveHmemPathLegacy(projectDir: string, templateName: string):
  * Resolve the path to the personal .hmem database file.
  * Priority: HMEM_PATH env var > CWD discovery > ~/.hmem/memory.hmem
  */
+/** Reliable home directory — on Windows, prefer USERPROFILE over os.homedir()
+ *  because os.homedir() respects HOME env which may point to a network drive (H:\). */
+function safeHomedir(): string {
+  if (process.platform === "win32" && process.env.USERPROFILE) {
+    return process.env.USERPROFILE;
+  }
+  return os.homedir();
+}
+
 export function resolveHmemPath(cwdOverride?: string): string {
   // Priority 1: HMEM_PATH env var
   const hmemPath = process.env.HMEM_PATH;
   if (hmemPath) {
     const expanded = hmemPath.startsWith("~")
-      ? path.join(os.homedir(), hmemPath.slice(1))
+      ? path.join(safeHomedir(), hmemPath.slice(1))
       : hmemPath;
     return path.resolve(expanded);
   }
@@ -4701,7 +4768,7 @@ export function resolveHmemPath(cwdOverride?: string): string {
   }
 
   // Priority 3: default
-  return path.resolve(os.homedir(), ".hmem", "memory.hmem");
+  return path.resolve(safeHomedir(), ".hmem", "memory.hmem");
 }
 
 /**
