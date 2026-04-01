@@ -410,8 +410,8 @@ function formatRecentOEntries(
         // Skip: older summarized sessions when a rolling summary exists (it covers them)
         if (!isLatest && !isLastSummarized && rollingSum) continue;
 
-        // Skip older sessions that have no summary and no batch summaries
-        if (!isLatest && !hasBody && batches.length === 0) continue;
+        // Skip sessions that have no summary and no batch summaries
+        if (!hasBody && batches.length === 0) continue;
 
         const sessDate = session.created_at.substring(0, 10);
         lines.push(`    [Session ${sessDate}] ${session.title.trim()}`);
@@ -441,8 +441,11 @@ function formatRecentOEntries(
           // Title-only exchange — skip, already covered by batch/session summary
           continue;
         }
-        lines.push(`    USER: ${ex.userText}`);
-        if (ex.agentText) lines.push(`    AGENT: ${ex.agentText}`);
+        // Strip XML channel tags from Telegram messages, keep inner text
+        const userClean = ex.userText.replace(/<channel[^>]*>\s*/g, "").replace(/<\/channel>\s*/g, "").trim();
+        const agentClean = ex.agentText?.replace(/<[^>]+>/g, "").trim();
+        lines.push(`    USER: ${userClean}`);
+        if (agentClean) lines.push(`    AGENT: ${agentClean}`);
       }
     }
   }
@@ -1620,6 +1623,17 @@ server.tool(
   }
 );
 
+/** Strip body (after \n>) and newlines from titles for compact display */
+function cleanTitle(t: string, max = 0): string {
+  // Split at body separator — real newline+> or literal \n>
+  let s = t.split(/\n>|\\n>/)[0];
+  s = s.replace(/[\t\r\n]/g, " ").replace(/  +/g, " ").trim();
+  if (max > 0 && s.length > max) {
+    s = s.substring(0, max).replace(/[,;:\s]+$/, "") + "…";
+  }
+  return s;
+}
+
 server.tool(
   "load_project",
   "Load a project and activate it. Returns L2 content + L3 titles — the perfect project briefing. " +
@@ -1700,7 +1714,7 @@ server.tool(
             const expandBody = withBody.includes(child.seq);
             const expandChildTitles = withChildren.includes(child.seq);
             const hideChildren = HIDE_CHILDREN_SECTIONS.includes(child.seq);
-            lines.push(`  ${cId}  ${child.title || child.content.substring(0, 60)}`);
+            lines.push(`  ${cId}  ${cleanTitle(child.title || child.content, 60)}`);
             // For hidden sections: show body text but skip children
             // If no body and no children with content, skip the section entirely
             if (hideChildren) {
@@ -1732,7 +1746,7 @@ server.tool(
                 const gcId = lastSeg(gc.id);
                 if (expandBody) {
                   // Show L3 title + body content
-                  lines.push(`    ${gcId}  ${gc.title || gc.content.substring(0, 80)}`);
+                  lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
                   if (gc.content && gc.content !== gc.title) {
                     for (const bodyLine of gc.content.split("\n")) {
                       lines.push(`      ${bodyLine}`);
@@ -1740,15 +1754,14 @@ server.tool(
                   }
                 } else {
                   // Compact title
-                  const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
-                  lines.push(`    ${gcId}  ${gcTitle}`);
+                  lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
                 }
                 // L4 children titles
                 if (gc.children && gc.children.length > 0) {
                   const visibleL4 = gc.children.filter((l4: any) => !l4.irrelevant);
                   for (const l4 of visibleL4) {
                     const l4Id = lastSeg(l4.id);
-                    const l4Title = l4.title || (l4.content?.length > 60 ? l4.content.substring(0, 60) + "…" : l4.content || "");
+                    const l4Title = cleanTitle(l4.title || l4.content || "", 60);
                     lines.push(`      ${l4Id}  ${l4Title}`);
                   }
                 } else if (gc.child_count && gc.child_count > 0) {
@@ -1764,7 +1777,7 @@ server.tool(
         if (e.linkedEntries && e.linkedEntries.length > 0) {
           lines.push("  Links:");
           for (const le of e.linkedEntries) {
-            lines.push(`    ${le.id}  ${le.title}`);
+            lines.push(`    ${le.id}  ${cleanTitle(le.title, 70)}`);
           }
         }
 
@@ -1777,7 +1790,7 @@ server.tool(
           if (relatedEL.length > 0) {
             lines.push("  Related errors & lessons:");
             for (const r of relatedEL) {
-              lines.push(`    ${r.entry.id} [⚡]  ${r.entry.title}`);
+              lines.push(`    ${r.entry.id} [⚡]  ${cleanTitle(r.entry.title, 70)}`);
             }
           }
         } catch { /* findContext may fail on empty/new entries */ }
@@ -1790,7 +1803,7 @@ server.tool(
         if (ruleEntries.length > 0) {
           lines.push("  Rules:");
           for (const r of ruleEntries) {
-            lines.push(`    ${r.id}  ${r.title}`);
+            lines.push(`    ${r.id}  ${cleanTitle(r.title)}`);
           }
         }
 

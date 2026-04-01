@@ -393,8 +393,8 @@ function formatRecentOEntries(store, limit, exchangeCount, linkedTo, expandAll) 
                 // Skip: older summarized sessions when a rolling summary exists (it covers them)
                 if (!isLatest && !isLastSummarized && rollingSum)
                     continue;
-                // Skip older sessions that have no summary and no batch summaries
-                if (!isLatest && !hasBody && batches.length === 0)
+                // Skip sessions that have no summary and no batch summaries
+                if (!hasBody && batches.length === 0)
                     continue;
                 const sessDate = session.created_at.substring(0, 10);
                 lines.push(`    [Session ${sessDate}] ${session.title.trim()}`);
@@ -423,9 +423,12 @@ function formatRecentOEntries(store, limit, exchangeCount, linkedTo, expandAll) 
                     // Title-only exchange — skip, already covered by batch/session summary
                     continue;
                 }
-                lines.push(`    USER: ${ex.userText}`);
-                if (ex.agentText)
-                    lines.push(`    AGENT: ${ex.agentText}`);
+                // Strip XML channel tags from Telegram messages, keep inner text
+                const userClean = ex.userText.replace(/<channel[^>]*>\s*/g, "").replace(/<\/channel>\s*/g, "").trim();
+                const agentClean = ex.agentText?.replace(/<[^>]+>/g, "").trim();
+                lines.push(`    USER: ${userClean}`);
+                if (agentClean)
+                    lines.push(`    AGENT: ${agentClean}`);
             }
         }
     }
@@ -1386,6 +1389,16 @@ server.tool("route_task", "[DEPRECATED: route_task requires the legacy Agents/ d
         return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
     }
 });
+/** Strip body (after \n>) and newlines from titles for compact display */
+function cleanTitle(t, max = 0) {
+    // Split at body separator — real newline+> or literal \n>
+    let s = t.split(/\n>|\\n>/)[0];
+    s = s.replace(/[\t\r\n]/g, " ").replace(/  +/g, " ").trim();
+    if (max > 0 && s.length > max) {
+        s = s.substring(0, max).replace(/[,;:\s]+$/, "") + "…";
+    }
+    return s;
+}
 server.tool("load_project", "Load a project and activate it. Returns L2 content + L3 titles — the perfect project briefing. " +
     "Also marks the project as active (deactivates any previously active project in the same prefix).\n\n" +
     "Use this when starting work on a project. It combines read_memory(id, depth=3) + update_memory(active=true) in one call.\n\n" +
@@ -1441,11 +1454,11 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             if (e.children) {
                 const { withBody, withChildren } = hmemConfig.loadProjectExpand;
                 // Sections completely hidden from load_project output
-                const SKIP_SECTIONS = [7]; // .7 Protocol — maintained but not shown in project briefing
+                const SKIP_SECTIONS = [];
                 const TAIL_SECTIONS = []; // tail-only sections (show last N children)
                 const TAIL_COUNT = 3;
-                // Sections where L3 children are hidden entirely (e.g. Ideas)
-                const HIDE_CHILDREN_SECTIONS = [9, 2]; // .9 Ideas, .2 Codebase (title-only modules → noise)
+                // Sections where L3 children are hidden entirely (title-only with count)
+                const HIDE_CHILDREN_SECTIONS = [7, 9, 2]; // .7 Protocol, .9 Ideas, .2 Codebase
                 // Sections where completed items (title starts with ✓) are filtered out
                 const FILTER_DONE_SECTIONS = [8]; // .8 Open tasks
                 for (const child of e.children.filter(c => !c.irrelevant)) {
@@ -1455,7 +1468,7 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                     const expandBody = withBody.includes(child.seq);
                     const expandChildTitles = withChildren.includes(child.seq);
                     const hideChildren = HIDE_CHILDREN_SECTIONS.includes(child.seq);
-                    lines.push(`  ${cId}  ${child.title || child.content.substring(0, 60)}`);
+                    lines.push(`  ${cId}  ${cleanTitle(child.title || child.content, 60)}`);
                     // For hidden sections: show body text but skip children
                     // If no body and no children with content, skip the section entirely
                     if (hideChildren) {
@@ -1489,7 +1502,7 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                             const gcId = lastSeg(gc.id);
                             if (expandBody) {
                                 // Show L3 title + body content
-                                lines.push(`    ${gcId}  ${gc.title || gc.content.substring(0, 80)}`);
+                                lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
                                 if (gc.content && gc.content !== gc.title) {
                                     for (const bodyLine of gc.content.split("\n")) {
                                         lines.push(`      ${bodyLine}`);
@@ -1498,15 +1511,14 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                             }
                             else {
                                 // Compact title
-                                const gcTitle = gc.title || (gc.content.length > 80 ? gc.content.substring(0, 80) : gc.content);
-                                lines.push(`    ${gcId}  ${gcTitle}`);
+                                lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
                             }
                             // L4 children titles
                             if (gc.children && gc.children.length > 0) {
                                 const visibleL4 = gc.children.filter((l4) => !l4.irrelevant);
                                 for (const l4 of visibleL4) {
                                     const l4Id = lastSeg(l4.id);
-                                    const l4Title = l4.title || (l4.content?.length > 60 ? l4.content.substring(0, 60) + "…" : l4.content || "");
+                                    const l4Title = cleanTitle(l4.title || l4.content || "", 60);
                                     lines.push(`      ${l4Id}  ${l4Title}`);
                                 }
                             }
@@ -1524,7 +1536,7 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             if (e.linkedEntries && e.linkedEntries.length > 0) {
                 lines.push("  Links:");
                 for (const le of e.linkedEntries) {
-                    lines.push(`    ${le.id}  ${le.title}`);
+                    lines.push(`    ${le.id}  ${cleanTitle(le.title, 70)}`);
                 }
             }
             // Context injection: find related E/L entries by weighted tag scoring
@@ -1534,7 +1546,7 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                 if (relatedEL.length > 0) {
                     lines.push("  Related errors & lessons:");
                     for (const r of relatedEL) {
-                        lines.push(`    ${r.entry.id} [⚡]  ${r.entry.title}`);
+                        lines.push(`    ${r.entry.id} [⚡]  ${cleanTitle(r.entry.title, 70)}`);
                     }
                 }
             }
@@ -1547,7 +1559,7 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             if (ruleEntries.length > 0) {
                 lines.push("  Rules:");
                 for (const r of ruleEntries) {
-                    lines.push(`    ${r.id}  ${r.title}`);
+                    lines.push(`    ${r.id}  ${cleanTitle(r.title)}`);
                 }
             }
             // Inject recent O-entries linked to THIS project
