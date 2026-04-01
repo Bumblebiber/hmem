@@ -1687,11 +1687,11 @@ server.tool(
         if (e.children) {
           const { withBody, withChildren } = hmemConfig.loadProjectExpand;
           // Sections completely hidden from load_project output
-          const SKIP_SECTIONS = [7]; // .7 Protocol — maintained but not shown in project briefing
+          const SKIP_SECTIONS: number[] = [];
           const TAIL_SECTIONS: number[] = []; // tail-only sections (show last N children)
           const TAIL_COUNT = 3;
-          // Sections where L3 children are hidden entirely (e.g. Ideas)
-          const HIDE_CHILDREN_SECTIONS = [9, 2]; // .9 Ideas, .2 Codebase (title-only modules → noise)
+          // Sections where L3 children are hidden entirely (title-only with count)
+          const HIDE_CHILDREN_SECTIONS = [7, 9, 2]; // .7 Protocol, .9 Ideas, .2 Codebase
           // Sections where completed items (title starts with ✓) are filtered out
           const FILTER_DONE_SECTIONS = [8]; // .8 Open tasks
           for (const child of (e.children as MemoryNode[]).filter(c => !c.irrelevant)) {
