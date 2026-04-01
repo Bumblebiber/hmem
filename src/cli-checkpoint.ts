@@ -120,8 +120,11 @@ export async function checkpoint(): Promise<void> {
     mcpConfigPath = buildMcpConfig(projectDir, hmemPath);
 
     const formattedExchanges = batchExchanges.map((ex, i) => {
-      const user = ex.userText.length > 800 ? ex.userText.substring(0, 800) + "..." : ex.userText;
-      const agent = ex.agentText.length > 1200 ? ex.agentText.substring(0, 1200) + "..." : ex.agentText;
+      // Strip XML channel tags from Telegram messages before passing to Haiku
+      let user = ex.userText.replace(/<channel[^>]*>\s*/g, "").replace(/<\/channel>\s*/g, "").trim();
+      let agent = ex.agentText.replace(/<[^>]+>/g, "").trim();
+      user = user.length > 800 ? user.substring(0, 800) + "..." : user;
+      agent = agent.length > 1200 ? agent.substring(0, 1200) + "..." : agent;
       return `--- Exchange ${i + 1} (${ex.nodeId}) ---\nUSER: ${user}\nAGENT: ${agent}`;
     }).join("\n\n");
 
@@ -155,20 +158,36 @@ ${exchangeListing}
 
 For each: update_memory(id="<nodeId>", content="Descriptive title, max 50 chars, match conversation language")
 
+CRITICAL title rules:
+- Describe WHAT HAPPENED or WHAT WAS DECIDED, not what was said
+- BAD: "Projekt hmem laden" (just repeats user message)
+- BAD: "Ja" or "Reconnected" (meaningless)
+- GOOD: "Load hmem project, evaluate output quality"
+- GOOD: "Fix: cleanTitle strips body separators from titles"
+- If the exchange is trivial (greeting, "ok", "yes"), title it as context: "Confirm: proceed with commit"
+
 ### 2. Write rolling summary for this batch
 update_memory(id="${batchId}", content="Rolling summary: 3-8 sentences covering this batch${prevBatch ? " + previous summary" : ""}. Match conversation language.")
 ${prevBatch ? "IMPORTANT: Incorporate the previous batch summary — your new summary is cumulative." : "This is the first batch."}
 
-### 3. Extract knowledge (non-obvious only, max 2-3)
-write_memory(prefix="<any prefix>", content="...", tags=[3-5 tags], links=["${projectId}", "${batchId}"])
-Valid prefixes: L (lesson), E (error), D (decision), R (rule), C (convention), or any other.
-Skip if nothing non-obvious happened.
+### 3. Extract knowledge (STRICT quality gate — max 1-2)
+write_memory(prefix="<any prefix>", content="Concise insight title\n> 2-4 sentence explanation with specific details", tags=[3-5 tags], links=["${projectId}", "${batchId}"])
+Valid prefixes: L (lesson), E (error), D (decision), R (rule), C (convention).
 
-### 4. Update project P-entry
-read_memory(id="${projectId}") first, then update relevant sections:
-- Protocol (.7): append_memory(id="${projectId}.7", content="Session YYYY-MM-DD: what happened")
-- Bugs (.6), Open Tasks (.8): update as needed
-- Overview (.1): if architecture changed significantly
+Quality gate — SKIP unless the entry passes ALL checks:
+- Would a developer find this useful 6 months from now? If not, skip.
+- Is it a specific, actionable insight? Vague observations are NOT lessons.
+- Does it already exist in memory? Do NOT duplicate known information.
+- NEVER write test entries, placeholder entries, or "delete me" entries.
+- When in doubt, skip. Writing nothing is better than writing noise.
+
+### 4. Update project P-entry (only if meaningful changes happened)
+read_memory(id="${projectId}") first. Only update if this batch contains significant changes:
+- Bugs (.6): new bug discovered or existing bug fixed
+- Open Tasks (.8): task completed (prefix with "✓ DONE:") or new task identified
+- Overview (.1): only if architecture or core behavior changed
+- Do NOT update Protocol (.7) — session summaries already cover this.
+- Do NOT update if this batch was just discussion/planning with no concrete outcome.
 
 ### 5. Tag exchanges
 For each exchange, consider adding ONE tag if applicable:
