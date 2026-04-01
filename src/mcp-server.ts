@@ -1798,6 +1798,118 @@ server.tool(
 );
 
 server.tool(
+  "create_project",
+  "Create a new project with the standard R0009 schema. Automatically creates:\n" +
+    "1. P-entry with all 9 L2 sections (Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Open tasks, Ideas)\n" +
+    "2. Matching O-entry for session logging (O00XX ↔ P00XX)\n\n" +
+    "Example: create_project({ name: 'Carlo Auftrag', tech: 'Python/SAP', description: 'SAP Freigabe-Automatisierung' })",
+  {
+    name: z.string().describe("Project name (short, for L1 title)"),
+    tech: z.string().describe("Tech stack, e.g. 'TS/React', 'Python/Flask', 'AHK v2'"),
+    description: z.string().describe("One-line project description"),
+    status: z.enum(["Active", "Paused", "Planning", "Mature", "Archived"]).default("Active"),
+    repo: z.string().optional().describe("Repo path or URL, e.g. '~/projects/foo' or 'GH: User/repo'"),
+    goal: z.string().optional().describe("Main project goal (1-2 sentences)"),
+    audience: z.string().optional().describe("Target audience / who uses it"),
+    deployment: z.string().optional().describe("How it's deployed (npm, exe, server, manual)"),
+    tags: z.array(z.string()).optional().describe("Additional tags beyond #project (auto-added)"),
+    links: z.array(z.string()).optional().describe("Related entry IDs, e.g. ['T0044', 'L0095']"),
+    store: z.enum(["personal", "company"]).default("personal"),
+  },
+  async ({ name, tech, description, status, repo, goal, audience, deployment, tags, links, store: storeName }) => {
+    try {
+      const hmemStore = new HmemStore(HMEM_PATH, loadHmemConfig(path.dirname(HMEM_PATH)));
+      try {
+        // Build the P-entry content with R0009 schema
+        const titleLine = `${name} | ${status} | ${tech} | ${description}`;
+        const bodyLine = goal ? `> ${goal}` : `> ${description}`;
+
+        const sections: string[] = [titleLine, bodyLine];
+
+        // .1 Overview
+        sections.push(`\tOverview`);
+        sections.push(`\t\tCurrent state: ${status}, ${tech}`);
+        if (goal) sections.push(`\t\tGoals: ${goal}`);
+        if (repo) sections.push(`\t\tEnvironment: ${repo}`);
+
+        // .2 Codebase
+        sections.push(`\tCodebase`);
+
+        // .3 Usage
+        sections.push(`\tUsage`);
+
+        // .4 Context
+        sections.push(`\tContext`);
+        if (audience) sections.push(`\t\tTarget audience: ${audience}`);
+
+        // .5 Deployment
+        sections.push(`\tDeployment`);
+        if (deployment) sections.push(`\t\t${deployment}`);
+
+        // .6 Bugs
+        sections.push(`\tBugs`);
+
+        // .7 Protocol
+        sections.push(`\tProtocol`);
+
+        // .8 Open tasks
+        sections.push(`\tOpen tasks`);
+
+        // .9 Ideas
+        sections.push(`\tIdeas`);
+
+        const content = sections.join("\n");
+
+        // Merge tags
+        const allTags = ["#project", ...(tags ?? [])];
+
+        // Write P-entry (signature: prefix, content, links, minRole, favorite, tags)
+        const result = hmemStore.write("P", content, links ?? [], undefined, false, allTags);
+        const pId = result.id;
+        const pSeq = parseInt(pId.replace(/\D/g, ""), 10);
+
+        // Create matching O-entry
+        const oId = `O${String(pSeq).padStart(4, "0")}`;
+        const existingO = hmemStore.readEntry(oId);
+        if (!existingO) {
+          hmemStore.write("O", `${name} — Session Log`, [pId], undefined, false, ["#session-log"]);
+          // The O-entry gets auto-assigned the next seq, which may not match pSeq.
+          // We need to ensure it has the right ID. Check if it matches:
+          const lastO = hmemStore.read({ prefix: "O", depth: 1 })
+            .sort((a: any, b: any) => b.seq - a.seq)[0];
+          if (lastO && lastO.id !== oId) {
+            // Rename to match P-entry seq
+            hmemStore.renameId(lastO.id, oId);
+          }
+        }
+
+        // Note: write() with prefix "P" auto-activates the project (deactivates others)
+
+        // Sync if enabled
+        if (storeName === "personal") syncPush(HMEM_PATH);
+
+        log(`create_project: ${pId} + ${oId} created and activated`);
+
+        return trackTokens({
+          content: [{
+            type: "text" as const,
+            text: `✓ Project ${pId} created and activated.\n` +
+              `  O-entry: ${oId} (session logging)\n` +
+              `  Sections: Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Open tasks, Ideas\n\n` +
+              `Next: Use load_project(id="${pId}") to see the full briefing.\n` +
+              `Tip: Use append_memory(id="${pId}.2", content="...") to fill in Codebase details.`,
+          }],
+        });
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
   "memory_health",
   "Audit report for your memory: broken links (links pointing to deleted entries), " +
     "orphaned entries (no sub-nodes), stale favorites/pinned (not accessed in 60 days), " +
