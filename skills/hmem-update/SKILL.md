@@ -117,6 +117,24 @@ v6.0.0 replaced `HMEM_PROJECT_DIR` + `HMEM_AGENT_ID` with a single `HMEM_PATH` e
 4. If hmem-sync is installed, also update to v1.0.0+ (`npm update -g hmem-sync`).
    The `--agent-id` flag was removed — use `--hmem-path` or `HMEM_PATH` instead.
 
+5. **CRITICAL — Sync filename must match across all devices:**
+   hmem-sync identifies stores by the local filename (e.g. `DEVELOPER.hmem`). If Device A
+   syncs as `DEVELOPER.hmem` and Device B syncs as `memory.hmem`, they will NOT see each
+   other's data — the server treats them as separate stores.
+
+   **Check:** Run `hmem-sync status` on each device. The "hmem file" line shows the filename
+   that will be used for sync. All devices sharing the same memory MUST use the same filename.
+
+   **Common mistake after v6.0 migration:** Devices that used `HMEM_AGENT_ID=DEVELOPER`
+   have `DEVELOPER.hmem`. New devices default to `memory.hmem`. These won't sync.
+
+   **Fix:** Rename the .hmem file on the mismatched device:
+   ```bash
+   mv ~/.hmem/memory.hmem ~/.hmem/DEVELOPER.hmem
+   # or: mv ~/.hmem/memory.hmem ~/.hmem/Agents/DEVELOPER/DEVELOPER.hmem
+   ```
+   Then update `HMEM_PATH` in the MCP config to point to the renamed file.
+
 **Also removed in v6.0.0:**
 - `min_role` parameter from `write_memory` and `update_memory` tools
 - Company store role gating (all agents can now write to company store)
