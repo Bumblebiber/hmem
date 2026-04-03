@@ -16,7 +16,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 
@@ -225,10 +225,13 @@ move_nodes(node_ids=["<exchange_id>"], target_o_id="O00XX")
     const disallowedTools = "mcp__hmem__flush_context";
 
     try {
-      const output = execSync(
-        `claude -p --model haiku --mcp-config "${mcpConfigPath}" --allowedTools "${allowedTools}" --disallowedTools "${disallowedTools}" --dangerously-skip-permissions 2>/dev/null`,
-        { input: prompt, encoding: "utf8", timeout: 120_000 }
-      ).trim();
+      const output = execFileSync("claude", [
+        "-p", "--model", "haiku",
+        "--mcp-config", mcpConfigPath,
+        "--allowedTools", allowedTools,
+        "--disallowedTools", disallowedTools,
+        "--dangerously-skip-permissions",
+      ], { input: prompt, encoding: "utf8", timeout: 120_000 }).trim();
       console.log(`[hmem checkpoint] Haiku: ${output.substring(0, 300)}`);
     } catch (e: any) {
       const stdout = e.stdout?.toString()?.substring(0, 200) || "";

@@ -9,7 +9,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
@@ -94,10 +94,12 @@ update_memory(id="${sessionId}", content="Session summary text here")`;
 
     const allowedTools = "mcp__hmem__update_memory mcp__hmem__read_memory";
 
-    execSync(
-      `claude -p --model haiku --mcp-config "${mcpConfigPath}" --allowedTools "${allowedTools}" --dangerously-skip-permissions 2>/dev/null`,
-      { input: prompt, encoding: "utf8", timeout: 60_000 }
-    );
+    execFileSync("claude", [
+      "-p", "--model", "haiku",
+      "--mcp-config", mcpConfigPath,
+      "--allowedTools", allowedTools,
+      "--dangerously-skip-permissions",
+    ], { input: prompt, encoding: "utf8", timeout: 60_000 });
 
     console.log(`[hmem] Session summary written for ${sessionId}`);
 

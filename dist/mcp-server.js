@@ -52,6 +52,25 @@ const dbMtimeAtStart = (() => {
     catch { }
     return null;
 })();
+// ---- Security helpers ----
+import os from "node:os";
+/** Validate that a file path stays within the hmem directory or user's home. */
+function validateFilePath(userPath, hmemDir) {
+    const resolved = path.resolve(userPath);
+    const home = os.homedir();
+    if (!resolved.startsWith(hmemDir + path.sep) && !resolved.startsWith(home + path.sep)
+        && resolved !== hmemDir && resolved !== home) {
+        throw new Error("Path must be within the hmem directory or home directory.");
+    }
+    return resolved;
+}
+/** Validate agent_name against path traversal. */
+function validateAgentName(name) {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
+        throw new Error(`Invalid agent name "${name}". Use alphanumeric, underscore, or hyphen only (max 64 chars).`);
+    }
+    return name;
+}
 // ---- hmem-sync integration ----
 let lastPullAt = 0;
 const PULL_COOLDOWN_MS = 30_000;
@@ -1221,7 +1240,7 @@ server.tool("export_memory", "Export your memory, excluding secret entries and s
         try {
             if (format === "hmem") {
                 const defaultPath = path.join(path.dirname(hmemStore.getDbPath()), "export.hmem");
-                const outPath = output_path || defaultPath;
+                const outPath = validateFilePath(output_path || defaultPath, path.dirname(hmemStore.getDbPath()));
                 const result = hmemStore.exportPublicToHmem(outPath);
                 return { content: [{ type: "text", text: `Exported to ${outPath}\n${result.entries} entries, ${result.nodes} nodes, ${result.tags} tags` }] };
             }
@@ -1253,9 +1272,10 @@ server.tool("import_memory", "Import entries from a .hmem file into your memory.
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
             : new HmemStore(HMEM_PATH, hmemConfig);
         try {
-            const result = hmemStore.importFromHmem(source_path, dry_run);
+            const safePath = validateFilePath(source_path, path.dirname(hmemStore.getDbPath()));
+            const result = hmemStore.importFromHmem(safePath, dry_run);
             const mode = dry_run ? "preview" : "imported";
-            log(`import_memory: ${mode} from ${source_path} (${result.inserted} new, ${result.merged} merged)`);
+            log(`import_memory: ${mode} from ${safePath} (${result.inserted} new, ${result.merged} merged)`);
             const lines = [];
             lines.push(dry_run
                 ? `Import preview from ${source_path}:`
@@ -2048,7 +2068,7 @@ server.tool("read_agent_memory", "CURATOR ONLY (ceo role). Read the full memory 
             isError: true,
         };
     }
-    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, validateAgentName(agent_name));
     if (!fs.existsSync(hmemPath)) {
         return {
             content: [{ type: "text", text: `No .hmem found for agent "${agent_name}" (expected: ${hmemPath}).` }],
@@ -2118,7 +2138,7 @@ server.tool("fix_agent_memory", "CURATOR ONLY (ceo role). Correct a specific ent
             isError: true,
         };
     }
-    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, validateAgentName(agent_name));
     if (!fs.existsSync(hmemPath)) {
         return {
             content: [{ type: "text", text: `No .hmem found for agent "${agent_name}".` }],
@@ -2208,7 +2228,7 @@ server.tool("append_agent_memory", "CURATOR ONLY (ceo role). Append new child no
             isError: true,
         };
     }
-    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, validateAgentName(agent_name));
     if (!fs.existsSync(hmemPath)) {
         return {
             content: [{ type: "text", text: `No .hmem found for agent "${agent_name}".` }],
@@ -2248,6 +2268,7 @@ server.tool("delete_agent_memory", "Delete an entry from an agent's memory. " +
     agent_name: z.string().describe("Template name of the agent, e.g. 'THOR'"),
     entry_id: z.string().describe("Entry ID to delete, e.g. 'E0007'"),
 }, async ({ agent_name, entry_id }) => {
+    validateAgentName(agent_name);
     let hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
     // If legacy path doesn't exist, assume agent means own memory
     if (!fs.existsSync(hmemPath))
@@ -2294,6 +2315,7 @@ server.tool("mark_audited", "CURATOR ONLY (ceo role). Mark an agent as audited (
             isError: true,
         };
     }
+    validateAgentName(agent_name);
     const state = loadAuditState();
     state[agent_name] = new Date().toISOString();
     saveAuditState(state);
