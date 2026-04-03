@@ -73,6 +73,12 @@ function validateFilePath(userPath: string, hmemDir: string): string {
   return resolved;
 }
 
+/** Sanitize error for external consumption — strip file paths and stack traces. */
+function safeError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.replace(/\/[^\s:)]+/g, "[path]").substring(0, 300);
+}
+
 /** Validate agent_name against path traversal. */
 function validateAgentName(name: string): string {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
@@ -682,7 +688,7 @@ server.tool(
       }
     } catch (e) {
       return {
-        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
         isError: true,
       };
     }
@@ -792,7 +798,7 @@ server.tool(
       }
     } catch (e) {
       return {
-        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
         isError: true,
       };
     }
@@ -847,7 +853,7 @@ server.tool(
       }
     } catch (e) {
       return {
-        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
         isError: true,
       };
     }
@@ -910,7 +916,7 @@ server.tool(
       }
     } catch (e) {
       return {
-        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
         isError: true,
       };
     }
@@ -980,7 +986,7 @@ server.tool(
       }
     } catch (e) {
       return {
-        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
         isError: true,
       };
     }
@@ -1384,7 +1390,7 @@ server.tool(
       }
     } catch (e) {
       return {
-        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
         isError: true,
       };
     }
@@ -1460,7 +1466,7 @@ server.tool(
       }
     } catch (e) {
       return {
-        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
         isError: true,
       };
     }
@@ -1511,7 +1517,7 @@ server.tool(
       }
     } catch (e) {
       return {
-        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
         isError: true,
       };
     }
@@ -1560,7 +1566,7 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -1597,7 +1603,7 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -1642,7 +1648,7 @@ server.tool(
 
       return { content: [{ type: "text" as const, text: lines.join("\n") }] };
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -1883,7 +1889,7 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -1995,7 +2001,7 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -2068,7 +2074,7 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -2108,7 +2114,7 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -2141,7 +2147,7 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -2177,7 +2183,7 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -2214,7 +2220,7 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -2240,7 +2246,7 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -2271,7 +2277,7 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${e}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }
   }
 );
@@ -2599,7 +2605,7 @@ server.tool(
       };
     } catch (e) {
       return {
-        content: [{ type: "text" as const, text: `ERROR: ${e}` }],
+        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
         isError: true,
       };
     } finally {
@@ -2619,9 +2625,13 @@ server.tool(
   },
   async ({ agent_name, entry_id }) => {
     validateAgentName(agent_name);
-    let hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
-    // If legacy path doesn't exist, assume agent means own memory
-    if (!fs.existsSync(hmemPath)) hmemPath = HMEM_PATH;
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
+    if (!fs.existsSync(hmemPath)) {
+      return {
+        content: [{ type: "text" as const, text: `No .hmem found for agent "${agent_name}".` }],
+        isError: true,
+      };
+    }
     const isOwnMemory = hmemPath === HMEM_PATH;
 
     // Curator can delete any agent's entries; non-curators can only delete their own

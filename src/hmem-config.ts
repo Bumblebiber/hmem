@@ -248,7 +248,9 @@ export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
   // Secure file if any sync token is present
   const servers = getSyncServers(config);
   if (servers.some(s => s.token)) {
-    try { fs.chmodSync(configPath, 0o600); } catch {}
+    try { fs.chmodSync(configPath, 0o600); } catch (e) {
+      console.error(`[hmem] WARNING: Could not restrict permissions on ${configPath} — sync token may be exposed: ${e}`);
+    }
   }
 }
 

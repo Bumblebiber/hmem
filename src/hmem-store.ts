@@ -801,11 +801,13 @@ export class HmemStore {
       const idPlaceholders = [...ftsRootIds].map(() => "?").join(", ");
       const baseWhere = `id IN (${idPlaceholders}) AND seq > 0`;
       const where = `WHERE ${baseWhere}`;
-      const limitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
+      const limitClause = limit !== undefined ? ` LIMIT ?` : "";
+      const ftsParams: any[] = [...ftsRootIds];
+      if (limit !== undefined) ftsParams.push(limit);
 
       const rows = this.db.prepare(
         `SELECT * FROM memories ${where} ORDER BY created_at DESC${limitClause}`
-      ).all(...ftsRootIds) as any[];
+      ).all(...ftsParams) as any[];
 
       for (const row of rows) this.bumpAccess(row.id);
       return rows.map(r => this.rowToEntry(r));
@@ -865,7 +867,8 @@ export class HmemStore {
     const staleSort = opts.staleDays
       ? "COALESCE(m.last_accessed, m.created_at) ASC"
       : "effective_date DESC";
-    const limitClause = limit !== undefined ? `LIMIT ${limit}` : "";
+    const limitClause = limit !== undefined ? `LIMIT ?` : "";
+    if (limit !== undefined) params.push(limit);
     const rows = this.db.prepare(`
       SELECT m.*,
         COALESCE(

@@ -8,6 +8,7 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFileSync, execSync } from "node:child_process";
 import { HmemStore } from "./hmem-store.js";
@@ -41,7 +42,9 @@ function buildMcpConfig(projectDir: string, hmemPath: string): string {
     },
   };
 
-  const tmpPath = path.join("/tmp", `hmem-session-summary-${process.pid}.json`);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hmem-session-summary-"));
+  fs.chmodSync(tmpDir, 0o700);
+  const tmpPath = path.join(tmpDir, "mcp-config.json");
   fs.writeFileSync(tmpPath, JSON.stringify(config), "utf8");
   return tmpPath;
 }
@@ -106,6 +109,9 @@ update_memory(id="${sessionId}", content="Session summary text here")`;
   } catch (e) {
     console.error(`[hmem summarize-session] ${e}`);
   } finally {
-    if (mcpConfigPath) try { fs.unlinkSync(mcpConfigPath); } catch {}
+    if (mcpConfigPath) {
+      try { fs.unlinkSync(mcpConfigPath); } catch {}
+      try { fs.rmdirSync(path.dirname(mcpConfigPath)); } catch {}
+    }
   }
 }
