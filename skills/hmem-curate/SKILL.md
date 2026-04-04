@@ -96,19 +96,19 @@ Don't over-link: only add links where the connection adds real navigational valu
 
 ### Title/Body Quality (v5.1+)
 
-Since v5.1, entries support explicit title/body separation via the `>` format. During curation:
+Entries support explicit title/body separation via a blank line (like git commits). During curation:
 
 **Root entries (L1):**
 - Check if the auto-extracted title is meaningful. If it's truncated or vague, rewrite with explicit title + body:
   ```
-  fix_agent_memory(agent_name, id, content="Clear navigation title\n> Original detailed L1 text that was too long for a title")
+  fix_agent_memory(agent_name, id, content="Clear navigation title\n\nOriginal detailed L1 text that was too long for a title")
   ```
-- Old entries without `>` still work — the title is auto-extracted from `level_1`. Only rewrite if the auto-title is genuinely bad.
+- Old entries without body separation still work — the title is auto-extracted from `level_1`. Only rewrite if the auto-title is genuinely bad.
 
 **Child nodes (L2+):**
 - Same principle: if a node has dense content, split into title + body:
   ```
-  fix_agent_memory(agent_name, "L0003.2", content="Short node title\n> Detailed explanation\n> spanning multiple lines")
+  fix_agent_memory(agent_name, "L0003.2", content="Short node title\n\nDetailed explanation\nspanning multiple lines")
   ```
 - Nodes with short, clear content don't need body separation — leave them as-is.
 

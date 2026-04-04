@@ -149,7 +149,7 @@ Every node has a **title** (short navigation label) and an optional **body** (de
 | `expand=true` | Title + body recursively for all nodes |
 | Bulk reads | Title only for L1, expanded entries show L2 titles |
 
-Entries written with the `>` body format have explicit title/body separation. Older entries without `>` show auto-extracted titles (~50 chars) — the full text is still accessible on drill-down.
+Entries with a blank line between title and body have explicit title/body separation. Older entries without separation show auto-extracted titles (~50 chars) — the full text is still accessible on drill-down.
 
 ---
 

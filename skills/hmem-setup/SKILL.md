@@ -259,10 +259,10 @@ Expected: `Memory is empty` (or your existing memories).
 ```
 read_memory()                          # see all L1 memories
 read_memory(id="L0001")               # drill into one entry
-write_memory(prefix="L", content="Short title\n> Detailed body text\n\tL2 sub-node")
+write_memory(prefix="L", content="Short title\n\nDetailed body text\n\tL2 sub-node")
 search_memory(query="error node.js")  # search across all memories
 ```
 
-Use `>` lines for body text (hidden in listings, shown on drill-down). See `hmem-write` skill for details.
+Separate title from body with a blank line (hidden in listings, shown on drill-down). See `hmem-write` skill for details.
 
 See `skills/hmem-read/SKILL.md` and `skills/hmem-write/SKILL.md` for full usage.

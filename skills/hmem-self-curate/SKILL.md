@@ -81,8 +81,8 @@ These are especially useful when a curation pass reveals a pattern (e.g., 10 ent
 Since v5.1, every node has a **title** (short navigation label, ~50 chars) and an optional **body** (detailed content shown on drill-down). During curation, check whether titles are good navigation labels:
 
 - **Vague title?** Update it: `update_memory(id="L0003", content="Better, specific title")`
-- **Title = full content?** Old entries without `>` body lines have `title = autoExtract(content)`. If the content is valuable but the title is truncated gibberish, rewrite the title to be a clear summary.
-- **Long content in a leaf node?** Consider whether it would benefit from title/body separation — though this requires rewriting via the `>` format (write new entry + mark old obsolete).
+- **Title = full content?** Old entries without body separation have `title = autoExtract(content)`. If the content is valuable but the title is truncated gibberish, rewrite with explicit title + blank line + body.
+- **Long content in a leaf node?** Consider whether it would benefit from title/body separation: `update_memory(id, content="Clear title\n\nDetailed body text")`.
 
 ---
 

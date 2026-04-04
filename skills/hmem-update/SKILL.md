@@ -147,13 +147,13 @@ v6.0.0 replaced `HMEM_PROJECT_DIR` + `HMEM_AGENT_ID` with a single `HMEM_PATH` e
 Some versions introduce new data formats. Check if migration is needed:
 
 **v5.1.0+ Title/Body Separation:**
-- Entries now support `>` body lines (title shown in listings, body on drill-down)
+- Entries support title/body separation via blank line (title shown in listings, body on drill-down)
 - Check if old entries need title/body split:
   ```
   read_memory(titles_only=true)
   ```
 - Look for entries where the title is truncated mid-word or contains too much detail
-- Fix with: `update_memory(id="L0042", content="Clear title\n> Detailed body text")`
+- Fix with: `update_memory(id="L0042", content="Clear title\n\nDetailed body text")`
 
 **v5.1.2+ Checkpoint Summaries:**
 - O-entries with >10 exchanges should have `[CP]` checkpoint summaries

@@ -59,8 +59,8 @@ This creates:
 If a codebase was scanned, append the findings:
 
 ```
-append_memory(id="P00XX.2", content="Entry point: src/index.ts\n> ...")
-append_memory(id="P00XX.3", content="Installation: npm install\n> ...")
+append_memory(id="P00XX.2", content="Entry point: src/index.ts\n\n...")
+append_memory(id="P00XX.3", content="Installation: npm install\n\n...")
 ```
 
 ## Step 5: Link related entries

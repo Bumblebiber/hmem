@@ -39,7 +39,7 @@ Present a table of current values vs. defaults. Only highlight values that diffe
 | `maxCharsPerLevel` | [200, 2500, 10000, 25000, 50000] | Character limits per tree level [L1–L5]. L1 is always loaded at startup, so keeping it short saves tokens across every session. L5 is raw data, rarely accessed. |
 | `maxDepth` | 5 | Tree depth (1–5). Most users need 5. Lower values save storage but lose granularity. |
 | `defaultReadLimit` | 100 | Max entries per bulk read. Lower = faster startup, higher = more complete overview. |
-| `maxTitleChars` | 50 | Auto-extracted title length. Only applies to entries without explicit `>` body format — entries with `>` use the first non-body line as title verbatim. Titles are navigation labels — too short truncates meaning, too long wastes space. |
+| `maxTitleChars` | 50 | Auto-extracted title length. Only applies to entries without explicit body separation — entries with a blank-line body use the first line as title verbatim. Titles are navigation labels — too short truncates meaning, too long wastes space. |
 | `accessCountTopN` | 5 | Entries with highest access count get [★] and auto-expand in bulk reads. These are "organic favorites" — the things the agent keeps coming back to. |
 
 ### Checkpoint and session parameters (v5+)
