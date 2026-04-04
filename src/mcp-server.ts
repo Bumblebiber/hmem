@@ -678,12 +678,29 @@ server.tool(
           ? `\nMemory store created: ${HMEM_PATH}`
           : "";
 
+        // For E and D entries: show related errors/decisions by tag overlap
+        let relatedHint = "";
+        if ((prefix === "E" || prefix === "D") && tags && tags.length > 0) {
+          const related = hmemStore.findRelated(result.id, tags, 5);
+          // Filter to E/D entries only for cross-referencing
+          const relevantRelated = related.filter(r => r.id.startsWith("E") || r.id.startsWith("D"));
+          if (relevantRelated.length > 0) {
+            relatedHint = "\n\nSimilar errors/decisions (by tag overlap):\n" +
+              relevantRelated.map(r => `  ${r.id}  ${r.title}`).join("\n");
+          }
+        }
+
+        // For E entries: note the auto-scaffolded structure
+        const eNote = prefix === "E"
+          ? `\nSchema: .1 Analysis, .2 Possible fixes, .3 Fixing attempts, .4 Solution, .5 Cause, .6 Key Learnings`
+          : "";
+
         return {
           content: [{
             type: "text" as const,
             text: `Memory saved: ${result.id} (${result.timestamp.substring(0, 19)})\n` +
               `Store: ${storeLabel} | Category: ${prefix}` +
-              firstTimeNote,
+              firstTimeNote + eNote + relatedHint,
           }],
         };
       } finally {
@@ -1723,6 +1740,16 @@ server.tool(
         activeProjectId = id;
         hmemStore.update(id, { active: true });
 
+        // Cache check: if project was already loaded recently, return short confirmation
+        const hiddenIds = sessionCache.getHiddenIds();
+        if (hiddenIds.has(id)) {
+          log(`load_project: ${id} already cached (< 5 min), returning short response`);
+          if (storeName === "personal") syncPush(HMEM_PATH);
+          return trackTokens({
+            content: [{ type: "text" as const, text: `✓ Project ${id} already active (loaded recently). Use read_memory(id="${id}") to drill into specific sections.` }],
+          });
+        }
+
         // Read with expand + depth 3 (L2 content + L3 titles + L4 hints)
         const entries = hmemStore.read({
           id,
@@ -1893,6 +1920,9 @@ server.tool(
         const tokenInfo = ` | ${(outputTokens / 1000).toFixed(1)}k/${(totalTokens / 1000).toFixed(0)}k tokens`;
 
         log(`load_project: ${id} activated and loaded (depth=3)`);
+
+        // Register in session cache to prevent redundant full loads
+        sessionCache.registerDelivered([id]);
 
         // Sync if enabled
         if (storeName === "personal") syncPush(HMEM_PATH);

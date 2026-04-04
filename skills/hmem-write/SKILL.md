@@ -91,7 +91,7 @@ tag_rename(old_tag="#hmem-store", new_tag="#hmem")           # rename a tag ever
 |--------|----------|-------------|
 | **P** | (P)roject | Project entries — standardized L1 format (see below) |
 | **L** | (L)esson | Lessons learned, best practices — cross-project knowledge |
-| **E** | (E)rror | Bugs, errors + their fix — cross-project knowledge |
+| **E** | (E)rror | Bugs, errors + their fix — auto-scaffolded schema (see below) |
 | **D** | (D)ecision | Architecture decisions with reasoning — cross-project knowledge |
 | **T** | (T)ask | Cross-project or infrastructure tasks ONLY (see note below) |
 | **M** | (M)ilestone | Cross-project milestones ONLY — project milestones go in P-entry L2 "Protocol" |
@@ -194,6 +194,26 @@ write_memory(
 ```
 
 Note: L2 nodes use 1 tab, L3 uses 2 tabs, L4 uses 3 tabs. Separate title from body with a blank line at the same indent level. Skip empty sections — no need for placeholder text.
+
+### E-Entry Schema (auto-scaffolded)
+
+E-entries have a **pre-built structure** — just provide a title and short description, the server creates the rest:
+
+```
+write_memory(prefix="E", content="hmem sync bug on v1.0.1\n\nConnection fails when HMEM_PATH contains spaces", tags=["#hmem", "#sync", "#path"])
+```
+
+This auto-creates:
+- **.1 Analysis** (your description goes here automatically)
+- **.2 Possible fixes**
+- **.3 Fixing attempts**
+- **.4 Solution**
+- **.5 Cause**
+- **.6 Key Learnings**
+
+Plus `#open` tag. Fill in the nodes as you debug with `append_memory`/`update_memory`. The response shows **similar E/D entries by tag overlap** — check them before reinventing the wheel. When solved, replace `#open` with `#solved` and fill .4 + .5 + .6.
+
+E-entries are **not shown in bulk reads** — they surface automatically via tag overlap when you create new E/D entries. Solved bugs are knowledge, not clutter.
 
 ### Marking entries as favorites
 

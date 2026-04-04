@@ -548,6 +548,24 @@ export class HmemStore {
       if (prefix === "P") {
         this.db.prepare("UPDATE memories SET active = 1 WHERE id = ?").run(rootId);
       }
+      // Auto-scaffold E-entries: create standard L2 structure when no children provided
+      if (prefix === "E" && nodes.length === 0) {
+        const eSchema = ["Analysis", "Possible fixes", "Fixing attempts", "Solution", "Cause", "Key Learnings"];
+        for (let i = 0; i < eSchema.length; i++) {
+          const nodeId = `${rootId}.${i + 1}`;
+          insertNode.run(nodeId, rootId, rootId, 2, i + 1, eSchema[i], eSchema[i], timestamp, timestamp);
+        }
+        // Move L1 body into .1 Analysis as content (the short description stays on L1)
+        if (level1 !== title) {
+          // level1 contains body text — move it to Analysis node
+          this.db.prepare("UPDATE memory_nodes SET content = ?, title = ? WHERE id = ?")
+            .run(level1, "Analysis", `${rootId}.1`);
+        }
+        // Auto-add #open tag on root (visible in bulk-read title line)
+        if (!validatedTags.includes("#open")) {
+          this.addTag(rootId, "#open");
+        }
+      }
     })();
 
     return { id: rootId, timestamp };
@@ -953,7 +971,7 @@ export class HmemStore {
     // Step 0.5: Detect active-prefixes — prefixes where at least one entry has active=1.
     // Non-active entries in these prefixes are still shown (as compact titles) but don't get expansion slots.
     // P and I prefixes ALWAYS treated as active-prefix — only expand when explicitly activated.
-    const activePrefixes = new Set<string>(["P", "I"]);
+    const activePrefixes = new Set<string>(["P", "I", "E"]);
     for (const r of activeRows) {
       if (r.active === 1) activePrefixes.add(r.prefix);
     }
