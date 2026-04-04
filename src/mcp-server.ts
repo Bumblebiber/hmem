@@ -571,8 +571,8 @@ server.tool(
     "  Level 3: 2 tabs — even more detail\n" +
     "  Level 4: 3 tabs — fine-grained detail\n" +
     "  Level 5: 4 tabs — raw context/data\n" +
-    "Use > lines for body text (shown on drill-down, hidden in listings):\n" +
-    "  Title line\\n> Body line 1\\n> Body line 2\\n\\tChild title\\n\\t> Child body\n" +
+    "Body text (shown on drill-down, hidden in listings) — use a blank line to separate title from body:\n" +
+    "  Title line\\n\\nBody text here.\\nMore body text.\\n\\tChild title\\n\\n\\tChild body text.\n" +
     "The system auto-assigns an ID and timestamp. " +
     `Use prefix to categorize: ${prefixList}.\n\n` +
     "Store types:\n" +
@@ -582,12 +582,12 @@ server.tool(
       `Memory category: ${prefixList}`
     ),
     content: z.string().min(3).describe(
-      "The memory content. Use tab indentation for depth levels. Use > for body text (hidden in listings, shown on drill-down).\n" +
+      "The memory content. Use tab indentation for depth levels. Separate title from body with a blank line (like git commits).\n" +
         "Example:\n" +
-        "Council Dashboard for Althing Inc.\n" +
-        "> Built a real-time dashboard with React + Vite. ShadcnUI for components, SSE for live updates.\n" +
-        "\tFrontend architecture\n" +
-        "\t> React + Vite, ShadcnUI components, SSE for real-time updates\n" +
+        "Council Dashboard for Althing Inc.\n\n" +
+        "Built a real-time dashboard with React + Vite. ShadcnUI for components, SSE for live updates.\n" +
+        "\tFrontend architecture\n\n" +
+        "\tReact + Vite, ShadcnUI components, SSE for real-time updates\n" +
         "\t\tAuth was tricky — EventSource can't send custom headers"
     ),
     links: z.array(z.string()).optional().describe(
@@ -702,11 +702,11 @@ server.tool(
   "update_memory",
   "Update the text of an existing memory entry or sub-node (your own personal memory). " +
     "Only modifies the text at the specified ID — children are preserved unchanged.\n\n" +
-    "Supports > body format: 'New title\\n> Body line 1\\n> Body line 2' splits into title (shown in listings) + body (shown on drill-down).\n\n" +
+    "Separate title from body with a blank line (like git commits): 'New title\\n\\nBody line 1\\nBody line 2'. Title is shown in listings, body on drill-down.\n\n" +
     "Use cases:\n" +
     "- Correct outdated wording: update_memory(id='L0003', content='corrected summary')\n" +
-    "- Add title/body split: update_memory(id='L0003', content='Short title\\n> Detailed body text')\n" +
-    "- Fix a sub-node: update_memory(id='L0003.2', content='node title\\n> node body')\n" +
+    "- Add title/body split: update_memory(id='L0003', content='Short title\\n\\nDetailed body text')\n" +
+    "- Fix a sub-node: update_memory(id='L0003.2', content='node title\\n\\nnode body')\n" +
     "- Mark as obsolete: FIRST write the correction, THEN update with [✓ID] reference:\n" +
     "  1. write_memory(prefix='E', content='Correct fix is...') → E0076\n" +
     "  2. update_memory(id='E0042', content='Wrong — see [✓E0076]', obsolete=true)\n" +
@@ -941,7 +941,7 @@ server.tool(
     "Content uses tab indentation relative to the parent:\n" +
     "  0 tabs = direct child of id\n" +
     "  1 tab  = grandchild, etc.\n" +
-    "Use > for body text: 'Node title\\n> Body shown on drill-down\\n\\tChild node'\n\n" +
+    "Separate title from body with a blank line: 'Node title\\n\\nBody shown on drill-down\\n\\tChild node'\n\n" +
     "Examples:\n" +
     "  append_memory(id='L0003', content='New finding\\n> Detailed explanation\\n\\tSub-detail') " +
       "→ adds L2 node (with title + body) + L3 child\n" +

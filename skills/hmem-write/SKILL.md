@@ -19,26 +19,29 @@ If the tool `write_memory` is not available:
 ```
 write_memory(
   prefix: "E",
-  content: "Short Title (~50 chars)\n> L1 body — detailed explanation, can span multiple lines\n> second body line with more context\n\tL2 node title\n\t> L2 body text (supports newlines)\n\t> more L2 body\n\t\tL3 detail (2 tabs)\n\t\t\tL4 raw data (3 tabs — rarely needed)"
+  content: "Short Title (~50 chars)\n\nL1 body — detailed explanation, can span multiple lines\nsecond body line with more context\n\tL2 node title\n\n\tL2 body text (supports newlines)\n\tmore L2 body\n\t\tL3 detail (2 tabs)\n\t\t\tL4 raw data (3 tabs — rarely needed)"
 )
 ```
 
-**Title + Body convention:** Every node has a **title** (short navigation label) and an optional **body** (detailed content loaded on drill-down).
+**Title + Body convention (git-commit style):** Every node has a **title** (short navigation label) and an optional **body** (detailed content loaded on drill-down). Separate them with a **blank line** — just like a git commit message.
 
-- **Title:** The first non-indented line (L1) or first line at a given indent level (L2+). ~50 chars, like a chapter title.
-- **Body:** Lines starting with `> ` at the same indent level. Joined with newlines. Shown only when the node is drilled into, not in listings.
-- **Backward-compatible:** Without `> ` lines, the full text is stored as `content` and the title is auto-extracted from the first `maxTitleChars` characters (existing behavior).
+- **Title:** The first line (L1) or first line at a given indent level (L2+). ~50 chars, like a chapter title.
+- **Body:** Everything after the blank line at the same indent level. Freetext, no special prefix needed. Shown only when the node is drilled into, not in listings.
+- **Legacy `> ` prefix:** Still works for backward compatibility, but blank-line separation is preferred.
+- **Without body:** The full text is stored as `content` and the title is auto-extracted from the first `maxTitleChars` characters.
 
 **L1 example with body:**
 ```
 Short Error Title
-> SQLite connection failed because .mcp.json used a relative path.
-> The fix was to use an absolute path in the HMEM_PATH env var.
+
+SQLite connection failed because .mcp.json used a relative path.
+The fix was to use an absolute path in the HMEM_PATH env var.
 	Details about reproduction
-	> Steps: 1. Set HMEM_PATH=./hmem  2. Run hmem serve  3. Observe SQLITE_CANTOPEN
+
+	Steps: 1. Set HMEM_PATH=./hmem  2. Run hmem serve  3. Observe SQLITE_CANTOPEN
 ```
 
-**L1 example without body (old format, still works):**
+**L1 example without body (still works):**
 ```
 SQLite connection failed due to wrong path in .mcp.json
 	Fix: use absolute path in env var
@@ -184,13 +187,13 @@ The MCP server validates that L2 nodes start with one of these names. Minimum fo
 ```
 write_memory(
   prefix="P",
-  content="WeatherBot | New | Python/Discord.py | GH: user/weatherbot\n> Discord bot for weather forecasts — slash commands for current weather and multi-day forecasts\n\tOverview\n\t\tCurrent state\n\t\t> Scaffolding done, no commands yet. Bot connects to Discord but has no slash commands registered.\n\t\tGoals\n\t\t> Daily/hourly forecasts via slash commands, multi-city support, embed formatting\n\t\tArchitecture\n\t\t> Discord slash command → OpenWeatherMap API → formatted embed. Single-file cog pattern.\n\t\tEnvironment\n\t\t> /home/user/weatherbot, python bot.py, needs DISCORD_TOKEN + WEATHER_API_KEY in .env\n\tCodebase\n\t\tEntry point — bot.py, start: python bot.py\n\t\tCore modules\n\t\t\tweather_cog.py — WeatherCog(Cog); fetch_forecast(city: str) → discord.Embed\n\t\t\tformatter.py — format_embed(data: dict) → discord.Embed\n\t\tHelpers / Utilities\n\t\t\tapi_client.py — get_weather(city: str) → dict; wraps HTTP to OpenWeatherMap\n\t\tConfig / Constants — .env: DISCORD_TOKEN, WEATHER_API_KEY, DEFAULT_CITY\n\t\tTests — pytest, test_weather_cog.py (3 tests)\n\tUsage\n\t\tInstallation / Setup — pip install -r requirements.txt, cp .env.example .env\n\t\tCLI / API — /weather <city>, /forecast <city> (planned)\n\tContext\n\t\tInitiator — personal project, Mar 2026\n\t\tTarget audience — personal Discord server\n\t\tDependencies — discord.py, OpenWeatherMap API, aiohttp\n\tOpen tasks\n\t\tImplement /forecast command\n\t\t> Multi-day view with daily highs/lows and weather icons per day\n\t\tAdd city autocomplete",
+  content="WeatherBot | New | Python/Discord.py | GH: user/weatherbot\n\nDiscord bot for weather forecasts — slash commands for current weather and multi-day forecasts\n\tOverview\n\t\tCurrent state\n\n\t\tScaffolding done, no commands yet. Bot connects to Discord but has no slash commands registered.\n\t\tGoals\n\n\t\tDaily/hourly forecasts via slash commands, multi-city support, embed formatting\n\t\tArchitecture\n\n\t\tDiscord slash command → OpenWeatherMap API → formatted embed. Single-file cog pattern.\n\t\tEnvironment\n\n\t\t/home/user/weatherbot, python bot.py, needs DISCORD_TOKEN + WEATHER_API_KEY in .env\n\tCodebase\n\t\tEntry point — bot.py, start: python bot.py\n\t\tCore modules\n\t\t\tweather_cog.py — WeatherCog(Cog); fetch_forecast(city: str) → discord.Embed\n\t\t\tformatter.py — format_embed(data: dict) → discord.Embed\n\t\tHelpers / Utilities\n\t\t\tapi_client.py — get_weather(city: str) → dict; wraps HTTP to OpenWeatherMap\n\t\tConfig / Constants — .env: DISCORD_TOKEN, WEATHER_API_KEY, DEFAULT_CITY\n\t\tTests — pytest, test_weather_cog.py (3 tests)\n\tUsage\n\t\tInstallation / Setup — pip install -r requirements.txt, cp .env.example .env\n\t\tCLI / API — /weather <city>, /forecast <city> (planned)\n\tContext\n\t\tInitiator — personal project, Mar 2026\n\t\tTarget audience — personal Discord server\n\t\tDependencies — discord.py, OpenWeatherMap API, aiohttp\n\tOpen tasks\n\t\tImplement /forecast command\n\n\t\tMulti-day view with daily highs/lows and weather icons per day\n\t\tAdd city autocomplete",
   tags=["#discord", "#python", "#weather", "#bot"],
   links=[]
 )
 ```
 
-Note: L2 nodes use 1 tab, L3 uses 2 tabs, L4 uses 3 tabs. Use `> ` for body text that should be hidden in listings but shown on drill-down. Skip empty sections — no need for placeholder text.
+Note: L2 nodes use 1 tab, L3 uses 2 tabs, L4 uses 3 tabs. Separate title from body with a blank line at the same indent level. Skip empty sections — no need for placeholder text.
 
 ### Marking entries as favorites
 
@@ -257,13 +260,13 @@ write_memory(
 - Good: `"hmem.py Performance: Bulk-Queries statt N+1"`, `"Ghost Wakeup Bug in msg-router.ts"`
 - Bad: `"Fixed a bug"`, `"Important lesson"` (too vague)
 
-**Body (via `>` lines):** Detailed explanation — full sentences, multiline OK. Shown on drill-down, hidden in listings.
+**Body (after blank line):** Detailed explanation — full sentences, multiline OK. Shown on drill-down, hidden in listings.
 - Must be understandable without any context
 - Not "Fixed a bug" — instead explain root cause, fix, and impact
 
 **With title + body (recommended):**
 ```
-write_memory(prefix="L", content="hmem.py Performance: Bulk-Queries statt N+1\n> Alle Nodes in 2 Bulk-Queries laden, nicht pro Entry einzeln.\n> Vorher: load_nodes() pro Entry = N+1 SQLite-Connections.\n\tImplementation detail\n\t> Changed read() to batch-fetch all nodes for visible entries in one query")
+write_memory(prefix="L", content="hmem.py Performance: Bulk-Queries statt N+1\n\nAlle Nodes in 2 Bulk-Queries laden, nicht pro Entry einzeln.\nVorher: load_nodes() pro Entry = N+1 SQLite-Connections.\n\tImplementation detail\n\n\tChanged read() to batch-fetch all nodes for visible entries in one query")
 ```
 
 **Without body (simple entries, backward-compatible):**
@@ -386,12 +389,12 @@ Use when: the wording is wrong, outdated, or needs clarification.
 Appends new child nodes under an existing root or node. Existing children are preserved.
 
 Content indentation is **relative to the parent** — 0 tabs = direct child of `id`.
-Body lines (`> `) work the same as in `write_memory`.
+Body works the same as in `write_memory` — blank line separates title from body.
 
 ```
 append_memory(
   id="L0003",
-  content="New finding discovered later\n> Detailed explanation of what was found and why it matters.\n> This can span multiple lines.\n\tSub-detail about it"
+  content="New finding discovered later\n\nDetailed explanation of what was found and why it matters.\nThis can span multiple lines.\n\tSub-detail about it"
 )
 # → adds L0003.N (L2 with title + body) and L0003.N.1 (L3)
 
@@ -526,7 +529,7 @@ Match the language of existing entries. Before writing, check what language the 
 
 | Wrong | Right |
 |-------|-------|
-| L1 too short: "Fixed bug" | Full sentence with root cause |
+| L1 too short: "Fixed bug" | Full sentence with root cause + blank line + body |
 | Writing English when existing entries are German | Match the store's language |
 | Tabs inside content text (e.g. code snippets) | Use spaces for indentation within content — tabs at line start always mean "go deeper in the hierarchy" |
 | Mixed spaces and tabs for hierarchy | Stay consistent — either tabs or spaces as your depth marker |

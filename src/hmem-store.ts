@@ -1947,13 +1947,18 @@ export class HmemStore {
         if (trimmed.length > nodeLimit * HmemStore.CHAR_LIMIT_TOLERANCE) {
           throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
         }
-        // Parse > body lines: first non-> line = title, > lines = body (content)
+        // Parse body: "> " prefix (legacy) or blank-line separator (git-commit style)
         const lines = trimmed.split("\n");
         const titleLines: string[] = [];
         const bodyLines: string[] = [];
+        let bodyMode = false;
         for (const line of lines) {
           if (line.startsWith("> ") || line === ">") {
             bodyLines.push(line.replace(/^> ?/, ""));
+          } else if (line === "" && titleLines.length > 0) {
+            bodyMode = true;
+          } else if (bodyMode) {
+            bodyLines.push(line);
           } else {
             titleLines.push(line);
           }
@@ -2015,16 +2020,22 @@ export class HmemStore {
     } else {
       // Root entry in memories
       if (trimmed) {
-        // Split into title lines, body lines (> prefix), and child lines (indented)
+        // Split into title lines, body lines ("> " legacy or blank-line separator), and child lines (indented)
         const lines = trimmed.split("\n");
         const titleLines: string[] = [];
         const bodyLines: string[] = [];
         const childLines: string[] = [];
+        let bodyMode = false;
         for (const line of lines) {
           if (line.startsWith("\t") || (line.length > 0 && line[0] === " " && line.trimStart() !== line)) {
             childLines.push(line);
+            bodyMode = false; // indented line exits body mode
           } else if (line.startsWith("> ") || line === ">") {
             bodyLines.push(line.replace(/^> ?/, ""));
+          } else if (line === "" && titleLines.length > 0 && childLines.length === 0) {
+            bodyMode = true;
+          } else if (bodyMode) {
+            bodyLines.push(line);
           } else {
             titleLines.push(line);
           }
@@ -3857,9 +3868,12 @@ export class HmemStore {
 
     const l1Title: string[] = [];
     const l1Body: string[] = [];
+    let l1BodyMode = false; // true after blank line at L1 depth
 
     // Auto-detect space indentation unit: use first indented line (if no tabs present)
-    const rawLines = content.split("\n").map(l => l.trimEnd()).filter(Boolean);
+    const rawLines = content.split("\n").map(l => l.trimEnd());
+    // Keep blank lines for body detection but trim trailing empties
+    while (rawLines.length > 0 && rawLines[rawLines.length - 1] === "") rawLines.pop();
     let spaceUnit = 4;
     if (!rawLines.some(l => l.startsWith("\t"))) {
       for (const l of rawLines) {
@@ -3868,9 +3882,21 @@ export class HmemStore {
       }
     }
 
+    // Track body mode per depth: after a blank line, subsequent lines at that depth are body
+    const bodyModeAtDepth = new Map<number, boolean>();
+
     for (const line of rawLines) {
       const trimmedEnd = line;
-      if (!trimmedEnd) continue;
+
+      // Blank line: activate body mode for L1 and for the last node's depth
+      if (!trimmedEnd) {
+        l1BodyMode = true;
+        // Activate body mode for the last node's depth (L2+)
+        if (nodes.length > 0) {
+          bodyModeAtDepth.set(nodes[nodes.length - 1].depth, true);
+        }
+        continue;
+      }
 
       // Count leading tabs; fall back to auto-detected space unit
       const tabMatch = trimmedEnd.match(/^\t*/);
@@ -3886,9 +3912,11 @@ export class HmemStore {
 
       const text = trimmedEnd.trim();
 
-      // Body line detection: "> " prefix marks body text for the preceding node
-      const isBodyLine = text.startsWith("> ") || text === ">";
-      const bodyText = isBodyLine ? text.replace(/^> ?/, "") : "";
+      // Body line detection: "> " prefix (legacy) OR blank-line-activated body mode
+      const isLegacyBody = text.startsWith("> ") || text === ">";
+      const isBlankLineBody = depth === 1 ? l1BodyMode : bodyModeAtDepth.get(depth) === true;
+      const isBodyLine = isLegacyBody || isBlankLineBody;
+      const bodyText = isLegacyBody ? text.replace(/^> ?/, "") : text;
 
       if (depth === 1) {
         if (isBodyLine) {
@@ -3897,6 +3925,11 @@ export class HmemStore {
           l1Title.push(text);
         }
         continue;
+      }
+
+      // Depth changed → exit body mode for other depths
+      if (!isBodyLine) {
+        bodyModeAtDepth.delete(depth);
       }
 
       if (isBodyLine) {
@@ -3912,6 +3945,9 @@ export class HmemStore {
         }
         continue;
       }
+
+      // New node resets body mode for this depth
+      bodyModeAtDepth.delete(depth);
 
       // L2+: determine parent and generate compound ID
       const parentId = depth === 2 ? rootId : (lastIdAtDepth.get(depth - 1) ?? rootId);
@@ -3967,7 +4003,8 @@ export class HmemStore {
     const lastIdAtRelDepth = new Map<number, string>();
     const nodes: Array<{ id: string; parent_id: string; depth: number; seq: number; content: string; title: string }> = [];
 
-    const rawLines = content.split("\n").map(l => l.trimEnd()).filter(Boolean);
+    const rawLines = content.split("\n").map(l => l.trimEnd());
+    while (rawLines.length > 0 && rawLines[rawLines.length - 1] === "") rawLines.pop();
     // Auto-detect space unit if no tabs used
     let spaceUnit = 4;
     if (!rawLines.some(l => l.startsWith("\t"))) {
@@ -3978,10 +4015,18 @@ export class HmemStore {
     }
 
     const maxAbsDepth = this.cfg.maxDepth;
+    const bodyModeAtDepth = new Map<number, boolean>();
 
     for (const line of rawLines) {
       const text = line.trim();
-      if (!text) continue;
+
+      // Blank line: activate body mode for the last node's depth
+      if (!text) {
+        if (nodes.length > 0) {
+          bodyModeAtDepth.set(nodes[nodes.length - 1].depth, true);
+        }
+        continue;
+      }
 
       // Count leading tabs; fall back to space-based detection
       const tabMatch = line.match(/^\t*/);
@@ -3997,10 +4042,12 @@ export class HmemStore {
       const absDepth = parentDepth + 1 + relDepth;
       if (absDepth > maxAbsDepth) continue; // silently skip beyond max depth
 
-      // Body line detection: "> " prefix marks body text for the preceding node
-      const isBodyLine = text.startsWith("> ") || text === ">";
+      // Body line detection: "> " prefix (legacy) OR blank-line-activated body mode
+      const isLegacyBody = text.startsWith("> ") || text === ">";
+      const isBlankLineBody = bodyModeAtDepth.get(absDepth) === true;
+      const isBodyLine = isLegacyBody || isBlankLineBody;
       if (isBodyLine) {
-        const bodyText = text.replace(/^> ?/, "");
+        const bodyText = isLegacyBody ? text.replace(/^> ?/, "") : text;
         const lastNode = nodes.length > 0 ? nodes[nodes.length - 1] : null;
         if (lastNode && lastNode.depth === absDepth) {
           if (lastNode.content === lastNode.title) {
@@ -4011,6 +4058,9 @@ export class HmemStore {
         }
         continue;
       }
+
+      // New node resets body mode for this depth
+      bodyModeAtDepth.delete(absDepth);
 
       const myParentId = relDepth === 0
         ? parentId
