@@ -40,6 +40,8 @@ function log(msg) {
     const name = path.basename(HMEM_PATH, ".hmem");
     console.error(`[hmem:${name}] ${msg}`);
 }
+// ---- Session-scoped active project (not shared via DB — safe for multi-agent) ----
+let activeProjectId = null;
 // ---- Session-start mtime snapshot (for [NEW] markers) ----
 // Captured before any syncPull so we can detect entries created after our last local write.
 const _hmemPathAtStart = HMEM_PATH;
@@ -63,6 +65,11 @@ function validateFilePath(userPath, hmemDir) {
         throw new Error("Path must be within the hmem directory or home directory.");
     }
     return resolved;
+}
+/** Sanitize error for external consumption — strip file paths and stack traces. */
+function safeError(e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return msg.replace(/\/[^\s:)]+/g, "[path]").substring(0, 300);
 }
 /** Validate agent_name against path traversal. */
 function validateAgentName(name) {
@@ -617,7 +624,7 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
     }
     catch (e) {
         return {
-            content: [{ type: "text", text: `ERROR: ${e}` }],
+            content: [{ type: "text", text: `ERROR: ${safeError(e)}` }],
             isError: true,
         };
     }
@@ -668,6 +675,13 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
             }
             if (storeName === "personal")
                 syncPullThenPush(HMEM_PATH);
+            // Auto-activate project when writing to a P-entry (fixes E0118)
+            const rootId = id.includes(".") ? id.split(".")[0] : id;
+            if (rootId.startsWith("P") && storeName === "personal" && !activeProjectId) {
+                activeProjectId = rootId;
+                hmemStore.update(rootId, { active: true });
+                log(`auto-activated project ${rootId} via update_memory`);
+            }
             // Auto-mark completed tasks as irrelevant (✓ DONE in title)
             if (irrelevant === undefined && content) {
                 const trimmed = content.split("\n")[0].trim();
@@ -717,7 +731,7 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
     }
     catch (e) {
         return {
-            content: [{ type: "text", text: `ERROR: ${e}` }],
+            content: [{ type: "text", text: `ERROR: ${safeError(e)}` }],
             isError: true,
         };
     }
@@ -769,7 +783,7 @@ server.tool("update_many", "Batch-update multiple memory entries at once. Applie
     }
     catch (e) {
         return {
-            content: [{ type: "text", text: `ERROR: ${e}` }],
+            content: [{ type: "text", text: `ERROR: ${safeError(e)}` }],
             isError: true,
         };
     }
@@ -811,7 +825,7 @@ server.tool("flush_context", "Store a conversation chunk as linear context histo
     }
     catch (e) {
         return {
-            content: [{ type: "text", text: `ERROR: ${e}` }],
+            content: [{ type: "text", text: `ERROR: ${safeError(e)}` }],
             isError: true,
         };
     }
@@ -846,6 +860,13 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
             }
             if (storeName === "personal")
                 syncPullThenPush(HMEM_PATH);
+            // Auto-activate project when writing to a P-entry (fixes E0118)
+            const rootId = id.includes(".") ? id.split(".")[0] : id;
+            if (rootId.startsWith("P") && storeName === "personal" && !activeProjectId) {
+                activeProjectId = rootId;
+                hmemStore.update(rootId, { active: true });
+                log(`auto-activated project ${rootId} via append_memory`);
+            }
             const result = hmemStore.appendChildren(id, content);
             const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
             log(`append_memory [${storeLabel}]: ${id} + ${result.count} nodes → [${result.ids.join(", ")}]`);
@@ -870,7 +891,7 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
     }
     catch (e) {
         return {
-            content: [{ type: "text", text: `ERROR: ${e}` }],
+            content: [{ type: "text", text: `ERROR: ${safeError(e)}` }],
             isError: true,
         };
     }
@@ -1200,7 +1221,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
     }
     catch (e) {
         return {
-            content: [{ type: "text", text: `ERROR: ${e}` }],
+            content: [{ type: "text", text: `ERROR: ${safeError(e)}` }],
             isError: true,
         };
     }
@@ -1255,7 +1276,7 @@ server.tool("export_memory", "Export your memory, excluding secret entries and s
     }
     catch (e) {
         return {
-            content: [{ type: "text", text: `ERROR: ${e}` }],
+            content: [{ type: "text", text: `ERROR: ${safeError(e)}` }],
             isError: true,
         };
     }
@@ -1296,7 +1317,7 @@ server.tool("import_memory", "Import entries from a .hmem file into your memory.
     }
     catch (e) {
         return {
-            content: [{ type: "text", text: `ERROR: ${e}` }],
+            content: [{ type: "text", text: `ERROR: ${safeError(e)}` }],
             isError: true,
         };
     }
@@ -1340,7 +1361,7 @@ server.tool("memory_stats", "Shows budget status of your memory: total entries b
         }
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 server.tool("find_related", "Find entries related to the given entry. " +
@@ -1373,7 +1394,7 @@ server.tool("find_related", "Find entries related to the given entry. " +
         }
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 server.tool("route_task", "[DEPRECATED: route_task requires the legacy Agents/ directory structure. Future versions will use config-based agent discovery.]\n\n" +
@@ -1406,7 +1427,7 @@ server.tool("route_task", "[DEPRECATED: route_task requires the legacy Agents/ d
         return { content: [{ type: "text", text: lines.join("\n") }] };
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 /** Strip body (after \n>) and newlines from titles for compact display */
@@ -1447,7 +1468,8 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                     isError: true,
                 };
             }
-            // Activate the project
+            // Activate the project (in-process for session tracking + DB for bulk-read display)
+            activeProjectId = id;
             hmemStore.update(id, { active: true });
             // Read with expand + depth 3 (L2 content + L3 titles + L4 hints)
             const entries = hmemStore.read({
@@ -1634,7 +1656,7 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
         }
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 server.tool("create_project", "Create a new project with the standard R0009 schema. Automatically creates:\n" +
@@ -1729,7 +1751,7 @@ server.tool("create_project", "Create a new project with the standard R0009 sche
         }
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 server.tool("memory_health", "Audit report for your memory: broken links (links pointing to deleted entries), " +
@@ -1797,7 +1819,7 @@ server.tool("memory_health", "Audit report for your memory: broken links (links 
         }
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 server.tool("tag_bulk", "Apply tag changes (add and/or remove) to all entries matching a filter. " +
@@ -1833,7 +1855,7 @@ server.tool("tag_bulk", "Apply tag changes (add and/or remove) to all entries ma
         }
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 server.tool("tag_rename", "Rename a hashtag across all entries and nodes. " +
@@ -1862,7 +1884,7 @@ server.tool("tag_rename", "Rename a hashtag across all entries and nodes. " +
         }
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 server.tool("move_memory", "Move a sub-node (and its entire subtree) to a different parent, updating all ID references. " +
@@ -1894,7 +1916,7 @@ server.tool("move_memory", "Move a sub-node (and its entire subtree) to a differ
         }
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 server.tool("rename_id", "Atomically rename an entry ID and update ALL references across the database. " +
@@ -1927,7 +1949,7 @@ server.tool("rename_id", "Atomically rename an entry ID and update ALL reference
         }
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 // ---- Tool: list_projects ----
@@ -1948,7 +1970,7 @@ server.tool("list_projects", "List all projects (P-entries) with their IDs and t
         }
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 // ---- Tool: move_nodes ----
@@ -1974,7 +1996,7 @@ server.tool("move_nodes", "Move session (L2), batch (L3), or exchange (L4) nodes
         }
     }
     catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${e}` }], isError: true };
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
 });
 // ---- Curator Tools (ceo role only) ----
@@ -2254,7 +2276,7 @@ server.tool("append_agent_memory", "CURATOR ONLY (ceo role). Append new child no
     }
     catch (e) {
         return {
-            content: [{ type: "text", text: `ERROR: ${e}` }],
+            content: [{ type: "text", text: `ERROR: ${safeError(e)}` }],
             isError: true,
         };
     }
@@ -2269,10 +2291,13 @@ server.tool("delete_agent_memory", "Delete an entry from an agent's memory. " +
     entry_id: z.string().describe("Entry ID to delete, e.g. 'E0007'"),
 }, async ({ agent_name, entry_id }) => {
     validateAgentName(agent_name);
-    let hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
-    // If legacy path doesn't exist, assume agent means own memory
-    if (!fs.existsSync(hmemPath))
-        hmemPath = HMEM_PATH;
+    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
+    if (!fs.existsSync(hmemPath)) {
+        return {
+            content: [{ type: "text", text: `No .hmem found for agent "${agent_name}".` }],
+            isError: true,
+        };
+    }
     const isOwnMemory = hmemPath === HMEM_PATH;
     // Curator can delete any agent's entries; non-curators can only delete their own
     if (!isOwnMemory && !isCurator()) {

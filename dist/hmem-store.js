@@ -357,9 +357,8 @@ export class HmemStore {
                     this.setTags(rootId, validatedTags);
                 }
             }
-            // Auto-activate new P-entries (deactivate others first)
+            // Auto-activate new P-entries (no deactivation — multiple agents may have different active projects)
             if (prefix === "P") {
-                this.db.prepare("UPDATE memories SET active = 0 WHERE prefix = 'P' AND active = 1").run();
                 this.db.prepare("UPDATE memories SET active = 1 WHERE id = ?").run(rootId);
             }
         })();
@@ -585,8 +584,11 @@ export class HmemStore {
             const idPlaceholders = [...ftsRootIds].map(() => "?").join(", ");
             const baseWhere = `id IN (${idPlaceholders}) AND seq > 0`;
             const where = `WHERE ${baseWhere}`;
-            const limitClause = limit !== undefined ? ` LIMIT ${limit}` : "";
-            const rows = this.db.prepare(`SELECT * FROM memories ${where} ORDER BY created_at DESC${limitClause}`).all(...ftsRootIds);
+            const limitClause = limit !== undefined ? ` LIMIT ?` : "";
+            const ftsParams = [...ftsRootIds];
+            if (limit !== undefined)
+                ftsParams.push(limit);
+            const rows = this.db.prepare(`SELECT * FROM memories ${where} ORDER BY created_at DESC${limitClause}`).all(...ftsParams);
             for (const row of rows)
                 this.bumpAccess(row.id);
             return rows.map(r => this.rowToEntry(r));
@@ -639,7 +641,9 @@ export class HmemStore {
         const staleSort = opts.staleDays
             ? "COALESCE(m.last_accessed, m.created_at) ASC"
             : "effective_date DESC";
-        const limitClause = limit !== undefined ? `LIMIT ${limit}` : "";
+        const limitClause = limit !== undefined ? `LIMIT ?` : "";
+        if (limit !== undefined)
+            params.push(limit);
         const rows = this.db.prepare(`
       SELECT m.*,
         COALESCE(
@@ -1766,9 +1770,6 @@ export class HmemStore {
                 params.push(active ? 1 : 0);
                 if (active) {
                     const prefix = id.replace(/\d+$/, "");
-                    // Deactivate all other entries in the same prefix
-                    this.db.prepare("UPDATE memories SET active = 0 WHERE prefix = ? AND id != ? AND active = 1")
-                        .run(prefix, id);
                     // When activating a P-entry: link all unassigned O-entries to this project
                     if (prefix === "P") {
                         const unassigned = this.db.prepare("SELECT id, links FROM memories WHERE prefix = 'O' AND obsolete != 1 AND irrelevant != 1 AND (links IS NULL OR links = '[]' OR links = 'null')").all();
@@ -2394,6 +2395,10 @@ export class HmemStore {
     /** Get the active project entry. Returns null if none active. */
     getActiveProject() {
         return this.db.prepare("SELECT id, title FROM memories WHERE prefix = 'P' AND active = 1 AND obsolete != 1 LIMIT 1").get() ?? null;
+    }
+    /** Get a project entry by ID. Returns null if not found or obsolete. */
+    getProjectById(id) {
+        return this.db.prepare("SELECT id, title FROM memories WHERE id = ? AND prefix = 'P' AND obsolete != 1 LIMIT 1").get(id) ?? null;
     }
     /**
      * Get the second-to-last session (L2 node) under an O-entry.

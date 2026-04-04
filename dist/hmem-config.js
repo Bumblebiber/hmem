@@ -116,7 +116,9 @@ export function saveHmemConfig(projectDir, config) {
         try {
             fs.chmodSync(configPath, 0o600);
         }
-        catch { }
+        catch (e) {
+            console.error(`[hmem] WARNING: Could not restrict permissions on ${configPath} — sync token may be exposed: ${e}`);
+        }
     }
 }
 /** Known memory config keys — used to detect unified vs flat format. */

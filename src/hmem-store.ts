@@ -544,9 +544,8 @@ export class HmemStore {
           this.setTags(rootId, validatedTags);
         }
       }
-      // Auto-activate new P-entries (deactivate others first)
+      // Auto-activate new P-entries (no deactivation — multiple agents may have different active projects)
       if (prefix === "P") {
-        this.db.prepare("UPDATE memories SET active = 0 WHERE prefix = 'P' AND active = 1").run();
         this.db.prepare("UPDATE memories SET active = 1 WHERE id = ?").run(rootId);
       }
     })();
@@ -2120,9 +2119,6 @@ export class HmemStore {
         params.push(active ? 1 : 0);
         if (active) {
           const prefix = id.replace(/\d+$/, "");
-          // Deactivate all other entries in the same prefix
-          this.db.prepare("UPDATE memories SET active = 0 WHERE prefix = ? AND id != ? AND active = 1")
-            .run(prefix, id);
           // When activating a P-entry: link all unassigned O-entries to this project
           if (prefix === "P") {
             const unassigned = this.db.prepare(
@@ -2857,6 +2853,13 @@ export class HmemStore {
     return (this.db.prepare(
       "SELECT id, title FROM memories WHERE prefix = 'P' AND active = 1 AND obsolete != 1 LIMIT 1"
     ).get() as { id: string; title: string } | undefined) ?? null;
+  }
+
+  /** Get a project entry by ID. Returns null if not found or obsolete. */
+  getProjectById(id: string): { id: string; title: string } | null {
+    return (this.db.prepare(
+      "SELECT id, title FROM memories WHERE id = ? AND prefix = 'P' AND obsolete != 1 LIMIT 1"
+    ).get(id) as { id: string; title: string } | undefined) ?? null;
   }
 
   /**

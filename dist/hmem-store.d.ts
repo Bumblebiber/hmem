@@ -448,6 +448,11 @@ export declare class HmemStore {
         id: string;
         title: string;
     } | null;
+    /** Get a project entry by ID. Returns null if not found or obsolete. */
+    getProjectById(id: string): {
+        id: string;
+        title: string;
+    } | null;
     /**
      * Get the second-to-last session (L2 node) under an O-entry.
      * Used by the SessionStart hook to check if the previous session needs a summary.

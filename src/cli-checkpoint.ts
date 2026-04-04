@@ -79,8 +79,11 @@ export async function checkpoint(): Promise<void> {
   let mcpConfigPath = "";
 
   try {
-    // 1. Get active project and its O-entry
-    const activeProject = store.getActiveProject();
+    // 1. Get active project and its O-entry (prefer env from log-exchange, fallback to DB)
+    const envProjectId = process.env.HMEM_ACTIVE_PROJECT;
+    const activeProject = envProjectId
+      ? store.getProjectById(envProjectId)
+      : store.getActiveProject();
     if (!activeProject) return;
 
     const projectSeq = parseInt(activeProject.id.replace(/\D/g, ""), 10);

@@ -210,7 +210,12 @@ export async function logExchange(): Promise<void> {
           const child = spawn(process.execPath, [HMEM_BIN, "checkpoint"], {
             detached: true,
             stdio: "ignore",
-            env: { ...process.env, HMEM_PROJECT_DIR: projectDir, HMEM_PATH: process.env.HMEM_PATH },
+            env: {
+              ...process.env,
+              HMEM_PROJECT_DIR: projectDir,
+              HMEM_PATH: process.env.HMEM_PATH,
+              ...(activeProject ? { HMEM_ACTIVE_PROJECT: activeProject.id } : {}),
+            },
           });
           child.unref();
         } else {

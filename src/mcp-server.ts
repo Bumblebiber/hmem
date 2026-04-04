@@ -46,6 +46,9 @@ function log(msg: string) {
   console.error(`[hmem:${name}] ${msg}`);
 }
 
+// ---- Session-scoped active project (not shared via DB — safe for multi-agent) ----
+let activeProjectId: string | null = null;
+
 // ---- Session-start mtime snapshot (for [NEW] markers) ----
 // Captured before any syncPull so we can detect entries created after our last local write.
 const _hmemPathAtStart = HMEM_PATH;
@@ -761,6 +764,13 @@ server.tool(
         }
 
         if (storeName === "personal") syncPullThenPush(HMEM_PATH);
+        // Auto-activate project when writing to a P-entry (fixes E0118)
+        const rootId = id.includes(".") ? id.split(".")[0] : id;
+        if (rootId.startsWith("P") && storeName === "personal" && !activeProjectId) {
+          activeProjectId = rootId;
+          hmemStore.update(rootId, { active: true });
+          log(`auto-activated project ${rootId} via update_memory`);
+        }
         // Auto-mark completed tasks as irrelevant (✓ DONE in title)
         if (irrelevant === undefined && content) {
           const trimmed = content.split("\n")[0].trim();
@@ -963,6 +973,13 @@ server.tool(
         }
 
         if (storeName === "personal") syncPullThenPush(HMEM_PATH);
+        // Auto-activate project when writing to a P-entry (fixes E0118)
+        const rootId = id.includes(".") ? id.split(".")[0] : id;
+        if (rootId.startsWith("P") && storeName === "personal" && !activeProjectId) {
+          activeProjectId = rootId;
+          hmemStore.update(rootId, { active: true });
+          log(`auto-activated project ${rootId} via append_memory`);
+        }
         const result = hmemStore.appendChildren(id, content);
         const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
         log(`append_memory [${storeLabel}]: ${id} + ${result.count} nodes → [${result.ids.join(", ")}]`);
@@ -1702,7 +1719,8 @@ server.tool(
           };
         }
 
-        // Activate the project
+        // Activate the project (in-process for session tracking + DB for bulk-read display)
+        activeProjectId = id;
         hmemStore.update(id, { active: true });
 
         // Read with expand + depth 3 (L2 content + L3 titles + L4 hints)
