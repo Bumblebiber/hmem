@@ -1655,6 +1655,9 @@ server.tool(
         : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         const safePath = validateFilePath(source_path, path.dirname(hmemStore.getDbPath()));
+        // Pull before import so the dedup logic and ID-remapping see the freshest state.
+        // Skip on dry_run since nothing is written.
+        if (storeName === "personal" && !dry_run) syncPullThenPush(HMEM_PATH);
         const result = hmemStore.importFromHmem(safePath, dry_run);
         const mode = dry_run ? "preview" : "imported";
         log(`import_memory: ${mode} from ${safePath} (${result.inserted} new, ${result.merged} merged)`);
@@ -1670,6 +1673,15 @@ server.tool(
         lines.push(`  ${result.tagsImported} tags ${dry_run ? "to import" : "imported"}`);
         if (result.remapped) {
           lines.push(`  ID remapping ${dry_run ? "required" : "applied"} (${result.conflicts} conflicts)`);
+        }
+        // Push imported entries through the optimistic-lock retry loop.
+        // Note: import allocates many fresh root IDs at once. Per-ID reservation is
+        // skipped here (would require pre-knowing all allocated IDs); the layer-2
+        // optimistic-lock check still detects post-hoc collisions and reports them.
+        if (storeName === "personal" && !dry_run && (result.inserted > 0 || result.merged > 0)) {
+          const retry = syncPushWithRetry(HMEM_PATH);
+          if (!retry.resolved) lines.push(`  ⚠ unresolved push conflicts after ${retry.attempts} attempts`);
+          else if (retry.attempts > 1) lines.push(`  (resolved push conflict after ${retry.attempts} attempts)`);
         }
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       } finally {
@@ -2134,6 +2146,12 @@ server.tool(
         // Merge tags
         const allTags = ["#project", ...(tags ?? [])];
 
+        // Pull + reserve P-ID before write (multi-agent collision prevention)
+        if (storeName === "personal") {
+          syncPullThenPush(HMEM_PATH);
+          reserveNextId(HMEM_PATH, "P", hmemStore);
+        }
+
         // Write P-entry (signature: prefix, content, links, minRole, favorite, tags)
         const result = hmemStore.write("P", content, links ?? [], undefined, false, allTags);
         const pId = result.id;
@@ -2143,6 +2161,9 @@ server.tool(
         const oId = `O${String(pSeq).padStart(4, "0")}`;
         const existingO = hmemStore.readEntry(oId);
         if (!existingO) {
+          // Reserve the O-prefix slot too — even though we may rename it afterwards,
+          // the initial write needs collision protection
+          if (storeName === "personal") reserveNextId(HMEM_PATH, "O", hmemStore);
           hmemStore.write("O", `${name} — Session Log`, [pId], undefined, false, ["#session-log"]);
           // The O-entry gets auto-assigned the next seq, which may not match pSeq.
           // We need to ensure it has the right ID. Check if it matches:
@@ -2156,8 +2177,8 @@ server.tool(
 
         // Note: write() with prefix "P" auto-activates the project (deactivates others)
 
-        // Sync if enabled
-        if (storeName === "personal") syncPush(HMEM_PATH);
+        // Sync with retry loop to catch any version conflicts from the rename
+        if (storeName === "personal") syncPushWithRetry(HMEM_PATH);
 
         log(`create_project: ${pId} + ${oId} created and activated`);
 
@@ -2441,10 +2462,16 @@ server.tool(
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
         : new HmemStore(HMEM_PATH, hmemConfig);
       try {
+        if (store === "personal") syncPullThenPush(HMEM_PATH);
         const result = hmemStore.moveNodes(node_ids, target_o_id);
         let text = `Moved ${result.moved} node(s) to ${target_o_id}.`;
         if (result.errors.length > 0) {
           text += `\nErrors:\n${result.errors.join("\n")}`;
+        }
+        if (store === "personal") {
+          const retry = syncPushWithRetry(HMEM_PATH);
+          if (!retry.resolved) text += `\n⚠ unresolved push conflicts after ${retry.attempts} attempts`;
+          else if (retry.attempts > 1) text += `\n(resolved push conflict after ${retry.attempts} attempts)`;
         }
         return { content: [{ type: "text" as const, text }] };
       } finally {
