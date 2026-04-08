@@ -4141,7 +4141,9 @@ export function resolveHmemPath(cwdOverride) {
     // Priority 2: CWD discovery
     const cwd = cwdOverride || process.cwd();
     try {
-        const files = fs.readdirSync(cwd).filter(f => f.endsWith(".hmem"));
+        const files = fs.readdirSync(cwd, { withFileTypes: true })
+            .filter(e => e.isFile() && e.name.endsWith(".hmem"))
+            .map(e => e.name);
         if (files.length === 1)
             return path.resolve(cwd, files[0]);
         if (files.length > 1) {

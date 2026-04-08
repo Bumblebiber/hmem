@@ -123,13 +123,20 @@ function resolveHmemSyncBin(): [string, string] | null {
     const cmd = process.platform === "win32" ? "where" : "which";
     const result = spawnSync(cmd, ["hmem-sync"], { encoding: "utf8", shell: true, windowsHide: true });
     if (result.stdout) {
-      const binPath = result.stdout.trim().split(/\r?\n/)[0];
+      const lines = result.stdout.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      // On Windows, where.exe may return bash wrapper first; prefer .cmd/.ps1.
+      const binPath = lines.find(l => l.endsWith(".cmd") || l.endsWith(".ps1")) || lines[0];
       if (binPath.endsWith(".cmd") || binPath.endsWith(".ps1")) {
         // Windows .cmd wrapper — read it to find the actual JS path
         const content = fs.readFileSync(binPath, "utf8");
         const match = content.match(/"([^"]+\.js)"/);
         if (match) {
-          _resolvedSyncBin = [process.execPath, match[1]];
+          // npm-generated .cmd shims reference %~dp0 (wrapper dir). Resolve it.
+          const wrapperDir = path.dirname(binPath);
+          const jsPath = match[1]
+            .replace(/%~dp0\\?/gi, wrapperDir + path.sep)
+            .replace(/%dp0%\\?/gi, wrapperDir + path.sep);
+          _resolvedSyncBin = [process.execPath, path.resolve(jsPath)];
           return _resolvedSyncBin;
         }
       } else {
