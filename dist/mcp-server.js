@@ -279,6 +279,56 @@ function syncPush(hmemPath) {
         spawnDetachedHmemSync(["push", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath]);
     }
 }
+/**
+ * Atomically reserve an entry-ID at the sync server (multi-agent collision prevention).
+ * Returns true if reserved (or sync disabled — local-only mode), false if conflict.
+ * Caller should pull + recompute next ID + retry on false.
+ *
+ * For multi-server setups, attempts reservation on every configured server. If ANY server
+ * reports a conflict, the ID is considered taken (fail-closed). This may be overly strict
+ * for partial-availability scenarios but is correct for the common single-server case.
+ */
+function reserveId(hmemPath, id) {
+    if (!hmemSyncEnabled(hmemPath))
+        return true; // local-only mode → always "reserved"
+    const servers = getSyncServers(hmemConfig);
+    const targets = servers.length > 0
+        ? servers.filter(s => s.serverUrl && s.token).map(s => ({ url: s.serverUrl, token: s.token }))
+        : [{ url: "", token: "" }]; // legacy: CLI reads from config
+    for (const t of targets) {
+        const args = ["reserve", "--config", hmemSyncConfig(hmemPath), "--id", id];
+        if (t.url)
+            args.push("--server-url", t.url, "--token", t.token);
+        const result = spawnSyncHmemSync(args);
+        if (result.status === 1)
+            return false; // conflict
+        if (result.status !== 0) {
+            process.stderr.write(`reserveId(${id}) error on ${t.url || "default"}: ${result.stderr || result.error?.message || "unknown"}\n`);
+            // Treat unreachable server as "ok" — fail-open for sync errors so writes don't block
+            // when server is down. Real conflicts (status 1) still block.
+        }
+    }
+    return true;
+}
+/** Pull + retry loop: returns the reserved root ID, or throws if all attempts conflict.
+ *  Does NOT do the actual write — caller must invoke hmemStore.write() right after. */
+function reserveNextId(hmemPath, prefix, hmemStore, maxAttempts = 5) {
+    let lastTried = "";
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const id = hmemStore.peekNextId(prefix);
+        lastTried = id;
+        if (reserveId(hmemPath, id)) {
+            log(`reserveNextId: claimed ${id} (attempt ${attempt}/${maxAttempts})`);
+            return id;
+        }
+        log(`reserveNextId: conflict on ${id}, pulling and retrying (${attempt}/${maxAttempts})`);
+        // Force pull (bypass cooldown) by resetting the timestamp
+        lastPullAt = 0;
+        syncPull(hmemPath);
+    }
+    throw new Error(`Could not reserve ID for prefix ${prefix} after ${maxAttempts} attempts ` +
+        `(last tried: ${lastTried}). Another agent may be writing rapidly — try again in a moment.`);
+}
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
 log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth}`);
@@ -527,19 +577,19 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
     "  Level 3: 2 tabs — even more detail\n" +
     "  Level 4: 3 tabs — fine-grained detail\n" +
     "  Level 5: 4 tabs — raw context/data\n" +
-    "Use > lines for body text (shown on drill-down, hidden in listings):\n" +
-    "  Title line\\n> Body line 1\\n> Body line 2\\n\\tChild title\\n\\t> Child body\n" +
+    "Body text (shown on drill-down, hidden in listings) — use a blank line to separate title from body:\n" +
+    "  Title line\\n\\nBody text here.\\nMore body text.\\n\\tChild title\\n\\n\\tChild body text.\n" +
     "The system auto-assigns an ID and timestamp. " +
     `Use prefix to categorize: ${prefixList}.\n\n` +
     "Store types:\n" +
     "  personal (default): Your private memory\n", {
     prefix: z.string().toUpperCase().describe(`Memory category: ${prefixList}`),
-    content: z.string().min(3).describe("The memory content. Use tab indentation for depth levels. Use > for body text (hidden in listings, shown on drill-down).\n" +
+    content: z.string().min(3).describe("The memory content. Use tab indentation for depth levels. Separate title from body with a blank line (like git commits).\n" +
         "Example:\n" +
-        "Council Dashboard for Althing Inc.\n" +
-        "> Built a real-time dashboard with React + Vite. ShadcnUI for components, SSE for live updates.\n" +
-        "\tFrontend architecture\n" +
-        "\t> React + Vite, ShadcnUI components, SSE for real-time updates\n" +
+        "Council Dashboard for Althing Inc.\n\n" +
+        "Built a real-time dashboard with React + Vite. ShadcnUI for components, SSE for live updates.\n" +
+        "\tFrontend architecture\n\n" +
+        "\tReact + Vite, ShadcnUI components, SSE for real-time updates\n" +
         "\t\tAuth was tricky — EventSource can't send custom headers"),
     links: z.array(z.string()).optional().describe("Optional: IDs of related memories, e.g. ['P0001', 'L0005']"),
     favorite: z.coerce.boolean().optional().describe("Mark this entry as a favorite — shown with [♥] in bulk reads and always inlined with L2 detail. " +
@@ -601,6 +651,11 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
             }
             if (storeName === "personal")
                 syncPullThenPush(HMEM_PATH);
+            // Multi-agent ID-collision prevention: reserve next ID at sync server before writing.
+            // No-op if hmem-sync is disabled. Throws after maxAttempts if continually conflicting.
+            if (storeName === "personal") {
+                reserveNextId(HMEM_PATH, prefix, hmemStore);
+            }
             const result = hmemStore.write(prefix, content, links, undefined, favorite, tags, pinned, force);
             const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
             log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix})`);
@@ -609,12 +664,27 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
             const firstTimeNote = isFirstTime
                 ? `\nMemory store created: ${HMEM_PATH}`
                 : "";
+            // For E and D entries: show related errors/decisions by tag overlap
+            let relatedHint = "";
+            if ((prefix === "E" || prefix === "D") && tags && tags.length > 0) {
+                const related = hmemStore.findRelated(result.id, tags, 5);
+                // Filter to E/D entries only for cross-referencing
+                const relevantRelated = related.filter(r => r.id.startsWith("E") || r.id.startsWith("D"));
+                if (relevantRelated.length > 0) {
+                    relatedHint = "\n\nSimilar errors/decisions (by tag overlap):\n" +
+                        relevantRelated.map(r => `  ${r.id}  ${r.title}`).join("\n");
+                }
+            }
+            // For E entries: note the auto-scaffolded structure
+            const eNote = prefix === "E"
+                ? `\nSchema: .1 Analysis, .2 Possible fixes, .3 Fixing attempts, .4 Solution, .5 Cause, .6 Key Learnings`
+                : "";
             return {
                 content: [{
                         type: "text",
                         text: `Memory saved: ${result.id} (${result.timestamp.substring(0, 19)})\n` +
                             `Store: ${storeLabel} | Category: ${prefix}` +
-                            firstTimeNote,
+                            firstTimeNote + eNote + relatedHint,
                     }],
             };
         }
@@ -631,11 +701,11 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
 });
 server.tool("update_memory", "Update the text of an existing memory entry or sub-node (your own personal memory). " +
     "Only modifies the text at the specified ID — children are preserved unchanged.\n\n" +
-    "Supports > body format: 'New title\\n> Body line 1\\n> Body line 2' splits into title (shown in listings) + body (shown on drill-down).\n\n" +
+    "Separate title from body with a blank line (like git commits): 'New title\\n\\nBody line 1\\nBody line 2'. Title is shown in listings, body on drill-down.\n\n" +
     "Use cases:\n" +
     "- Correct outdated wording: update_memory(id='L0003', content='corrected summary')\n" +
-    "- Add title/body split: update_memory(id='L0003', content='Short title\\n> Detailed body text')\n" +
-    "- Fix a sub-node: update_memory(id='L0003.2', content='node title\\n> node body')\n" +
+    "- Add title/body split: update_memory(id='L0003', content='Short title\\n\\nDetailed body text')\n" +
+    "- Fix a sub-node: update_memory(id='L0003.2', content='node title\\n\\nnode body')\n" +
     "- Mark as obsolete: FIRST write the correction, THEN update with [✓ID] reference:\n" +
     "  1. write_memory(prefix='E', content='Correct fix is...') → E0076\n" +
     "  2. update_memory(id='E0042', content='Wrong — see [✓E0076]', obsolete=true)\n" +
@@ -836,7 +906,7 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
     "Content uses tab indentation relative to the parent:\n" +
     "  0 tabs = direct child of id\n" +
     "  1 tab  = grandchild, etc.\n" +
-    "Use > for body text: 'Node title\\n> Body shown on drill-down\\n\\tChild node'\n\n" +
+    "Separate title from body with a blank line: 'Node title\\n\\nBody shown on drill-down\\n\\tChild node'\n\n" +
     "Examples:\n" +
     "  append_memory(id='L0003', content='New finding\\n> Detailed explanation\\n\\tSub-detail') " +
     "→ adds L2 node (with title + body) + L3 child\n" +
@@ -1471,6 +1541,16 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             // Activate the project (in-process for session tracking + DB for bulk-read display)
             activeProjectId = id;
             hmemStore.update(id, { active: true });
+            // Cache check: if project was already loaded recently, return short confirmation
+            const hiddenIds = sessionCache.getHiddenIds();
+            if (hiddenIds.has(id)) {
+                log(`load_project: ${id} already cached (< 5 min), returning short response`);
+                if (storeName === "personal")
+                    syncPush(HMEM_PATH);
+                return trackTokens({
+                    content: [{ type: "text", text: `✓ Project ${id} already active (loaded recently). Use read_memory(id="${id}") to drill into specific sections.` }],
+                });
+            }
             // Read with expand + depth 3 (L2 content + L3 titles + L4 hints)
             const entries = hmemStore.read({
                 id,
@@ -1641,6 +1721,8 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             const totalTokens = Math.round(totalStats.totalChars / 4);
             const tokenInfo = ` | ${(outputTokens / 1000).toFixed(1)}k/${(totalTokens / 1000).toFixed(0)}k tokens`;
             log(`load_project: ${id} activated and loaded (depth=3)`);
+            // Register in session cache to prevent redundant full loads
+            sessionCache.registerDelivered([id]);
             // Sync if enabled
             if (storeName === "personal")
                 syncPush(HMEM_PATH);

@@ -361,6 +361,24 @@ export class HmemStore {
             if (prefix === "P") {
                 this.db.prepare("UPDATE memories SET active = 1 WHERE id = ?").run(rootId);
             }
+            // Auto-scaffold E-entries: create standard L2 structure when no children provided
+            if (prefix === "E" && nodes.length === 0) {
+                const eSchema = ["Analysis", "Possible fixes", "Fixing attempts", "Solution", "Cause", "Key Learnings"];
+                for (let i = 0; i < eSchema.length; i++) {
+                    const nodeId = `${rootId}.${i + 1}`;
+                    insertNode.run(nodeId, rootId, rootId, 2, i + 1, eSchema[i], eSchema[i], timestamp, timestamp);
+                }
+                // Move L1 body into .1 Analysis as content (the short description stays on L1)
+                if (level1 !== title) {
+                    // level1 contains body text — move it to Analysis node
+                    this.db.prepare("UPDATE memory_nodes SET content = ?, title = ? WHERE id = ?")
+                        .run(level1, "Analysis", `${rootId}.1`);
+                }
+                // Auto-add #open tag on root (visible in bulk-read title line)
+                if (!validatedTags.includes("#open")) {
+                    this.addTag(rootId, "#open");
+                }
+            }
         })();
         return { id: rootId, timestamp };
     }
@@ -714,7 +732,7 @@ export class HmemStore {
         // Step 0.5: Detect active-prefixes — prefixes where at least one entry has active=1.
         // Non-active entries in these prefixes are still shown (as compact titles) but don't get expansion slots.
         // P and I prefixes ALWAYS treated as active-prefix — only expand when explicitly activated.
-        const activePrefixes = new Set(["P", "I"]);
+        const activePrefixes = new Set(["P", "I", "E"]);
         for (const r of activeRows) {
             if (r.active === 1)
                 activePrefixes.add(r.prefix);
@@ -1608,13 +1626,20 @@ export class HmemStore {
                 if (trimmed.length > nodeLimit * HmemStore.CHAR_LIMIT_TOLERANCE) {
                     throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
                 }
-                // Parse > body lines: first non-> line = title, > lines = body (content)
+                // Parse body: "> " prefix (legacy) or blank-line separator (git-commit style)
                 const lines = trimmed.split("\n");
                 const titleLines = [];
                 const bodyLines = [];
+                let bodyMode = false;
                 for (const line of lines) {
                     if (line.startsWith("> ") || line === ">") {
                         bodyLines.push(line.replace(/^> ?/, ""));
+                    }
+                    else if (line === "" && titleLines.length > 0) {
+                        bodyMode = true;
+                    }
+                    else if (bodyMode) {
+                        bodyLines.push(line);
                     }
                     else {
                         titleLines.push(line);
@@ -1671,17 +1696,25 @@ export class HmemStore {
         else {
             // Root entry in memories
             if (trimmed) {
-                // Split into title lines, body lines (> prefix), and child lines (indented)
+                // Split into title lines, body lines ("> " legacy or blank-line separator), and child lines (indented)
                 const lines = trimmed.split("\n");
                 const titleLines = [];
                 const bodyLines = [];
                 const childLines = [];
+                let bodyMode = false;
                 for (const line of lines) {
                     if (line.startsWith("\t") || (line.length > 0 && line[0] === " " && line.trimStart() !== line)) {
                         childLines.push(line);
+                        bodyMode = false; // indented line exits body mode
                     }
                     else if (line.startsWith("> ") || line === ">") {
                         bodyLines.push(line.replace(/^> ?/, ""));
+                    }
+                    else if (line === "" && titleLines.length > 0 && childLines.length === 0) {
+                        bodyMode = true;
+                    }
+                    else if (bodyMode) {
+                        bodyLines.push(line);
                     }
                     else {
                         titleLines.push(line);
@@ -2304,6 +2337,13 @@ export class HmemStore {
     nextSeq(prefix) {
         const row = this.db.prepare("SELECT MAX(seq) as maxSeq FROM memories WHERE prefix = ?").get(prefix);
         return (row?.maxSeq || 0) + 1;
+    }
+    /** Read-only preview of the next root ID that write() would assign for this prefix.
+     *  Used by mcp-server's id-reservation loop (multi-agent collision prevention). */
+    peekNextId(prefix) {
+        prefix = prefix.toUpperCase();
+        const seq = this.nextSeq(prefix);
+        return `${prefix}${String(seq).padStart(4, "0")}`;
     }
     /** Clear all active markers — called at MCP server start so each session starts neutral. */
     clearAllActive() {
@@ -3178,8 +3218,12 @@ export class HmemStore {
         const nodes = [];
         const l1Title = [];
         const l1Body = [];
+        let l1BodyMode = false; // true after blank line at L1 depth
         // Auto-detect space indentation unit: use first indented line (if no tabs present)
-        const rawLines = content.split("\n").map(l => l.trimEnd()).filter(Boolean);
+        const rawLines = content.split("\n").map(l => l.trimEnd());
+        // Keep blank lines for body detection but trim trailing empties
+        while (rawLines.length > 0 && rawLines[rawLines.length - 1] === "")
+            rawLines.pop();
         let spaceUnit = 4;
         if (!rawLines.some(l => l.startsWith("\t"))) {
             for (const l of rawLines) {
@@ -3190,10 +3234,19 @@ export class HmemStore {
                 }
             }
         }
+        // Track body mode per depth: after a blank line, subsequent lines at that depth are body
+        const bodyModeAtDepth = new Map();
         for (const line of rawLines) {
             const trimmedEnd = line;
-            if (!trimmedEnd)
+            // Blank line: activate body mode for L1 and for the last node's depth
+            if (!trimmedEnd) {
+                l1BodyMode = true;
+                // Activate body mode for the last node's depth (L2+)
+                if (nodes.length > 0) {
+                    bodyModeAtDepth.set(nodes[nodes.length - 1].depth, true);
+                }
                 continue;
+            }
             // Count leading tabs; fall back to auto-detected space unit
             const tabMatch = trimmedEnd.match(/^\t*/);
             const leadingTabs = tabMatch ? tabMatch[0].length : 0;
@@ -3207,9 +3260,11 @@ export class HmemStore {
                 depth = spaceTabs > 0 ? Math.min(spaceTabs, 4) + 1 : 1;
             }
             const text = trimmedEnd.trim();
-            // Body line detection: "> " prefix marks body text for the preceding node
-            const isBodyLine = text.startsWith("> ") || text === ">";
-            const bodyText = isBodyLine ? text.replace(/^> ?/, "") : "";
+            // Body line detection: "> " prefix (legacy) OR blank-line-activated body mode
+            const isLegacyBody = text.startsWith("> ") || text === ">";
+            const isBlankLineBody = depth === 1 ? l1BodyMode : bodyModeAtDepth.get(depth) === true;
+            const isBodyLine = isLegacyBody || isBlankLineBody;
+            const bodyText = isLegacyBody ? text.replace(/^> ?/, "") : text;
             if (depth === 1) {
                 if (isBodyLine) {
                     l1Body.push(bodyText);
@@ -3218,6 +3273,10 @@ export class HmemStore {
                     l1Title.push(text);
                 }
                 continue;
+            }
+            // Depth changed → exit body mode for other depths
+            if (!isBodyLine) {
+                bodyModeAtDepth.delete(depth);
             }
             if (isBodyLine) {
                 // Append body to the last node at this depth
@@ -3233,6 +3292,8 @@ export class HmemStore {
                 }
                 continue;
             }
+            // New node resets body mode for this depth
+            bodyModeAtDepth.delete(depth);
             // L2+: determine parent and generate compound ID
             const parentId = depth === 2 ? rootId : (lastIdAtDepth.get(depth - 1) ?? rootId);
             const seq = (seqAtParent.get(parentId) ?? 0) + 1;
@@ -3278,7 +3339,9 @@ export class HmemStore {
         seqAtParent.set(parentId, startSeq - 1);
         const lastIdAtRelDepth = new Map();
         const nodes = [];
-        const rawLines = content.split("\n").map(l => l.trimEnd()).filter(Boolean);
+        const rawLines = content.split("\n").map(l => l.trimEnd());
+        while (rawLines.length > 0 && rawLines[rawLines.length - 1] === "")
+            rawLines.pop();
         // Auto-detect space unit if no tabs used
         let spaceUnit = 4;
         if (!rawLines.some(l => l.startsWith("\t"))) {
@@ -3291,10 +3354,16 @@ export class HmemStore {
             }
         }
         const maxAbsDepth = this.cfg.maxDepth;
+        const bodyModeAtDepth = new Map();
         for (const line of rawLines) {
             const text = line.trim();
-            if (!text)
+            // Blank line: activate body mode for the last node's depth
+            if (!text) {
+                if (nodes.length > 0) {
+                    bodyModeAtDepth.set(nodes[nodes.length - 1].depth, true);
+                }
                 continue;
+            }
             // Count leading tabs; fall back to space-based detection
             const tabMatch = line.match(/^\t*/);
             const leadingTabs = tabMatch ? tabMatch[0].length : 0;
@@ -3309,10 +3378,12 @@ export class HmemStore {
             const absDepth = parentDepth + 1 + relDepth;
             if (absDepth > maxAbsDepth)
                 continue; // silently skip beyond max depth
-            // Body line detection: "> " prefix marks body text for the preceding node
-            const isBodyLine = text.startsWith("> ") || text === ">";
+            // Body line detection: "> " prefix (legacy) OR blank-line-activated body mode
+            const isLegacyBody = text.startsWith("> ") || text === ">";
+            const isBlankLineBody = bodyModeAtDepth.get(absDepth) === true;
+            const isBodyLine = isLegacyBody || isBlankLineBody;
             if (isBodyLine) {
-                const bodyText = text.replace(/^> ?/, "");
+                const bodyText = isLegacyBody ? text.replace(/^> ?/, "") : text;
                 const lastNode = nodes.length > 0 ? nodes[nodes.length - 1] : null;
                 if (lastNode && lastNode.depth === absDepth) {
                     if (lastNode.content === lastNode.title) {
@@ -3324,6 +3395,8 @@ export class HmemStore {
                 }
                 continue;
             }
+            // New node resets body mode for this depth
+            bodyModeAtDepth.delete(absDepth);
             const myParentId = relDepth === 0
                 ? parentId
                 : (lastIdAtRelDepth.get(relDepth - 1) ?? parentId);

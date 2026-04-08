@@ -2778,6 +2778,14 @@ export class HmemStore {
     return (row?.maxSeq || 0) + 1;
   }
 
+  /** Read-only preview of the next root ID that write() would assign for this prefix.
+   *  Used by mcp-server's id-reservation loop (multi-agent collision prevention). */
+  peekNextId(prefix: string): string {
+    prefix = prefix.toUpperCase();
+    const seq = this.nextSeq(prefix);
+    return `${prefix}${String(seq).padStart(4, "0")}`;
+  }
+
   /** Clear all active markers — called at MCP server start so each session starts neutral. */
   clearAllActive(): void {
     this.db.prepare("UPDATE memories SET active = 0 WHERE active = 1").run();

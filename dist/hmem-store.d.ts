@@ -425,6 +425,9 @@ export declare class HmemStore {
      */
     private parseTimeWindow;
     private nextSeq;
+    /** Read-only preview of the next root ID that write() would assign for this prefix.
+     *  Used by mcp-server's id-reservation loop (multi-agent collision prevention). */
+    peekNextId(prefix: string): string;
     /** Clear all active markers — called at MCP server start so each session starts neutral. */
     clearAllActive(): void;
     /** Auto-resolve linked entries on an entry (extracted for reuse in chain resolution). */

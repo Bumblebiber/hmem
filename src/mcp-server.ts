@@ -289,6 +289,58 @@ function syncPush(hmemPath: string): void {
   }
 }
 
+/**
+ * Atomically reserve an entry-ID at the sync server (multi-agent collision prevention).
+ * Returns true if reserved (or sync disabled — local-only mode), false if conflict.
+ * Caller should pull + recompute next ID + retry on false.
+ *
+ * For multi-server setups, attempts reservation on every configured server. If ANY server
+ * reports a conflict, the ID is considered taken (fail-closed). This may be overly strict
+ * for partial-availability scenarios but is correct for the common single-server case.
+ */
+function reserveId(hmemPath: string, id: string): boolean {
+  if (!hmemSyncEnabled(hmemPath)) return true; // local-only mode → always "reserved"
+  const servers = getSyncServers(hmemConfig);
+  const targets = servers.length > 0
+    ? servers.filter(s => s.serverUrl && s.token).map(s => ({ url: s.serverUrl!, token: s.token! }))
+    : [{ url: "", token: "" }]; // legacy: CLI reads from config
+
+  for (const t of targets) {
+    const args = ["reserve", "--config", hmemSyncConfig(hmemPath), "--id", id];
+    if (t.url) args.push("--server-url", t.url, "--token", t.token);
+    const result = spawnSyncHmemSync(args);
+    if (result.status === 1) return false;          // conflict
+    if (result.status !== 0) {
+      process.stderr.write(`reserveId(${id}) error on ${t.url || "default"}: ${result.stderr || result.error?.message || "unknown"}\n`);
+      // Treat unreachable server as "ok" — fail-open for sync errors so writes don't block
+      // when server is down. Real conflicts (status 1) still block.
+    }
+  }
+  return true;
+}
+
+/** Pull + retry loop: returns the reserved root ID, or throws if all attempts conflict.
+ *  Does NOT do the actual write — caller must invoke hmemStore.write() right after. */
+function reserveNextId(hmemPath: string, prefix: string, hmemStore: HmemStore, maxAttempts = 5): string {
+  let lastTried = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const id = hmemStore.peekNextId(prefix);
+    lastTried = id;
+    if (reserveId(hmemPath, id)) {
+      log(`reserveNextId: claimed ${id} (attempt ${attempt}/${maxAttempts})`);
+      return id;
+    }
+    log(`reserveNextId: conflict on ${id}, pulling and retrying (${attempt}/${maxAttempts})`);
+    // Force pull (bypass cooldown) by resetting the timestamp
+    lastPullAt = 0;
+    syncPull(hmemPath);
+  }
+  throw new Error(
+    `Could not reserve ID for prefix ${prefix} after ${maxAttempts} attempts ` +
+    `(last tried: ${lastTried}). Another agent may be writing rapidly — try again in a moment.`
+  );
+}
+
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
 log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth}`);
@@ -670,6 +722,11 @@ server.tool(
         }
 
         if (storeName === "personal") syncPullThenPush(HMEM_PATH);
+        // Multi-agent ID-collision prevention: reserve next ID at sync server before writing.
+        // No-op if hmem-sync is disabled. Throws after maxAttempts if continually conflicting.
+        if (storeName === "personal") {
+          reserveNextId(HMEM_PATH, prefix, hmemStore);
+        }
         const result = hmemStore.write(prefix, content, links, undefined, favorite, tags, pinned, force);
         const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
         log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix})`);
