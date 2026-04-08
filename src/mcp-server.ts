@@ -426,23 +426,45 @@ function reserveNextSubIds(
 /** Pull + retry loop: returns the reserved root ID, or throws if all attempts conflict.
  *  Does NOT do the actual write — caller must invoke hmemStore.write() right after. */
 function reserveNextId(hmemPath: string, prefix: string, hmemStore: HmemStore, maxAttempts = 5): string {
+  // Start from the local DB's next sequence; on conflict, bump past stale reservations
+  // by incrementing the sequence number directly. Pulling alone is insufficient because
+  // syncPull only fetches committed entries — it doesn't surface server-side reservations,
+  // so peekNextId would otherwise return the same vetoed ID forever (Bug fix in 6.1.1).
+  let candidate = hmemStore.peekNextId(prefix);
   let lastTried = "";
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const id = hmemStore.peekNextId(prefix);
-    lastTried = id;
-    if (reserveId(hmemPath, id)) {
-      log(`reserveNextId: claimed ${id} (attempt ${attempt}/${maxAttempts})`);
-      return id;
+    lastTried = candidate;
+    if (reserveId(hmemPath, candidate)) {
+      log(`reserveNextId: claimed ${candidate} (attempt ${attempt}/${maxAttempts})`);
+      return candidate;
     }
-    log(`reserveNextId: conflict on ${id}, pulling and retrying (${attempt}/${maxAttempts})`);
-    // Force pull (bypass cooldown) by resetting the timestamp
+    log(`reserveNextId: conflict on ${candidate}, pulling and bumping (${attempt}/${maxAttempts})`);
     lastPullAt = 0;
     syncPull(hmemPath);
+    // After pull, recompute the local candidate. If the local DB has caught up past the
+    // conflict, peekNextId will return a higher ID; otherwise bump past the conflict manually.
+    const fresh = hmemStore.peekNextId(prefix);
+    candidate = compareIds(fresh, candidate) > 0 ? fresh : bumpId(candidate);
   }
   throw new Error(
     `Could not reserve ID for prefix ${prefix} after ${maxAttempts} attempts ` +
     `(last tried: ${lastTried}). Another agent may be writing rapidly — try again in a moment.`
   );
+}
+
+/** Increment the numeric suffix of an ID (e.g. "I0009" → "I0010"). */
+function bumpId(id: string): string {
+  const m = id.match(/^([A-Z]+)(\d+)$/);
+  if (!m) throw new Error(`bumpId: malformed id ${id}`);
+  const width = m[2].length;
+  return `${m[1]}${String(Number(m[2]) + 1).padStart(width, "0")}`;
+}
+
+/** Compare two IDs by numeric suffix. Returns >0 if a>b, <0 if a<b, 0 if equal. */
+function compareIds(a: string, b: string): number {
+  const ma = a.match(/(\d+)$/), mb = b.match(/(\d+)$/);
+  if (!ma || !mb) return 0;
+  return Number(ma[1]) - Number(mb[1]);
 }
 
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
@@ -942,12 +964,19 @@ server.tool(
         }
 
         if (storeName === "personal") syncPullThenPush(HMEM_PATH);
-        // Auto-activate project when writing to a P-entry (fixes E0118)
+        // Cross-project write notice: if updating a P-sub-node of a project that isn't currently
+        // active, do NOT auto-switch. The agent may be doing a quick cross-project edit (e.g.
+        // logging a hmem bug while working on another project). Instead, return a notice in the
+        // response so the agent can decide whether to load_project() and switch context.
         const rootId = id.includes(".") ? id.split(".")[0] : id;
-        if (rootId.startsWith("P") && storeName === "personal" && !activeProjectId) {
-          activeProjectId = rootId;
-          hmemStore.update(rootId, { active: true });
-          log(`auto-activated project ${rootId} via update_memory`);
+        let crossProjectNotice = "";
+        if (rootId.startsWith("P") && storeName === "personal") {
+          const current = hmemStore.getActiveProject();
+          if (!current || current.id !== rootId) {
+            crossProjectNotice = `\n\nNotice: ${rootId} is not the currently active project${current ? ` (active: ${current.id})` : ""}. ` +
+              `Session exchanges will continue to log under the active project's O-entry. ` +
+              `If you want to switch context to ${rootId}, call load_project(id="${rootId}").`;
+          }
         }
         // Auto-mark completed tasks as irrelevant (✓ DONE in title)
         if (irrelevant === undefined && content) {
@@ -987,7 +1016,7 @@ server.tool(
             parts.push(`(resolved push conflict after ${retry.attempts} attempts)`);
           }
         }
-        return { content: [{ type: "text" as const, text: parts.join(" | ") }] };
+        return { content: [{ type: "text" as const, text: parts.join(" | ") + crossProjectNotice }] };
       } finally {
         hmemStore.close();
       }
@@ -1158,12 +1187,16 @@ server.tool(
         }
 
         if (storeName === "personal") syncPullThenPush(HMEM_PATH);
-        // Auto-activate project when writing to a P-entry (fixes E0118)
+        // Cross-project write notice (see update_memory for rationale)
         const rootId = id.includes(".") ? id.split(".")[0] : id;
-        if (rootId.startsWith("P") && storeName === "personal" && !activeProjectId) {
-          activeProjectId = rootId;
-          hmemStore.update(rootId, { active: true });
-          log(`auto-activated project ${rootId} via append_memory`);
+        let crossProjectNotice = "";
+        if (rootId.startsWith("P") && storeName === "personal") {
+          const current = hmemStore.getActiveProject();
+          if (!current || current.id !== rootId) {
+            crossProjectNotice = `\n\nNotice: ${rootId} is not the currently active project${current ? ` (active: ${current.id})` : ""}. ` +
+              `Session exchanges will continue to log under the active project's O-entry. ` +
+              `If you want to switch context to ${rootId}, call load_project(id="${rootId}").`;
+          }
         }
         // Sub-node ID reservation: prevent two agents from racing on the same sub-id
         // (e.g. both inserting P0048.7.5 with different content). On conflict the loop
@@ -1194,7 +1227,7 @@ server.tool(
           content: [{
             type: "text" as const,
             text: `Appended ${result.count} node${result.count === 1 ? "" : "s"} to ${id}.\n` +
-              `New top-level children: ${result.ids.join(", ")}` + conflictNote,
+              `New top-level children: ${result.ids.join(", ")}` + conflictNote + crossProjectNotice,
           }],
         };
       } finally {
@@ -1930,9 +1963,13 @@ server.tool(
           };
         }
 
-        // Activate the project (in-process for session tracking + DB for bulk-read display)
+        // Activate the project — deactivate all other P-entries in this agent's DB first
+        // (multi-agent isolation happens at the .hmem-file level, not within a single file).
+        // load_project is the ONLY path that switches the active project; write/update/append
+        // on a different P only emit a notice (see below) so a one-off cross-project bug-fix
+        // doesn't disrupt the agent's current work.
+        hmemStore.setActiveProject(id);
         activeProjectId = id;
-        hmemStore.update(id, { active: true });
 
         // Cache check: if project was already loaded recently, return short confirmation
         const hiddenIds = sessionCache.getHiddenIds();
@@ -2524,6 +2561,41 @@ server.tool(
         if (result.errors.length > 0) {
           text += `\nErrors:\n${result.errors.join("\n")}`;
         }
+        if (store === "personal") {
+          const retry = syncPushWithRetry(HMEM_PATH);
+          if (!retry.resolved) text += `\n⚠ unresolved push conflicts after ${retry.attempts} attempts`;
+          else if (retry.attempts > 1) text += `\n(resolved push conflict after ${retry.attempts} attempts)`;
+        }
+        return { content: [{ type: "text" as const, text }] };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
+    }
+  }
+);
+
+// ---- Tool: reorder_sessions ----
+
+server.tool(
+  "reorder_sessions",
+  "Reorder L2 session-nodes under an O-entry so their seq matches chronological order by created_at (ascending). Useful after a move_nodes call that landed a session at the wrong seq slot, or to clean up out-of-order sessions after curation. Uses 2-phase rename via staging IDs so existing sub-node IDs are safely rewritten. Returns the number of sessions actually renamed.",
+  {
+    o_id: z.string().describe("O-entry ID whose L2 sessions should be reordered, e.g. 'O0048'"),
+    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
+  },
+  async ({ o_id, store }) => {
+    try {
+      const hmemStore = store === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : new HmemStore(HMEM_PATH, hmemConfig);
+      try {
+        if (store === "personal") syncPullThenPush(HMEM_PATH);
+        const renamed = hmemStore.reorderSessionsByDate(o_id);
+        let text = renamed === 0
+          ? `${o_id}: sessions already in chronological order (no changes).`
+          : `${o_id}: reordered ${renamed} session(s) by created_at.`;
         if (store === "personal") {
           const retry = syncPushWithRetry(HMEM_PATH);
           if (!retry.resolved) text += `\n⚠ unresolved push conflicts after ${retry.attempts} attempts`;

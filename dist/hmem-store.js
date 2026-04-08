@@ -2345,9 +2345,45 @@ export class HmemStore {
         const seq = this.nextSeq(prefix);
         return `${prefix}${String(seq).padStart(4, "0")}`;
     }
+    /** Read-only preview of the top-level child IDs that appendChildren() would create.
+     *  Used by mcp-server's sub-node reservation loop (multi-agent collision prevention).
+     *  Returns the IDs of direct children only — nested grandchildren don't need separate
+     *  reservation because they're parented under nodes this same call would create. */
+    peekAppendTopLevelIds(parentId, content) {
+        const parentIsRoot = !parentId.includes(".");
+        // Verify parent exists (mirrors appendChildren guard, but throws same shape)
+        if (parentIsRoot) {
+            if (!this.db.prepare("SELECT id FROM memories WHERE id = ?").get(parentId))
+                return [];
+        }
+        else {
+            if (!this.db.prepare("SELECT id FROM memory_nodes WHERE id = ?").get(parentId))
+                return [];
+        }
+        const parentDepth = parentIsRoot ? 1 : (parentId.match(/\./g).length + 1);
+        const maxSeqRow = this.db.prepare("SELECT MAX(seq) as maxSeq FROM memory_nodes WHERE parent_id = ?").get(parentId);
+        const startSeq = (maxSeqRow?.maxSeq ?? 0) + 1;
+        const nodes = this.parseRelativeTree(content, parentId, parentDepth, startSeq);
+        return nodes.filter(n => n.parent_id === parentId).map(n => n.id);
+    }
     /** Clear all active markers — called at MCP server start so each session starts neutral. */
     clearAllActive() {
         this.db.prepare("UPDATE memories SET active = 0 WHERE active = 1").run();
+    }
+    /**
+     * Atomically set ONE project as the active P-entry in this agent's DB.
+     * Deactivates all other P-entries in the same .hmem file. Multi-agent isolation
+     * happens at the .hmem-file level (each agent has its own DB), so within a single
+     * file there must only ever be one active project — otherwise getActiveProject()
+     * (LIMIT 1) becomes nondeterministic and log-exchange routes to the wrong O-entry.
+     */
+    setActiveProject(id) {
+        const now = new Date().toISOString();
+        const tx = this.db.transaction(() => {
+            this.db.prepare("UPDATE memories SET active = 0, updated_at = ? WHERE prefix = 'P' AND active = 1 AND id != ?").run(now, id);
+            this.db.prepare("UPDATE memories SET active = 1, updated_at = ? WHERE id = ?").run(now, id);
+        });
+        tx();
     }
     /** Auto-resolve linked entries on an entry (extracted for reuse in chain resolution). */
     resolveEntryLinks(entry, opts) {
@@ -2731,6 +2767,7 @@ export class HmemStore {
         if (!targetExists) {
             return { moved: 0, errors: [`Target ${targetOId} does not exist`] };
         }
+        const l2MovedIntoTarget = new Set();
         const doMove = this.db.transaction(() => {
             for (const nodeId of nodeIds) {
                 const node = this.readNode(nodeId);
@@ -2747,6 +2784,7 @@ export class HmemStore {
                 if (node.depth === 2) {
                     // L2 session — re-parent directly under target O
                     this._moveSubtree(nodeId, sourceOId, targetOId, targetOId, 2);
+                    l2MovedIntoTarget.add(targetOId);
                 }
                 else if (node.depth === 3) {
                     // L3 batch — find/create session in target O
@@ -2766,6 +2804,12 @@ export class HmemStore {
                 // Clean up empty parents in the source O-entry
                 this._cleanupEmptyParents(sourceOId);
                 moved++;
+            }
+            // After moving L2 sessions into a target O, re-sort siblings by created_at
+            // so the moved session lands in its chronologically correct slot rather than
+            // at the end of the seq space.
+            for (const oId of l2MovedIntoTarget) {
+                this.reorderSessionsByDate(oId);
             }
         });
         doMove();
@@ -2854,6 +2898,74 @@ export class HmemStore {
         // Update target O-entry updated_at
         const timestamp = new Date().toISOString();
         this.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?").run(timestamp, targetOId);
+    }
+    /**
+     * Rename an entire L2 session subtree (L2 node + all L3/L4/L5 descendants)
+     * to a new id prefix. Updates memory_nodes (id, parent_id, seq), memory_tags,
+     * and hmem_fts_rowid_map. The root-level parent of the L2 node stays at oId.
+     * Caller must ensure newId does not yet exist.
+     */
+    _renameL2Subtree(oId, oldId, newId) {
+        const nodes = this.db.prepare("SELECT id, parent_id FROM memory_nodes WHERE id = ? OR id LIKE ?").all(oldId, `${oldId}.%`);
+        const newSeqMatch = newId.match(/\.(\d+)$/);
+        const newSeq = newSeqMatch ? parseInt(newSeqMatch[1], 10) : null;
+        for (const n of nodes) {
+            const nid = n.id === oldId ? newId : n.id.replace(oldId + ".", newId + ".");
+            const pid = n.id === oldId
+                ? oId
+                : (n.parent_id === oldId ? newId : n.parent_id.replace(oldId + ".", newId + "."));
+            if (n.id === oldId && newSeq !== null) {
+                this.db.prepare("UPDATE memory_nodes SET id = ?, parent_id = ?, seq = ? WHERE id = ?")
+                    .run(nid, pid, newSeq, n.id);
+            }
+            else {
+                this.db.prepare("UPDATE memory_nodes SET id = ?, parent_id = ? WHERE id = ?")
+                    .run(nid, pid, n.id);
+            }
+        }
+        // Tags
+        const tagRows = this.db.prepare("SELECT entry_id, tag FROM memory_tags WHERE entry_id = ? OR entry_id LIKE ?").all(oldId, `${oldId}.%`);
+        for (const t of tagRows) {
+            const newEntryId = t.entry_id === oldId ? newId : t.entry_id.replace(oldId + ".", newId + ".");
+            this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ? AND tag = ?").run(t.entry_id, t.tag);
+            this.db.prepare("INSERT OR IGNORE INTO memory_tags (entry_id, tag) VALUES (?, ?)").run(newEntryId, t.tag);
+        }
+        // FTS rowid map
+        const ftsRows = this.db.prepare("SELECT fts_rowid, node_id FROM hmem_fts_rowid_map WHERE node_id = ? OR node_id LIKE ?").all(oldId, `${oldId}.%`);
+        for (const f of ftsRows) {
+            const newNodeId = f.node_id === oldId ? newId : f.node_id.replace(oldId + ".", newId + ".");
+            this.db.prepare("UPDATE hmem_fts_rowid_map SET node_id = ? WHERE fts_rowid = ?").run(newNodeId, f.fts_rowid);
+        }
+    }
+    /**
+     * Reorder L2 sessions under an O-entry so their seq matches chronological
+     * order by created_at (ascending). Uses 2-phase rename via _TMP staging IDs
+     * to avoid collisions during renumbering. Returns the number of sessions
+     * actually renamed.
+     */
+    reorderSessionsByDate(oId) {
+        const sessions = this.db.prepare("SELECT id, seq, created_at FROM memory_nodes WHERE parent_id = ? AND depth = 2 ORDER BY created_at ASC, seq ASC").all(oId);
+        const renames = [];
+        for (let i = 0; i < sessions.length; i++) {
+            const desiredSeq = i + 1;
+            if (sessions[i].seq !== desiredSeq) {
+                renames.push({ from: sessions[i].id, to: `${oId}.${desiredSeq}` });
+            }
+        }
+        if (renames.length === 0)
+            return 0;
+        const tx = this.db.transaction(() => {
+            // Phase 1: move every affected session into staging
+            for (let i = 0; i < renames.length; i++) {
+                this._renameL2Subtree(oId, renames[i].from, `${oId}._TMP${i}`);
+            }
+            // Phase 2: rename staging → final
+            for (let i = 0; i < renames.length; i++) {
+                this._renameL2Subtree(oId, `${oId}._TMP${i}`, renames[i].to);
+            }
+        });
+        tx();
+        return renames.length;
     }
     /**
      * Remove empty L2 (sessions) and L3 (batches) nodes in an O-entry.

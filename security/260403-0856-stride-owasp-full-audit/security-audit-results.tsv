@@ -1,0 +1,17 @@
+iteration	vector	severity	owasp	stride	confidence	location	description
+0	baseline	-	-	-	-	-	4 HIGH npm audit warnings (hono, express-rate-limit, path-to-regexp, @hono/node-server)
+1	path-traversal-export	High	A01	Tampering	Confirmed	mcp-server.ts:1412-1429	export_memory output_path accepts arbitrary file paths without validation — can write to any location
+2	path-traversal-import	High	A01	Tampering	Confirmed	mcp-server.ts:1454-1468	import_memory source_path accepts arbitrary file paths without validation — can read any SQLite file
+3	shell-injection-checkpoint	High	A03	EoP	Confirmed	cli-checkpoint.ts:228-230	execSync with string interpolation of mcpConfigPath — shell metacharacters in path enable RCE
+4	shell-injection-summary	High	A03	EoP	Confirmed	cli-session-summary.ts:97-99	execSync with string interpolation of mcpConfigPath — same pattern as checkpoint
+5	agent-name-path-traversal	Medium	A01	Spoofing	Likely	mcp-server.ts:2369,2458,2550,2597	agent_name passed to resolveHmemPathLegacy constructs paths via path.join without sanitization
+6	env-var-auth-bypass	Medium	A07	Spoofing	Confirmed	mcp-server.ts:2277-2278	Curator role check relies solely on HMEM_AGENT_ROLE env var — any process can set it
+7	delete-fallback-bypass	Medium	A01	EoP	Confirmed	mcp-server.ts:2597-2600	delete_agent_memory falls back to HMEM_PATH when agent not found — bypasses curator check for self-deletion
+8	tmp-files-world-readable	Medium	A05	InfoDisc	Confirmed	hmem-store.ts:2914, cli-checkpoint.ts:61, cli-session-summary.ts:44	Predictable /tmp paths with session data, no restrictive permissions
+9	error-info-disclosure	Medium	A05	InfoDisc	Confirmed	mcp-server.ts:660,770,825,888 (pattern)	catch(e) returns raw error message including file paths, DB details, stack traces
+10	sql-limit-antipattern	Low	A03	Tampering	Possible	hmem-store.ts:804,868	LIMIT ${limit} string interpolation — NOT exploitable (Zod validates as number) but fragile anti-pattern
+11	dep-vuln-hono	High	A06	-	Confirmed	package-lock.json	hono <=4.12.6: prototype pollution, arbitrary file access, SSE injection, cookie injection
+12	dep-vuln-rate-limit	High	A06	-	Confirmed	package-lock.json	express-rate-limit 8.2.0-8.2.1: IPv4-mapped IPv6 bypass
+13	dep-vuln-path-regexp	High	A06	-	Confirmed	package-lock.json	path-to-regexp 8.0.0-8.3.0: ReDoS via wildcards, DoS via optional groups
+14	no-audit-trail	Medium	A09	Repudiation	Confirmed	hmem-store.ts (global)	No logging of security events: delete, update, import operations have no audit trail
+15	token-plaintext-config	Medium	A02	InfoDisc	Confirmed	hmem-config.ts:122	Sync tokens stored in plaintext JSON — chmod 0o600 with silent failure on error

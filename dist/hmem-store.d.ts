@@ -428,8 +428,21 @@ export declare class HmemStore {
     /** Read-only preview of the next root ID that write() would assign for this prefix.
      *  Used by mcp-server's id-reservation loop (multi-agent collision prevention). */
     peekNextId(prefix: string): string;
+    /** Read-only preview of the top-level child IDs that appendChildren() would create.
+     *  Used by mcp-server's sub-node reservation loop (multi-agent collision prevention).
+     *  Returns the IDs of direct children only — nested grandchildren don't need separate
+     *  reservation because they're parented under nodes this same call would create. */
+    peekAppendTopLevelIds(parentId: string, content: string): string[];
     /** Clear all active markers — called at MCP server start so each session starts neutral. */
     clearAllActive(): void;
+    /**
+     * Atomically set ONE project as the active P-entry in this agent's DB.
+     * Deactivates all other P-entries in the same .hmem file. Multi-agent isolation
+     * happens at the .hmem-file level (each agent has its own DB), so within a single
+     * file there must only ever be one active project — otherwise getActiveProject()
+     * (LIMIT 1) becomes nondeterministic and log-exchange routes to the wrong O-entry.
+     */
+    setActiveProject(id: string): void;
     /** Auto-resolve linked entries on an entry (extracted for reuse in chain resolution). */
     private resolveEntryLinks;
     /** Get child nodes created after a given ISO timestamp (for "new since last session" detection). */
@@ -574,6 +587,20 @@ export declare class HmemStore {
      * Rewrites all IDs, parent_ids, root_ids, tags, and FTS rowid map entries.
      */
     private _moveSubtree;
+    /**
+     * Rename an entire L2 session subtree (L2 node + all L3/L4/L5 descendants)
+     * to a new id prefix. Updates memory_nodes (id, parent_id, seq), memory_tags,
+     * and hmem_fts_rowid_map. The root-level parent of the L2 node stays at oId.
+     * Caller must ensure newId does not yet exist.
+     */
+    private _renameL2Subtree;
+    /**
+     * Reorder L2 sessions under an O-entry so their seq matches chronological
+     * order by created_at (ascending). Uses 2-phase rename via _TMP staging IDs
+     * to avoid collisions during renumbering. Returns the number of sessions
+     * actually renamed.
+     */
+    reorderSessionsByDate(oId: string): number;
     /**
      * Remove empty L2 (sessions) and L3 (batches) nodes in an O-entry.
      */

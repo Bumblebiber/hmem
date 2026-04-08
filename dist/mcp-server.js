@@ -310,24 +310,141 @@ function reserveId(hmemPath, id) {
     }
     return true;
 }
-/** Pull + retry loop: returns the reserved root ID, or throws if all attempts conflict.
- *  Does NOT do the actual write — caller must invoke hmemStore.write() right after. */
-function reserveNextId(hmemPath, prefix, hmemStore, maxAttempts = 5) {
-    let lastTried = "";
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        const id = hmemStore.peekNextId(prefix);
-        lastTried = id;
-        if (reserveId(hmemPath, id)) {
-            log(`reserveNextId: claimed ${id} (attempt ${attempt}/${maxAttempts})`);
-            return id;
+/**
+ * Synchronous push that returns true on full success, false if the server reported
+ * any conflicts (per Option α optimistic locking — exit code 3 from hmem-sync push).
+ * Used by the append/update retry loop. Falls back to true if sync is disabled.
+ */
+function syncPushSync(hmemPath) {
+    if (!hmemSyncEnabled(hmemPath))
+        return true;
+    const servers = getSyncServers(hmemConfig);
+    const targets = servers.length > 0
+        ? servers.filter(s => s.serverUrl && s.token).map(s => ({ url: s.serverUrl, token: s.token }))
+        : [{ url: "", token: "" }];
+    let allClean = true;
+    for (const t of targets) {
+        const args = ["push", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath];
+        if (t.url)
+            args.push("--server-url", t.url, "--token", t.token);
+        const result = spawnSyncHmemSync(args);
+        if (result.status === 3) {
+            allClean = false;
         }
-        log(`reserveNextId: conflict on ${id}, pulling and retrying (${attempt}/${maxAttempts})`);
-        // Force pull (bypass cooldown) by resetting the timestamp
+        else if (result.status !== 0 && result.status !== null) {
+            process.stderr.write(`syncPushSync error on ${t.url || "default"}: status=${result.status} ${result.stderr || ""}\n`);
+            // Fail-open on transport errors (don't block writes if server is down)
+        }
+    }
+    return allClean;
+}
+/**
+ * Pull-then-push retry loop for append/update operations.
+ * Strategy: after a local mutation, try to push. If the server reports a
+ * version_hash conflict, pull (which merges remote and updates state.versions
+ * to the new server version), then retry. The local change is NOT rolled back
+ * — it stays in the local DB and gets re-pushed with the fresh expected_version.
+ *
+ * Caveat: if a remote node collides with our local node at the SAME sub-id,
+ * the pull's upsertEntry overwrites our local content with the remote one.
+ * Detecting and re-allocating to the next free sub-id is a follow-up
+ * (would need sub-node ID reservation, see Option β).
+ */
+function syncPushWithRetry(hmemPath, maxAttempts = 3) {
+    if (!hmemSyncEnabled(hmemPath))
+        return { attempts: 0, resolved: true };
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (syncPushSync(hmemPath)) {
+            if (attempt > 1)
+                log(`syncPushWithRetry: resolved on attempt ${attempt}/${maxAttempts}`);
+            return { attempts: attempt, resolved: true };
+        }
+        log(`syncPushWithRetry: conflict on attempt ${attempt}/${maxAttempts}, pulling...`);
+        lastPullAt = 0; // bypass cooldown
+        syncPull(hmemPath);
+    }
+    log(`syncPushWithRetry: gave up after ${maxAttempts} attempts — local changes remain unpushed for this entry`);
+    return { attempts: maxAttempts, resolved: false };
+}
+/**
+ * Reserve the top-level sub-node IDs that an append_memory call is about to create.
+ * Multi-agent protection: prevents two agents from independently allocating the same
+ * sub-id (e.g. both grabbing P0048.7.5) which would cause silent data loss when
+ * pull-merge later overwrites local content.
+ *
+ * Strategy: peek the IDs the append would create, reserve each one. On any conflict,
+ * pull (which advances the parent's sub-seq counter), recompute, retry. Returns the
+ * final list of reserved IDs (which may differ from the initial peek if a retry was
+ * needed). Throws after maxAttempts.
+ */
+function reserveNextSubIds(hmemPath, parentId, content, hmemStore, maxAttempts = 5) {
+    if (!hmemSyncEnabled(hmemPath)) {
+        // Local-only mode — peek once and return; caller still proceeds with write.
+        return hmemStore.peekAppendTopLevelIds(parentId, content);
+    }
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const candidates = hmemStore.peekAppendTopLevelIds(parentId, content);
+        if (candidates.length === 0)
+            return [];
+        let conflictAt = -1;
+        for (let i = 0; i < candidates.length; i++) {
+            if (!reserveId(hmemPath, candidates[i])) {
+                conflictAt = i;
+                break;
+            }
+        }
+        if (conflictAt === -1) {
+            if (attempt > 1)
+                log(`reserveNextSubIds: claimed [${candidates.join(", ")}] on attempt ${attempt}/${maxAttempts}`);
+            return candidates;
+        }
+        log(`reserveNextSubIds: conflict on ${candidates[conflictAt]} (attempt ${attempt}/${maxAttempts}), pulling...`);
         lastPullAt = 0;
         syncPull(hmemPath);
     }
+    throw new Error(`Could not reserve sub-IDs under ${parentId} after ${maxAttempts} attempts. ` +
+        `Another agent may be appending rapidly to the same parent — try again in a moment.`);
+}
+/** Pull + retry loop: returns the reserved root ID, or throws if all attempts conflict.
+ *  Does NOT do the actual write — caller must invoke hmemStore.write() right after. */
+function reserveNextId(hmemPath, prefix, hmemStore, maxAttempts = 5) {
+    // Start from the local DB's next sequence; on conflict, bump past stale reservations
+    // by incrementing the sequence number directly. Pulling alone is insufficient because
+    // syncPull only fetches committed entries — it doesn't surface server-side reservations,
+    // so peekNextId would otherwise return the same vetoed ID forever (Bug fix in 6.1.1).
+    let candidate = hmemStore.peekNextId(prefix);
+    let lastTried = "";
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        lastTried = candidate;
+        if (reserveId(hmemPath, candidate)) {
+            log(`reserveNextId: claimed ${candidate} (attempt ${attempt}/${maxAttempts})`);
+            return candidate;
+        }
+        log(`reserveNextId: conflict on ${candidate}, pulling and bumping (${attempt}/${maxAttempts})`);
+        lastPullAt = 0;
+        syncPull(hmemPath);
+        // After pull, recompute the local candidate. If the local DB has caught up past the
+        // conflict, peekNextId will return a higher ID; otherwise bump past the conflict manually.
+        const fresh = hmemStore.peekNextId(prefix);
+        candidate = compareIds(fresh, candidate) > 0 ? fresh : bumpId(candidate);
+    }
     throw new Error(`Could not reserve ID for prefix ${prefix} after ${maxAttempts} attempts ` +
         `(last tried: ${lastTried}). Another agent may be writing rapidly — try again in a moment.`);
+}
+/** Increment the numeric suffix of an ID (e.g. "I0009" → "I0010"). */
+function bumpId(id) {
+    const m = id.match(/^([A-Z]+)(\d+)$/);
+    if (!m)
+        throw new Error(`bumpId: malformed id ${id}`);
+    const width = m[2].length;
+    return `${m[1]}${String(Number(m[2]) + 1).padStart(width, "0")}`;
+}
+/** Compare two IDs by numeric suffix. Returns >0 if a>b, <0 if a<b, 0 if equal. */
+function compareIds(a, b) {
+    const ma = a.match(/(\d+)$/), mb = b.match(/(\d+)$/);
+    if (!ma || !mb)
+        return 0;
+    return Number(ma[1]) - Number(mb[1]);
 }
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
@@ -745,12 +862,19 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
             }
             if (storeName === "personal")
                 syncPullThenPush(HMEM_PATH);
-            // Auto-activate project when writing to a P-entry (fixes E0118)
+            // Cross-project write notice: if updating a P-sub-node of a project that isn't currently
+            // active, do NOT auto-switch. The agent may be doing a quick cross-project edit (e.g.
+            // logging a hmem bug while working on another project). Instead, return a notice in the
+            // response so the agent can decide whether to load_project() and switch context.
             const rootId = id.includes(".") ? id.split(".")[0] : id;
-            if (rootId.startsWith("P") && storeName === "personal" && !activeProjectId) {
-                activeProjectId = rootId;
-                hmemStore.update(rootId, { active: true });
-                log(`auto-activated project ${rootId} via update_memory`);
+            let crossProjectNotice = "";
+            if (rootId.startsWith("P") && storeName === "personal") {
+                const current = hmemStore.getActiveProject();
+                if (!current || current.id !== rootId) {
+                    crossProjectNotice = `\n\nNotice: ${rootId} is not the currently active project${current ? ` (active: ${current.id})` : ""}. ` +
+                        `Session exchanges will continue to log under the active project's O-entry. ` +
+                        `If you want to switch context to ${rootId}, call load_project(id="${rootId}").`;
+                }
             }
             // Auto-mark completed tasks as irrelevant (✓ DONE in title)
             if (irrelevant === undefined && content) {
@@ -791,9 +915,16 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                 parts.push("active flag cleared");
             if (tags !== undefined)
                 parts.push(tags.length > 0 ? `tags: ${tags.join(" ")}` : "tags cleared");
-            if (storeName === "personal")
-                syncPush(HMEM_PATH);
-            return { content: [{ type: "text", text: parts.join(" | ") }] };
+            if (storeName === "personal") {
+                const retry = syncPushWithRetry(HMEM_PATH);
+                if (!retry.resolved) {
+                    parts.push(`⚠ unresolved push conflicts after ${retry.attempts} attempts`);
+                }
+                else if (retry.attempts > 1) {
+                    parts.push(`(resolved push conflict after ${retry.attempts} attempts)`);
+                }
+            }
+            return { content: [{ type: "text", text: parts.join(" | ") + crossProjectNotice }] };
         }
         finally {
             hmemStore.close();
@@ -930,12 +1061,22 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
             }
             if (storeName === "personal")
                 syncPullThenPush(HMEM_PATH);
-            // Auto-activate project when writing to a P-entry (fixes E0118)
+            // Cross-project write notice (see update_memory for rationale)
             const rootId = id.includes(".") ? id.split(".")[0] : id;
-            if (rootId.startsWith("P") && storeName === "personal" && !activeProjectId) {
-                activeProjectId = rootId;
-                hmemStore.update(rootId, { active: true });
-                log(`auto-activated project ${rootId} via append_memory`);
+            let crossProjectNotice = "";
+            if (rootId.startsWith("P") && storeName === "personal") {
+                const current = hmemStore.getActiveProject();
+                if (!current || current.id !== rootId) {
+                    crossProjectNotice = `\n\nNotice: ${rootId} is not the currently active project${current ? ` (active: ${current.id})` : ""}. ` +
+                        `Session exchanges will continue to log under the active project's O-entry. ` +
+                        `If you want to switch context to ${rootId}, call load_project(id="${rootId}").`;
+                }
+            }
+            // Sub-node ID reservation: prevent two agents from racing on the same sub-id
+            // (e.g. both inserting P0048.7.5 with different content). On conflict the loop
+            // pulls and recomputes the next free sub-seq before retrying.
+            if (storeName === "personal") {
+                reserveNextSubIds(HMEM_PATH, id, content, hmemStore);
             }
             const result = hmemStore.appendChildren(id, content);
             const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
@@ -945,13 +1086,21 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
                     content: [{ type: "text", text: "No nodes appended — content was empty or contained no valid lines." }],
                 };
             }
-            if (storeName === "personal")
-                syncPush(HMEM_PATH);
+            let conflictNote = "";
+            if (storeName === "personal") {
+                const retry = syncPushWithRetry(HMEM_PATH);
+                if (!retry.resolved) {
+                    conflictNote = `\n⚠ Push had unresolved conflicts after ${retry.attempts} attempts — your local changes are saved but another agent's writes may have collided. Run hmem-sync sync manually to investigate.`;
+                }
+                else if (retry.attempts > 1) {
+                    conflictNote = `\n(resolved push conflict after ${retry.attempts} attempts)`;
+                }
+            }
             return {
                 content: [{
                         type: "text",
                         text: `Appended ${result.count} node${result.count === 1 ? "" : "s"} to ${id}.\n` +
-                            `New top-level children: ${result.ids.join(", ")}`,
+                            `New top-level children: ${result.ids.join(", ")}` + conflictNote + crossProjectNotice,
                     }],
             };
         }
@@ -1364,6 +1513,10 @@ server.tool("import_memory", "Import entries from a .hmem file into your memory.
             : new HmemStore(HMEM_PATH, hmemConfig);
         try {
             const safePath = validateFilePath(source_path, path.dirname(hmemStore.getDbPath()));
+            // Pull before import so the dedup logic and ID-remapping see the freshest state.
+            // Skip on dry_run since nothing is written.
+            if (storeName === "personal" && !dry_run)
+                syncPullThenPush(HMEM_PATH);
             const result = hmemStore.importFromHmem(safePath, dry_run);
             const mode = dry_run ? "preview" : "imported";
             log(`import_memory: ${mode} from ${safePath} (${result.inserted} new, ${result.merged} merged)`);
@@ -1378,6 +1531,17 @@ server.tool("import_memory", "Import entries from a .hmem file into your memory.
             lines.push(`  ${result.tagsImported} tags ${dry_run ? "to import" : "imported"}`);
             if (result.remapped) {
                 lines.push(`  ID remapping ${dry_run ? "required" : "applied"} (${result.conflicts} conflicts)`);
+            }
+            // Push imported entries through the optimistic-lock retry loop.
+            // Note: import allocates many fresh root IDs at once. Per-ID reservation is
+            // skipped here (would require pre-knowing all allocated IDs); the layer-2
+            // optimistic-lock check still detects post-hoc collisions and reports them.
+            if (storeName === "personal" && !dry_run && (result.inserted > 0 || result.merged > 0)) {
+                const retry = syncPushWithRetry(HMEM_PATH);
+                if (!retry.resolved)
+                    lines.push(`  ⚠ unresolved push conflicts after ${retry.attempts} attempts`);
+                else if (retry.attempts > 1)
+                    lines.push(`  (resolved push conflict after ${retry.attempts} attempts)`);
             }
             return { content: [{ type: "text", text: lines.join("\n") }] };
         }
@@ -1538,9 +1702,13 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                     isError: true,
                 };
             }
-            // Activate the project (in-process for session tracking + DB for bulk-read display)
+            // Activate the project — deactivate all other P-entries in this agent's DB first
+            // (multi-agent isolation happens at the .hmem-file level, not within a single file).
+            // load_project is the ONLY path that switches the active project; write/update/append
+            // on a different P only emit a notice (see below) so a one-off cross-project bug-fix
+            // doesn't disrupt the agent's current work.
+            hmemStore.setActiveProject(id);
             activeProjectId = id;
-            hmemStore.update(id, { active: true });
             // Cache check: if project was already loaded recently, return short confirmation
             const hiddenIds = sessionCache.getHiddenIds();
             if (hiddenIds.has(id)) {
@@ -1794,6 +1962,11 @@ server.tool("create_project", "Create a new project with the standard R0009 sche
             const content = sections.join("\n");
             // Merge tags
             const allTags = ["#project", ...(tags ?? [])];
+            // Pull + reserve P-ID before write (multi-agent collision prevention)
+            if (storeName === "personal") {
+                syncPullThenPush(HMEM_PATH);
+                reserveNextId(HMEM_PATH, "P", hmemStore);
+            }
             // Write P-entry (signature: prefix, content, links, minRole, favorite, tags)
             const result = hmemStore.write("P", content, links ?? [], undefined, false, allTags);
             const pId = result.id;
@@ -1802,6 +1975,10 @@ server.tool("create_project", "Create a new project with the standard R0009 sche
             const oId = `O${String(pSeq).padStart(4, "0")}`;
             const existingO = hmemStore.readEntry(oId);
             if (!existingO) {
+                // Reserve the O-prefix slot too — even though we may rename it afterwards,
+                // the initial write needs collision protection
+                if (storeName === "personal")
+                    reserveNextId(HMEM_PATH, "O", hmemStore);
                 hmemStore.write("O", `${name} — Session Log`, [pId], undefined, false, ["#session-log"]);
                 // The O-entry gets auto-assigned the next seq, which may not match pSeq.
                 // We need to ensure it has the right ID. Check if it matches:
@@ -1813,9 +1990,9 @@ server.tool("create_project", "Create a new project with the standard R0009 sche
                 }
             }
             // Note: write() with prefix "P" auto-activates the project (deactivates others)
-            // Sync if enabled
+            // Sync with retry loop to catch any version conflicts from the rename
             if (storeName === "personal")
-                syncPush(HMEM_PATH);
+                syncPushWithRetry(HMEM_PATH);
             log(`create_project: ${pId} + ${oId} created and activated`);
             return trackTokens({
                 content: [{
@@ -2066,10 +2243,52 @@ server.tool("move_nodes", "Move session (L2), batch (L3), or exchange (L4) nodes
             ? openCompanyMemory(PROJECT_DIR, hmemConfig)
             : new HmemStore(HMEM_PATH, hmemConfig);
         try {
+            if (store === "personal")
+                syncPullThenPush(HMEM_PATH);
             const result = hmemStore.moveNodes(node_ids, target_o_id);
             let text = `Moved ${result.moved} node(s) to ${target_o_id}.`;
             if (result.errors.length > 0) {
                 text += `\nErrors:\n${result.errors.join("\n")}`;
+            }
+            if (store === "personal") {
+                const retry = syncPushWithRetry(HMEM_PATH);
+                if (!retry.resolved)
+                    text += `\n⚠ unresolved push conflicts after ${retry.attempts} attempts`;
+                else if (retry.attempts > 1)
+                    text += `\n(resolved push conflict after ${retry.attempts} attempts)`;
+            }
+            return { content: [{ type: "text", text }] };
+        }
+        finally {
+            hmemStore.close();
+        }
+    }
+    catch (e) {
+        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
+    }
+});
+// ---- Tool: reorder_sessions ----
+server.tool("reorder_sessions", "Reorder L2 session-nodes under an O-entry so their seq matches chronological order by created_at (ascending). Useful after a move_nodes call that landed a session at the wrong seq slot, or to clean up out-of-order sessions after curation. Uses 2-phase rename via staging IDs so existing sub-node IDs are safely rewritten. Returns the number of sessions actually renamed.", {
+    o_id: z.string().describe("O-entry ID whose L2 sessions should be reordered, e.g. 'O0048'"),
+    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
+}, async ({ o_id, store }) => {
+    try {
+        const hmemStore = store === "company"
+            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+            : new HmemStore(HMEM_PATH, hmemConfig);
+        try {
+            if (store === "personal")
+                syncPullThenPush(HMEM_PATH);
+            const renamed = hmemStore.reorderSessionsByDate(o_id);
+            let text = renamed === 0
+                ? `${o_id}: sessions already in chronological order (no changes).`
+                : `${o_id}: reordered ${renamed} session(s) by created_at.`;
+            if (store === "personal") {
+                const retry = syncPushWithRetry(HMEM_PATH);
+                if (!retry.resolved)
+                    text += `\n⚠ unresolved push conflicts after ${retry.attempts} attempts`;
+                else if (retry.attempts > 1)
+                    text += `\n(resolved push conflict after ${retry.attempts} attempts)`;
             }
             return { content: [{ type: "text", text }] };
         }
