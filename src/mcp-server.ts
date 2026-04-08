@@ -319,6 +319,60 @@ function reserveId(hmemPath: string, id: string): boolean {
   return true;
 }
 
+/**
+ * Synchronous push that returns true on full success, false if the server reported
+ * any conflicts (per Option α optimistic locking — exit code 3 from hmem-sync push).
+ * Used by the append/update retry loop. Falls back to true if sync is disabled.
+ */
+function syncPushSync(hmemPath: string): boolean {
+  if (!hmemSyncEnabled(hmemPath)) return true;
+  const servers = getSyncServers(hmemConfig);
+  const targets = servers.length > 0
+    ? servers.filter(s => s.serverUrl && s.token).map(s => ({ url: s.serverUrl!, token: s.token! }))
+    : [{ url: "", token: "" }];
+
+  let allClean = true;
+  for (const t of targets) {
+    const args = ["push", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath];
+    if (t.url) args.push("--server-url", t.url, "--token", t.token);
+    const result = spawnSyncHmemSync(args);
+    if (result.status === 3) {
+      allClean = false;
+    } else if (result.status !== 0 && result.status !== null) {
+      process.stderr.write(`syncPushSync error on ${t.url || "default"}: status=${result.status} ${result.stderr || ""}\n`);
+      // Fail-open on transport errors (don't block writes if server is down)
+    }
+  }
+  return allClean;
+}
+
+/**
+ * Pull-then-push retry loop for append/update operations.
+ * Strategy: after a local mutation, try to push. If the server reports a
+ * version_hash conflict, pull (which merges remote and updates state.versions
+ * to the new server version), then retry. The local change is NOT rolled back
+ * — it stays in the local DB and gets re-pushed with the fresh expected_version.
+ *
+ * Caveat: if a remote node collides with our local node at the SAME sub-id,
+ * the pull's upsertEntry overwrites our local content with the remote one.
+ * Detecting and re-allocating to the next free sub-id is a follow-up
+ * (would need sub-node ID reservation, see Option β).
+ */
+function syncPushWithRetry(hmemPath: string, maxAttempts = 3): { attempts: number; resolved: boolean } {
+  if (!hmemSyncEnabled(hmemPath)) return { attempts: 0, resolved: true };
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (syncPushSync(hmemPath)) {
+      if (attempt > 1) log(`syncPushWithRetry: resolved on attempt ${attempt}/${maxAttempts}`);
+      return { attempts: attempt, resolved: true };
+    }
+    log(`syncPushWithRetry: conflict on attempt ${attempt}/${maxAttempts}, pulling...`);
+    lastPullAt = 0; // bypass cooldown
+    syncPull(hmemPath);
+  }
+  log(`syncPushWithRetry: gave up after ${maxAttempts} attempts — local changes remain unpushed for this entry`);
+  return { attempts: maxAttempts, resolved: false };
+}
+
 /** Pull + retry loop: returns the reserved root ID, or throws if all attempts conflict.
  *  Does NOT do the actual write — caller must invoke hmemStore.write() right after. */
 function reserveNextId(hmemPath: string, prefix: string, hmemStore: HmemStore, maxAttempts = 5): string {
@@ -875,7 +929,14 @@ server.tool(
         if (active === true) parts.push("marked as [*] active");
         if (active === false) parts.push("active flag cleared");
         if (tags !== undefined) parts.push(tags.length > 0 ? `tags: ${tags.join(" ")}` : "tags cleared");
-        if (storeName === "personal") syncPush(HMEM_PATH);
+        if (storeName === "personal") {
+          const retry = syncPushWithRetry(HMEM_PATH);
+          if (!retry.resolved) {
+            parts.push(`⚠ unresolved push conflicts after ${retry.attempts} attempts`);
+          } else if (retry.attempts > 1) {
+            parts.push(`(resolved push conflict after ${retry.attempts} attempts)`);
+          }
+        }
         return { content: [{ type: "text" as const, text: parts.join(" | ") }] };
       } finally {
         hmemStore.close();
@@ -1064,12 +1125,20 @@ server.tool(
           };
         }
 
-        if (storeName === "personal") syncPush(HMEM_PATH);
+        let conflictNote = "";
+        if (storeName === "personal") {
+          const retry = syncPushWithRetry(HMEM_PATH);
+          if (!retry.resolved) {
+            conflictNote = `\n⚠ Push had unresolved conflicts after ${retry.attempts} attempts — your local changes are saved but another agent's writes may have collided. Run hmem-sync sync manually to investigate.`;
+          } else if (retry.attempts > 1) {
+            conflictNote = `\n(resolved push conflict after ${retry.attempts} attempts)`;
+          }
+        }
         return {
           content: [{
             type: "text" as const,
             text: `Appended ${result.count} node${result.count === 1 ? "" : "s"} to ${id}.\n` +
-              `New top-level children: ${result.ids.join(", ")}`,
+              `New top-level children: ${result.ids.join(", ")}` + conflictNote,
           }],
         };
       } finally {
