@@ -373,6 +373,56 @@ function syncPushWithRetry(hmemPath: string, maxAttempts = 3): { attempts: numbe
   return { attempts: maxAttempts, resolved: false };
 }
 
+/**
+ * Reserve the top-level sub-node IDs that an append_memory call is about to create.
+ * Multi-agent protection: prevents two agents from independently allocating the same
+ * sub-id (e.g. both grabbing P0048.7.5) which would cause silent data loss when
+ * pull-merge later overwrites local content.
+ *
+ * Strategy: peek the IDs the append would create, reserve each one. On any conflict,
+ * pull (which advances the parent's sub-seq counter), recompute, retry. Returns the
+ * final list of reserved IDs (which may differ from the initial peek if a retry was
+ * needed). Throws after maxAttempts.
+ */
+function reserveNextSubIds(
+  hmemPath: string,
+  parentId: string,
+  content: string,
+  hmemStore: HmemStore,
+  maxAttempts = 5,
+): string[] {
+  if (!hmemSyncEnabled(hmemPath)) {
+    // Local-only mode — peek once and return; caller still proceeds with write.
+    return hmemStore.peekAppendTopLevelIds(parentId, content);
+  }
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const candidates = hmemStore.peekAppendTopLevelIds(parentId, content);
+    if (candidates.length === 0) return [];
+
+    let conflictAt = -1;
+    for (let i = 0; i < candidates.length; i++) {
+      if (!reserveId(hmemPath, candidates[i])) {
+        conflictAt = i;
+        break;
+      }
+    }
+
+    if (conflictAt === -1) {
+      if (attempt > 1) log(`reserveNextSubIds: claimed [${candidates.join(", ")}] on attempt ${attempt}/${maxAttempts}`);
+      return candidates;
+    }
+
+    log(`reserveNextSubIds: conflict on ${candidates[conflictAt]} (attempt ${attempt}/${maxAttempts}), pulling...`);
+    lastPullAt = 0;
+    syncPull(hmemPath);
+  }
+  throw new Error(
+    `Could not reserve sub-IDs under ${parentId} after ${maxAttempts} attempts. ` +
+    `Another agent may be appending rapidly to the same parent — try again in a moment.`
+  );
+}
+
 /** Pull + retry loop: returns the reserved root ID, or throws if all attempts conflict.
  *  Does NOT do the actual write — caller must invoke hmemStore.write() right after. */
 function reserveNextId(hmemPath: string, prefix: string, hmemStore: HmemStore, maxAttempts = 5): string {
@@ -1114,6 +1164,12 @@ server.tool(
           activeProjectId = rootId;
           hmemStore.update(rootId, { active: true });
           log(`auto-activated project ${rootId} via append_memory`);
+        }
+        // Sub-node ID reservation: prevent two agents from racing on the same sub-id
+        // (e.g. both inserting P0048.7.5 with different content). On conflict the loop
+        // pulls and recomputes the next free sub-seq before retrying.
+        if (storeName === "personal") {
+          reserveNextSubIds(HMEM_PATH, id, content, hmemStore);
         }
         const result = hmemStore.appendChildren(id, content);
         const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");

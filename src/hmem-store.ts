@@ -2786,6 +2786,27 @@ export class HmemStore {
     return `${prefix}${String(seq).padStart(4, "0")}`;
   }
 
+  /** Read-only preview of the top-level child IDs that appendChildren() would create.
+   *  Used by mcp-server's sub-node reservation loop (multi-agent collision prevention).
+   *  Returns the IDs of direct children only — nested grandchildren don't need separate
+   *  reservation because they're parented under nodes this same call would create. */
+  peekAppendTopLevelIds(parentId: string, content: string): string[] {
+    const parentIsRoot = !parentId.includes(".");
+    // Verify parent exists (mirrors appendChildren guard, but throws same shape)
+    if (parentIsRoot) {
+      if (!this.db.prepare("SELECT id FROM memories WHERE id = ?").get(parentId)) return [];
+    } else {
+      if (!this.db.prepare("SELECT id FROM memory_nodes WHERE id = ?").get(parentId)) return [];
+    }
+    const parentDepth = parentIsRoot ? 1 : (parentId.match(/\./g)!.length + 1);
+    const maxSeqRow = this.db.prepare(
+      "SELECT MAX(seq) as maxSeq FROM memory_nodes WHERE parent_id = ?"
+    ).get(parentId) as any;
+    const startSeq = (maxSeqRow?.maxSeq ?? 0) + 1;
+    const nodes = this.parseRelativeTree(content, parentId, parentDepth, startSeq);
+    return nodes.filter(n => n.parent_id === parentId).map(n => n.id);
+  }
+
   /** Clear all active markers — called at MCP server start so each session starts neutral. */
   clearAllActive(): void {
     this.db.prepare("UPDATE memories SET active = 0 WHERE active = 1").run();
