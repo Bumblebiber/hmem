@@ -90,7 +90,11 @@ Resolution order:
 
 All call sites updated to pass `sessionId` where available. The DB `memories.active` column stays as a compatibility mirror (updated alongside the marker file) so that external SQL queries and old tools keep working.
 
-### 4. `HMEM_PATH` session anchor
+### 4. `HMEM_PATH` session anchor (deferred to follow-up)
+
+**Status:** Not in Phase 1. The marker file still stores `hmemPath` (so the data is available), but `resolveEnvDefaults` is not changed in this spec. Current user workflow (starting `claude` from `~/bbbee`) does not trigger the CWD-discovery trap. Tracked as separate follow-up for users who start sessions from project directories containing `.hmem` files.
+
+Original design (for reference):
 
 `cli-env.ts#resolveEnvDefaults` gains a new Priority 0:
 
