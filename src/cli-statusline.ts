@@ -118,13 +118,13 @@ async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus>
         projRow = db.prepare(
           "SELECT id, title FROM memories WHERE id = ? AND prefix='P' AND obsolete!=1 LIMIT 1"
         ).get(marker.projectId) as { id: string; title: string } | undefined;
-      } else if (!marker) {
-        // Legacy fallback — session without marker, read global active flag
+      }
+      if (!projRow) {
+        // Fallback: legacy DB flag (session has no marker OR marker not yet bound)
         projRow = db.prepare(
           "SELECT id, title FROM memories WHERE prefix='P' AND active=1 AND obsolete!=1 LIMIT 1"
         ).get() as { id: string; title: string } | undefined;
       }
-      // If marker exists with null projectId → projRow stays undefined → "no project"
 
       let project = "";
       if (projRow) {

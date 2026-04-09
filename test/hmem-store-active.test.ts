@@ -41,9 +41,11 @@ describe("getActiveProject with sessionId", () => {
     expect(active?.id).toBe(idP1);
   });
 
-  it("returns null when marker has null projectId", () => {
+  it("null projectId marker falls through to DB flag", () => {
+    store.setActiveProject(idP1); // sets DB flag
     writeSessionMarker("sY", { projectId: null, hmemPath });
-    expect(store.getActiveProject("sY")).toBeNull();
+    const active = store.getActiveProject("sY");
+    expect(active?.id).toBe(idP1);
   });
 
   it("setActiveProject(id, sessionId) writes marker", () => {

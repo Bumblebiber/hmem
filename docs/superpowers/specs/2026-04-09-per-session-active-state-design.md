@@ -84,7 +84,7 @@ getActiveProject(sessionId?: string): MemoryRow | null
 
 Resolution order:
 1. If `sessionId` is given and `~/.hmem/sessions/<sessionId>.json` exists with a non-null `projectId` → load that P-entry from DB and return it.
-2. If marker exists but `projectId` is null → return null (session is explicitly project-less).
+2. If marker exists but `projectId` is null → fall through to DB flag (marker is initialized but not yet bound to a project — MCP cannot inject session ID so marker may stay at null even after `load_project` is called).
 3. If no marker (legacy / pre-fix session) → fall back to old DB-flag query (`WHERE active=1 LIMIT 1`).
 4. Otherwise → null.
 
@@ -199,7 +199,7 @@ Parallel: Claude Code Session B (session_id=xyz-789)
 **Unit tests (`test/`):**
 - `getActiveProject(sessionId)` returns marker's project.
 - `getActiveProject(sessionId)` with no marker falls back to DB flag.
-- `getActiveProject(sessionId)` with null projectId in marker returns null.
+- `getActiveProject(sessionId)` with null projectId in marker falls through to DB flag.
 - Stale marker cleanup removes files older than 7 d, keeps newer ones.
 - `resolveEnvDefaults` Priority 0 beats all others when marker present.
 
@@ -223,5 +223,5 @@ Parallel: Claude Code Session B (session_id=xyz-789)
 
 ## Open questions
 
-- **MCP server session-id injection:** Does Claude Code pass `session_id` to MCP server launches? If yes, we can skip the `~/.hmem/sessions/<id>.env` wrapper trick. To be verified in the first implementation step.
+- **MCP server session-id injection:** **RESOLVED — NO.** Claude Code does NOT pass any session-identifying environment variable (`CLAUDE_SESSION_ID`, `ANTHROPIC_SESSION_ID`, `HMEM_SESSION_ID`, or similar) to MCP servers it launches. The MCP server config in `~/.mcp.json` uses a static `env` block (plain JSON, not templated), so no session ID can be injected at launch time. Confirmed by: (a) grepping `~/.claude/` finds no SESSION_ID references in MCP config paths, only in hook scripts; (b) the `.mcp.json` `env` block contains only static keys (`HMEM_PROJECT_DIR`, `HMEM_AGENT_ID`, `HMEM_SYNC_PASSPHRASE`). **Consequence:** `setActiveProject(id, process.env.HMEM_SESSION_ID)` inside `mcp-server.ts` will always be called with `HMEM_SESSION_ID=undefined`, so the MCP `load_project` tool can never write a session marker. The marker written by SessionStart (with `projectId: null`) will remain at null. This is why `getActiveProject` must treat a null-projectId marker as "fall through to DB flag" rather than "explicit no-project" — otherwise every `log-exchange` call would return null and write to `O0000`.
 - **Statusline cache file cleanup cadence:** Per-call cleanup is fine but may be excessive. Alternative: cleanup only when SessionStart fires. Decide during implementation.

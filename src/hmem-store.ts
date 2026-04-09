@@ -2930,13 +2930,14 @@ export class HmemStore {
   getActiveProject(sessionId?: string): { id: string; title: string } | null {
     if (sessionId) {
       const marker = readSessionMarker(sessionId);
-      if (marker) {
-        if (marker.projectId === null) return null;
+      if (marker && marker.projectId) {
         const row = this.db.prepare(
           "SELECT id, title FROM memories WHERE id = ? AND prefix = 'P' AND obsolete != 1 LIMIT 1"
         ).get(marker.projectId) as { id: string; title: string } | undefined;
         if (row) return row;
+        // Marker points to non-existent/obsolete project → fall through
       }
+      // marker is null OR marker.projectId is null → fall through to DB flag
     }
     return (this.db.prepare(
       "SELECT id, title FROM memories WHERE prefix = 'P' AND active = 1 AND obsolete != 1 LIMIT 1"
