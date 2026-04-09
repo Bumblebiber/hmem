@@ -23,7 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveEnvDefaults } from "./cli-env.js";
 import { loadHmemConfig } from "./hmem-config.js";
-import { writeSessionMarker, purgeStaleSessionMarkers, readSessionMarker } from "./session-state.js";
+import { writeSessionMarker, purgeStaleSessionMarkers, readSessionMarker, writePpidMapping } from "./session-state.js";
 
 export async function hookStartup(): Promise<void> {
   // Read hook JSON from stdin
@@ -72,6 +72,10 @@ export async function hookStartup(): Promise<void> {
     const existing = readSessionMarker(sessionId);
     if (!existing) {
       writeSessionMarker(sessionId, { projectId: null, hmemPath });
+    }
+    // Bridge for MCP server: map Claude Code's PID → our session id
+    if (typeof process.ppid === "number" && process.ppid > 0) {
+      writePpidMapping(process.ppid, sessionId, hmemPath);
     }
     try { purgeStaleSessionMarkers(7); } catch { /* ignore */ }
   }

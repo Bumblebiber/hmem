@@ -20,6 +20,7 @@ import path from "node:path";
 import { execFileSync, execSync } from "node:child_process";
 import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
+import { currentSessionId } from "./session-state.js";
 
 /** Build a minimal MCP config JSON for the subagent (hmem only). */
 function buildMcpConfig(projectDir: string, hmemPath: string): string {
@@ -83,7 +84,7 @@ export async function checkpoint(): Promise<void> {
     const envProjectId = process.env.HMEM_ACTIVE_PROJECT;
     const activeProject = envProjectId
       ? store.getProjectById(envProjectId)
-      : store.getActiveProject(process.env.HMEM_SESSION_ID);
+      : store.getActiveProject(currentSessionId());
     if (!activeProject) return;
 
     const projectSeq = parseInt(activeProject.id.replace(/\D/g, ""), 10);

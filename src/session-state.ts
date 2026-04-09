@@ -84,6 +84,7 @@ export function purgeStaleSessionMarkers(maxAgeDays: number): number {
   let removed = 0;
   for (const name of fs.readdirSync(dir)) {
     if (!name.endsWith(".json")) continue;
+    // Catches both <session_id>.json and ppid-<pid>.json files
     const full = path.join(dir, name);
     try {
       const stat = fs.statSync(full);
@@ -94,4 +95,66 @@ export function purgeStaleSessionMarkers(maxAgeDays: number): number {
     } catch { /* ignore */ }
   }
   return removed;
+}
+
+export interface PpidMapping {
+  sessionId: string;
+  hmemPath: string;
+  updatedAt: string;
+}
+
+function ppidMappingPath(ppid: number): string {
+  return path.join(sessionMarkerDir(), `ppid-${ppid}.json`);
+}
+
+/**
+ * Write a mapping from a parent process id to a session id + hmem path.
+ * Used as a bridge between hooks (which know the session id) and MCP servers
+ * (which don't, but share the same parent pid = Claude Code's pid).
+ */
+export function writePpidMapping(ppid: number, sessionId: string, hmemPath: string): void {
+  if (!ppid || !sessionId) return;
+  const dir = sessionMarkerDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const file = ppidMappingPath(ppid);
+  const mapping: PpidMapping = {
+    sessionId,
+    hmemPath,
+    updatedAt: new Date().toISOString(),
+  };
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(mapping, null, 2));
+  fs.renameSync(tmp, file);
+}
+
+export function readPpidMapping(ppid: number): PpidMapping | null {
+  if (!ppid) return null;
+  try {
+    const raw = fs.readFileSync(ppidMappingPath(ppid), "utf8");
+    return JSON.parse(raw) as PpidMapping;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the current session id by chaining: env var > ppid-bridge file.
+ * Caches the result in process.env.HMEM_SESSION_ID so repeated calls are cheap.
+ *
+ * Linux/macOS: process.ppid is the Claude Code PID shared between the hook and
+ * MCP server, so the ppid-bridge file written by the hook is readable here.
+ * Windows: process.ppid may be unavailable in older Node versions — in that case
+ * currentSessionId() returns undefined and the system falls through to legacy
+ * DB-flag behavior.
+ */
+export function currentSessionId(): string | undefined {
+  if (process.env.HMEM_SESSION_ID) return process.env.HMEM_SESSION_ID;
+  const ppid = typeof process.ppid === "number" ? process.ppid : 0;
+  if (!ppid) return undefined;
+  const mapping = readPpidMapping(ppid);
+  if (mapping?.sessionId) {
+    process.env.HMEM_SESSION_ID = mapping.sessionId;
+    return mapping.sessionId;
+  }
+  return undefined;
 }

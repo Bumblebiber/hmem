@@ -8,6 +8,8 @@ import {
   clearSessionMarker,
   purgeStaleSessionMarkers,
   sessionMarkerDir,
+  writePpidMapping,
+  readPpidMapping,
 } from "../src/session-state.js";
 
 const tmpHome = path.join(os.tmpdir(), `hmem-test-${process.pid}`);
@@ -68,5 +70,13 @@ describe("session-state", () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "bad.json"), "{not json");
     expect(readSessionMarker("bad")).toBeNull();
+  });
+
+  it("ppid mapping round-trip and currentSessionId resolution", () => {
+    const fakePpid = 99999;
+    writePpidMapping(fakePpid, "ppid-test-session", "/tmp/x.hmem");
+    const mapping = readPpidMapping(fakePpid);
+    expect(mapping?.sessionId).toBe("ppid-test-session");
+    expect(mapping?.hmemPath).toBe("/tmp/x.hmem");
   });
 });
