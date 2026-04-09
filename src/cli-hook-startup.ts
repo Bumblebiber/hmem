@@ -23,6 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveEnvDefaults } from "./cli-env.js";
 import { loadHmemConfig } from "./hmem-config.js";
+import { writeSessionMarker, purgeStaleSessionMarkers, readSessionMarker } from "./session-state.js";
 
 export async function hookStartup(): Promise<void> {
   // Read hook JSON from stdin
@@ -65,6 +66,15 @@ export async function hookStartup(): Promise<void> {
 
   count++;
   fs.writeFileSync(counterFile, String(count), "utf8");
+
+  // Initialize session marker on first message (idempotent)
+  if (sessionId && sessionId !== "global" && hmemPath && count === 1) {
+    const existing = readSessionMarker(sessionId);
+    if (!existing) {
+      writeSessionMarker(sessionId, { projectId: null, hmemPath });
+    }
+    try { purgeStaleSessionMarkers(7); } catch { /* ignore */ }
+  }
 
   // First message: load memory
   if (count === 1) {
