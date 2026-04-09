@@ -20,6 +20,8 @@ import { spawn } from "node:child_process";
 import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
+import { writeDiagnostic } from "./diagnostics.js";
+import { readSessionMarker } from "./session-state.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HMEM_BIN = path.resolve(__dirname, "../dist/cli.js");
@@ -28,6 +30,7 @@ interface HookInput {
   transcript_path?: string;
   last_assistant_message?: string;
   stop_hook_active?: boolean;
+  session_id?: string;
 }
 
 /** Read the last real user message from a JSONL transcript file.
@@ -185,17 +188,45 @@ export async function logExchange(): Promise<void> {
       if (purged > 0) console.error(`[hmem] purged ${purged} irrelevant entries`);
     }
 
-    // Step 1: Resolve project O-entry
-    const activeProject = store.getActiveProject();
+    // Step 1: Resolve project O-entry (per-session)
+    const claudeSessionId = input.session_id;
+    const marker = claudeSessionId ? readSessionMarker(claudeSessionId) : null;
+    const markerSource: "session-marker" | "db-fallback" | "none" =
+      marker ? "session-marker" : (claudeSessionId ? "db-fallback" : "none");
+
+    const activeProject = store.getActiveProject(claudeSessionId);
     const projectSeq = activeProject ? parseInt(activeProject.id.replace(/\D/g, ""), 10) : 0;
     const oId = store.resolveProjectO(projectSeq);
 
-    // Step 2: Resolve session (transcript_path tracking)
-    const sessionId = store.resolveSession(oId, input.transcript_path!);
+    // Loud warnings on fallback / drift
+    if (!activeProject) {
+      console.error(`[hmem] WARNING: no active project for session ${claudeSessionId ?? "(none)"}, writing to O0000`);
+    }
+    if (markerSource === "db-fallback") {
+      console.error(`[hmem] WARNING: session ${claudeSessionId} has no marker file, using legacy DB flag`);
+    }
+    if (marker && marker.hmemPath && marker.hmemPath !== hmemPath) {
+      console.error(`[hmem] DRIFT: marker hmemPath=${marker.hmemPath} resolved=${hmemPath}`);
+    }
+
+    // Step 2: Resolve session (transcript_path tracking) — internal DB session row
+    const internalSessionId = store.resolveSession(oId, input.transcript_path!);
 
     // Step 3: Resolve batch (create new if full)
     const batchSize = hmemConfig.checkpointInterval || 5;
-    const batchId = store.resolveBatch(sessionId, oId, batchSize);
+    const batchId = store.resolveBatch(internalSessionId, oId, batchSize);
+
+    // Diagnostics entry
+    writeDiagnostic({
+      op: "log-exchange",
+      sessionId: claudeSessionId,
+      hmemPath,
+      activeProjectId: activeProject?.id ?? null,
+      oId,
+      batchId,
+      markerSource,
+      warning: !activeProject ? "no-active-project-O0000" : undefined,
+    });
 
     // Step 4: Append exchange (L4 + L5.1 user + L5.2 agent)
     store.appendExchangeV2(batchId, oId, userMessage, input.last_assistant_message!);
@@ -214,6 +245,7 @@ export async function logExchange(): Promise<void> {
               ...process.env,
               HMEM_PROJECT_DIR: projectDir,
               HMEM_PATH: process.env.HMEM_PATH,
+              ...(claudeSessionId ? { HMEM_SESSION_ID: claudeSessionId } : {}),
               ...(activeProject ? { HMEM_ACTIVE_PROJECT: activeProject.id } : {}),
             },
           });
