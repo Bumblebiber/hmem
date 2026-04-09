@@ -1,5 +1,25 @@
 # Changelog
 
+## 6.2.0 — 2026-04-09
+
+### Fixed
+- **Per-session active project state** — parallel Claude Code sessions no longer contaminate each other's active project. Each session now has its own marker file at `~/.hmem/sessions/<session_id>.json` and a PPID bridge file at `~/.hmem/sessions/ppid-<parent_pid>.json` so the MCP server can resolve session id without Claude Code env support. Fixes symptoms where exchanges were silently written to `O0000` or to a parallel session's O-entry.
+- **Statusline cache** was global, causing two sessions to share the same cached project for 30 seconds. Now per-session.
+- **Statusline no longer guesses** "most recently updated project" when nothing is active — shows `no project` instead.
+
+### Added
+- `~/.hmem/diagnostics.log` — JSONL log of every `log-exchange` call with active project resolution, rotated at 1 MB.
+- Loud `console.error` warnings when log-exchange falls through to `O0000` or legacy DB flag.
+- `src/session-state.ts` module with marker file R/W/purge and PPID bridge helpers.
+- `src/diagnostics.ts` module with JSONL log writer and rotation.
+
+### Deferred
+- HMEM_PATH session anchor (CWD-discovery trap) — follow-up for users who start `claude` from project directories with `.hmem` files.
+- Windows PPID bridge support — currently Linux/macOS only; Windows sessions fall through to legacy behavior.
+- Haiku checkpoint cross-check agent — Phase 2.
+
+---
+
 ## 2.3.0 (2026-02-27)
 
 ### Token Optimization
