@@ -32,6 +32,7 @@ import os from "node:os";
 import path from "node:path";
 import type { HmemConfig } from "./hmem-config.js";
 import { DEFAULT_CONFIG, DEFAULT_PREFIX_DESCRIPTIONS } from "./hmem-config.js";
+import { readSessionMarker, writeSessionMarker } from "./session-state.js";
 
 // ---- Types ----
 
@@ -324,7 +325,7 @@ const MIGRATIONS = [
 
 export class HmemStore {
   public db: Database.Database;
-  private readonly dbPath: string;
+  public readonly dbPath: string;
   getDbPath(): string { return this.dbPath; }
   private readonly cfg: HmemConfig;
   /** True if integrity_check found errors on open (read-only mode recommended). */
@@ -2819,13 +2820,16 @@ export class HmemStore {
    * file there must only ever be one active project — otherwise getActiveProject()
    * (LIMIT 1) becomes nondeterministic and log-exchange routes to the wrong O-entry.
    */
-  setActiveProject(id: string): void {
+  setActiveProject(id: string, sessionId?: string): void {
     const now = new Date().toISOString();
     const tx = this.db.transaction(() => {
       this.db.prepare("UPDATE memories SET active = 0, updated_at = ? WHERE prefix = 'P' AND active = 1 AND id != ?").run(now, id);
       this.db.prepare("UPDATE memories SET active = 1, updated_at = ? WHERE id = ?").run(now, id);
     });
     tx();
+    if (sessionId) {
+      writeSessionMarker(sessionId, { projectId: id, hmemPath: this.dbPath });
+    }
   }
 
   /** Auto-resolve linked entries on an entry (extracted for reuse in chain resolution). */
@@ -2923,7 +2927,17 @@ export class HmemStore {
   }
 
   /** Get the active project entry. Returns null if none active. */
-  getActiveProject(): { id: string; title: string } | null {
+  getActiveProject(sessionId?: string): { id: string; title: string } | null {
+    if (sessionId) {
+      const marker = readSessionMarker(sessionId);
+      if (marker) {
+        if (marker.projectId === null) return null;
+        const row = this.db.prepare(
+          "SELECT id, title FROM memories WHERE id = ? AND prefix = 'P' AND obsolete != 1 LIMIT 1"
+        ).get(marker.projectId) as { id: string; title: string } | undefined;
+        if (row) return row;
+      }
+    }
     return (this.db.prepare(
       "SELECT id, title FROM memories WHERE prefix = 'P' AND active = 1 AND obsolete != 1 LIMIT 1"
     ).get() as { id: string; title: string } | undefined) ?? null;
