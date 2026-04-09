@@ -83,7 +83,7 @@ export async function checkpoint(): Promise<void> {
     const envProjectId = process.env.HMEM_ACTIVE_PROJECT;
     const activeProject = envProjectId
       ? store.getProjectById(envProjectId)
-      : store.getActiveProject();
+      : store.getActiveProject(process.env.HMEM_SESSION_ID);
     if (!activeProject) return;
 
     const projectSeq = parseInt(activeProject.id.replace(/\D/g, ""), 10);

@@ -978,7 +978,7 @@ server.tool(
         const rootId = id.includes(".") ? id.split(".")[0] : id;
         let crossProjectNotice = "";
         if (rootId.startsWith("P") && storeName === "personal") {
-          const current = hmemStore.getActiveProject();
+          const current = hmemStore.getActiveProject(process.env.HMEM_SESSION_ID);
           if (!current || current.id !== rootId) {
             crossProjectNotice = `\n\nNotice: ${rootId} is not the currently active project${current ? ` (active: ${current.id})` : ""}. ` +
               `Session exchanges will continue to log under the active project's O-entry. ` +
@@ -1198,7 +1198,7 @@ server.tool(
         const rootId = id.includes(".") ? id.split(".")[0] : id;
         let crossProjectNotice = "";
         if (rootId.startsWith("P") && storeName === "personal") {
-          const current = hmemStore.getActiveProject();
+          const current = hmemStore.getActiveProject(process.env.HMEM_SESSION_ID);
           if (!current || current.id !== rootId) {
             crossProjectNotice = `\n\nNotice: ${rootId} is not the currently active project${current ? ` (active: ${current.id})` : ""}. ` +
               `Session exchanges will continue to log under the active project's O-entry. ` +
@@ -1975,7 +1975,7 @@ server.tool(
         // load_project is the ONLY path that switches the active project; write/update/append
         // on a different P only emit a notice (see below) so a one-off cross-project bug-fix
         // doesn't disrupt the agent's current work.
-        hmemStore.setActiveProject(id);
+        hmemStore.setActiveProject(id, process.env.HMEM_SESSION_ID);
         activeProjectId = id;
 
         // Cache check: if project was already loaded recently, return short confirmation
