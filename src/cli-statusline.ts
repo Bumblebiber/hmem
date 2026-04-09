@@ -18,6 +18,7 @@ import { resolveEnvDefaults } from "./cli-env.js";
 import { loadHmemConfig } from "./hmem-config.js";
 
 interface StatusInput {
+  session_id?: string;
   context_window?: {
     used_percentage?: number;
     current_usage?: {
@@ -39,7 +40,11 @@ const C = {
   reset: "\x1b[00m",
 };
 
-const CACHE_FILE = "/tmp/.hmem_statusline_cache";
+function cacheFile(sessionId: string | undefined): string {
+  const key = sessionId ? sessionId.replace(/[^a-zA-Z0-9._-]/g, "_") : "global";
+  return `/tmp/.hmem_statusline_${key}.cache`;
+}
+
 const CACHE_TTL = 30; // seconds
 
 interface HmemStatus {
@@ -72,8 +77,9 @@ function buildContextBar(input: StatusInput): string {
   return `${color}[${bar}]${C.reset} ${C.white}${tokLabel}${C.reset}`;
 }
 
-async function getHmemStatus(): Promise<HmemStatus> {
+async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus> {
   const empty: HmemStatus = { project: "", exchanges: 0, interval: 0 };
+  const CACHE_FILE = cacheFile(sessionId);
 
   // Check cache
   try {
@@ -95,7 +101,7 @@ async function getHmemStatus(): Promise<HmemStatus> {
   try {
     resolveEnvDefaults();
     const hmemPath = process.env.HMEM_PATH;
-    if (!hmemPath) return writeCache(empty);
+    if (!hmemPath) return writeCache(empty, sessionId);
 
     // Load config for checkpoint interval
     const hmemConfig = loadHmemConfig(path.dirname(hmemPath));
@@ -103,13 +109,22 @@ async function getHmemStatus(): Promise<HmemStatus> {
     const Database = (await import("better-sqlite3")).default;
     const db = new Database(hmemPath, { readonly: true });
     try {
-      // Active project
-      let projRow = db.prepare("SELECT id, title FROM memories WHERE prefix='P' AND active=1 AND obsolete!=1 LIMIT 1").get() as any;
-      if (!projRow) {
+      // Active project — per-session marker lookup
+      const { readSessionMarker } = await import("./session-state.js");
+      const marker = sessionId ? readSessionMarker(sessionId) : null;
+
+      let projRow: { id: string; title: string } | undefined;
+      if (marker && marker.projectId) {
         projRow = db.prepare(
-          "SELECT id, title FROM memories WHERE prefix='P' AND obsolete!=1 AND irrelevant!=1 ORDER BY updated_at DESC LIMIT 1"
-        ).get() as any;
+          "SELECT id, title FROM memories WHERE id = ? AND prefix='P' AND obsolete!=1 LIMIT 1"
+        ).get(marker.projectId) as { id: string; title: string } | undefined;
+      } else if (!marker) {
+        // Legacy fallback — session without marker, read global active flag
+        projRow = db.prepare(
+          "SELECT id, title FROM memories WHERE prefix='P' AND active=1 AND obsolete!=1 LIMIT 1"
+        ).get() as { id: string; title: string } | undefined;
       }
+      // If marker exists with null projectId → projRow stays undefined → "no project"
 
       let project = "";
       if (projRow) {
@@ -153,13 +168,13 @@ async function getHmemStatus(): Promise<HmemStatus> {
     }
   } catch { /* ignore */ }
 
-  return writeCache(status);
+  return writeCache(status, sessionId);
 }
 
-function writeCache(value: HmemStatus): HmemStatus {
+function writeCache(value: HmemStatus, sessionId: string | undefined): HmemStatus {
   try {
     const now = Math.floor(Date.now() / 1000);
-    fs.writeFileSync(CACHE_FILE, `${now}\n${JSON.stringify(value)}\n`);
+    fs.writeFileSync(cacheFile(sessionId), `${now}\n${JSON.stringify(value)}\n`);
   } catch { /* ignore */ }
   return value;
 }
@@ -178,7 +193,7 @@ export async function statusline(): Promise<void> {
   const ctxBar = buildContextBar(input);
   if (ctxBar) parts.push(ctxBar);
 
-  const status = await getHmemStatus();
+  const status = await getHmemStatus(input.session_id);
   if (status.project) {
     parts.push(`${C.cyan}${status.project}${C.reset}`);
   } else {
