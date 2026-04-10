@@ -571,6 +571,26 @@ function trackTokens<T extends { content: { type: "text"; text: string }[]; isEr
  * @param expandAll - if true, expand all O-entries (not just the first)
  * @returns formatted string + list of O-entry IDs for cache registration
  */
+/** Compress exchange text for display: collapse to first meaningful line, truncate at maxLen. */
+function compressExchangeText(text: string, maxLen: number): string {
+  if (!text) return "";
+  // Take first non-empty line (skip blank lines)
+  const lines = text.split("\n").filter(l => l.trim());
+  let result = lines[0] || "";
+  // If there are more lines, hint at continuation
+  if (lines.length > 1 && result.length < maxLen - 10) {
+    // Add second line if it fits
+    const second = lines[1].trim();
+    if (result.length + second.length + 3 < maxLen) {
+      result += " | " + second;
+    }
+  }
+  if (result.length > maxLen) {
+    result = result.substring(0, maxLen - 3) + "...";
+  }
+  return result;
+}
+
 function formatRecentOEntries(
   store: HmemStore,
   limit: number,
@@ -660,8 +680,23 @@ function formatRecentOEntries(
           continue;
         }
         // Strip XML channel tags from Telegram messages, keep inner text
-        const userClean = ex.userText.replace(/<channel[^>]*>\s*/g, "").replace(/<\/channel>\s*/g, "").trim();
-        const agentClean = ex.agentText?.replace(/<[^>]+>/g, "").trim();
+        let userClean = ex.userText.replace(/<channel[^>]*>\s*/g, "").replace(/<\/channel>\s*/g, "").trim();
+        let agentClean = ex.agentText?.replace(/<[^>]+>/g, "").trim() ?? "";
+
+        // Detect and compress skill injections (huge user messages from /skill invocations)
+        if (userClean.startsWith("Base directory for this skill:")) {
+          const skillMatch = userClean.match(/skills\/([^/\n]+)/);
+          userClean = skillMatch ? `[invoked /${skillMatch[1]}]` : "[invoked skill]";
+        } else if (userClean.startsWith("---\nname:") || userClean.startsWith("# ")) {
+          // YAML frontmatter or markdown heading — likely injected skill/doc content
+          const firstLine = userClean.split("\n")[0];
+          userClean = `[skill/doc injection: ${firstLine.substring(0, 80)}]`;
+        }
+
+        // Compress multiline text to first meaningful line + truncate
+        userClean = compressExchangeText(userClean, 300);
+        agentClean = compressExchangeText(agentClean, 300);
+
         lines.push(`    USER: ${userClean}`);
         if (agentClean) lines.push(`    AGENT: ${agentClean}`);
       }
