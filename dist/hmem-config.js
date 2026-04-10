@@ -52,6 +52,7 @@ export const DEFAULT_CONFIG = {
     checkpointInterval: 5,
     checkpointMode: "remind",
     recentOEntries: 10,
+    bulkReadOEntries: 0,
     contextTokenThreshold: 100_000,
     loadProjectExpand: {
         withBody: [1], // .1 Overview: show L3 title + body
@@ -123,7 +124,7 @@ export function saveHmemConfig(projectDir, config) {
 }
 /** Known memory config keys — used to detect unified vs flat format. */
 const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
-    "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas"]);
+    "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "bulkReadOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas"]);
 /**
  * Load hmem.config.json from projectDir.
  * Unknown keys are ignored. Missing keys fall back to defaults.
@@ -162,6 +163,8 @@ export function loadHmemConfig(projectDir) {
             cfg.checkpointMode = memoryRaw.checkpointMode;
         if (typeof memoryRaw.recentOEntries === "number" && memoryRaw.recentOEntries >= 0)
             cfg.recentOEntries = memoryRaw.recentOEntries;
+        if (typeof memoryRaw.bulkReadOEntries === "number" && memoryRaw.bulkReadOEntries >= 0)
+            cfg.bulkReadOEntries = memoryRaw.bulkReadOEntries;
         if (typeof memoryRaw.contextTokenThreshold === "number" && memoryRaw.contextTokenThreshold >= 0)
             cfg.contextTokenThreshold = memoryRaw.contextTokenThreshold;
         // load_project expand config

@@ -89,10 +89,16 @@ export interface HmemConfig {
    */
   checkpointMode: "remind" | "auto";
   /**
-   * Number of recent O-entries (session logs) to inject at startup and on load_project.
+   * Number of recent O-entries (session logs) to inject on load_project.
    * Set to 0 to disable. Default: 10.
    */
   recentOEntries: number;
+  /**
+   * Number of recent O-entries to inject in bulk reads (read_memory without id/prefix).
+   * Separate from recentOEntries so load_project can show history while bulk reads stay clean.
+   * Default: 0 (no O-entries in bulk read — they are noise when selecting a project).
+   */
+  bulkReadOEntries: number;
   /**
    * Token threshold for context clear recommendation.
    * When cumulative hmem output exceeds this, the agent is told to flush + /clear.
@@ -192,6 +198,7 @@ export const DEFAULT_CONFIG: HmemConfig = {
   checkpointInterval: 5,
   checkpointMode: "remind" as const,
   recentOEntries: 10,
+  bulkReadOEntries: 0,
   contextTokenThreshold: 100_000,
   loadProjectExpand: {
     withBody: [1],       // .1 Overview: show L3 title + body
@@ -269,7 +276,7 @@ export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
 
 /** Known memory config keys — used to detect unified vs flat format. */
 const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
-  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas"]);
+  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "bulkReadOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas"]);
 
 /**
  * Load hmem.config.json from projectDir.
@@ -306,6 +313,7 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     if (typeof memoryRaw.checkpointInterval === "number" && memoryRaw.checkpointInterval >= 0) cfg.checkpointInterval = memoryRaw.checkpointInterval;
     if (memoryRaw.checkpointMode === "remind" || memoryRaw.checkpointMode === "auto") cfg.checkpointMode = memoryRaw.checkpointMode;
     if (typeof memoryRaw.recentOEntries === "number" && memoryRaw.recentOEntries >= 0) cfg.recentOEntries = memoryRaw.recentOEntries;
+    if (typeof memoryRaw.bulkReadOEntries === "number" && memoryRaw.bulkReadOEntries >= 0) cfg.bulkReadOEntries = memoryRaw.bulkReadOEntries;
     if (typeof memoryRaw.contextTokenThreshold === "number" && memoryRaw.contextTokenThreshold >= 0) cfg.contextTokenThreshold = memoryRaw.contextTokenThreshold;
 
     // load_project expand config

@@ -549,6 +549,39 @@ function trackTokens(result) {
  * @param expandAll - if true, expand all O-entries (not just the first)
  * @returns formatted string + list of O-entry IDs for cache registration
  */
+/** Compress exchange text for display: strip noise, collapse to meaningful lines, truncate. */
+function compressExchangeText(text, maxLen) {
+    if (!text)
+        return "";
+    // Replace code blocks with placeholder
+    let cleaned = text.replace(/```[\s\S]*?```/g, "[code]");
+    // Replace markdown tables (lines with |---|) with placeholder
+    const tablePattern = /(?:^|\n)\|[^\n]+\|(?:\n\|[-: |]+\|)?(?:\n\|[^\n]+\|)*/g;
+    cleaned = cleaned.replace(tablePattern, "\n[table]");
+    // Replace inline JSON objects (multi-line { ... }) with placeholder
+    cleaned = cleaned.replace(/\{[\s\S]{80,}?\}/g, "[config]");
+    // Collect meaningful lines (skip blanks, deduplicate placeholders)
+    const lines = cleaned.split("\n")
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
+    // Build result from meaningful lines, joining with " | "
+    let result = "";
+    for (const line of lines) {
+        if (!result) {
+            result = line;
+        }
+        else if (result.length + line.length + 3 <= maxLen) {
+            result += " | " + line;
+        }
+        else {
+            break;
+        }
+    }
+    if (result.length > maxLen) {
+        result = result.substring(0, maxLen - 3) + "...";
+    }
+    return result;
+}
 function formatRecentOEntries(store, limit, exchangeCount, linkedTo, expandAll) {
     if (limit <= 0)
         return { text: "", ids: [] };
@@ -625,8 +658,35 @@ function formatRecentOEntries(store, limit, exchangeCount, linkedTo, expandAll) 
                     continue;
                 }
                 // Strip XML channel tags from Telegram messages, keep inner text
-                const userClean = ex.userText.replace(/<channel[^>]*>\s*/g, "").replace(/<\/channel>\s*/g, "").trim();
-                const agentClean = ex.agentText?.replace(/<[^>]+>/g, "").trim();
+                let userClean = ex.userText.replace(/<channel[^>]*>\s*/g, "").replace(/<\/channel>\s*/g, "").trim();
+                let agentClean = ex.agentText?.replace(/<[^>]+>/g, "").trim() ?? "";
+                // Skip meta-only exchanges (session management, no real content)
+                const userLower = userClean.toLowerCase();
+                if (/^(restarted|reconnected|mcp reconnected|\/mcp|\/clear|\/compact)$/i.test(userClean))
+                    continue;
+                // Detect and compress skill injections (huge user messages from /skill invocations)
+                if (userClean.startsWith("Base directory for this skill:")) {
+                    const skillMatch = userClean.match(/skills\/([^/\n]+)/);
+                    userClean = skillMatch ? `[invoked /${skillMatch[1]}]` : "[invoked skill]";
+                }
+                else if (/^---\nname:/m.test(userClean)) {
+                    // YAML frontmatter — injected skill content
+                    const nameMatch = userClean.match(/name:\s*(.+)/);
+                    userClean = nameMatch ? `[invoked /${nameMatch[1].trim()}]` : "[invoked skill]";
+                }
+                else if (userClean.startsWith("# ") && userClean.length > 500) {
+                    // Large markdown doc injection
+                    const heading = userClean.split("\n")[0].replace(/^#+\s*/, "");
+                    userClean = `[doc: ${heading.substring(0, 80)}]`;
+                }
+                // Strip system-reminder tags that leak into exchange text
+                userClean = userClean.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
+                agentClean = agentClean.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
+                // Compress multiline text: strip code blocks, tables, collapse to key lines
+                userClean = compressExchangeText(userClean, 300);
+                agentClean = compressExchangeText(agentClean, 300);
+                if (!userClean && !agentClean)
+                    continue; // nothing left after filtering
                 lines.push(`    USER: ${userClean}`);
                 if (agentClean)
                     lines.push(`    AGENT: ${agentClean}`);
@@ -1386,8 +1446,8 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                         : "  (no projects yet — create one with write_memory(prefix=\"P\", content=\"Name | Status | Stack | Description\", tags=[...]))";
                     // Inject recent O-entries even without active project (global, no project filter)
                     let recentOHint = "";
-                    if (hmemConfig.recentOEntries > 0) {
-                        const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10);
+                    if (hmemConfig.bulkReadOEntries > 0) {
+                        const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.bulkReadOEntries, 10);
                         if (text) {
                             recentOHint = `\n${text}\n`;
                             sessionCache.registerDelivered(ids);
@@ -1410,10 +1470,10 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             }
             // Inject recent O-entries (session logs) on bulk reads when none are cached
             let recentOSection = "";
-            if (isBulkListing && storeName === "personal" && hmemConfig.recentOEntries > 0) {
+            if (isBulkListing && storeName === "personal" && hmemConfig.bulkReadOEntries > 0) {
                 const cachedOIds = [...(cachedIds || []), ...(hiddenIds || [])].filter(id => id.startsWith("O"));
                 if (cachedOIds.length === 0) {
-                    const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10);
+                    const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.bulkReadOEntries, 10);
                     if (text) {
                         recentOSection = `\n${text}\n`;
                         sessionCache.registerDelivered(ids);

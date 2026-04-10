@@ -1645,8 +1645,8 @@ server.tool(
               : "  (no projects yet — create one with write_memory(prefix=\"P\", content=\"Name | Status | Stack | Description\", tags=[...]))";
             // Inject recent O-entries even without active project (global, no project filter)
             let recentOHint = "";
-            if (hmemConfig.recentOEntries > 0) {
-              const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10);
+            if (hmemConfig.bulkReadOEntries > 0) {
+              const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.bulkReadOEntries, 10);
               if (text) {
                 recentOHint = `\n${text}\n`;
                 sessionCache.registerDelivered(ids);
@@ -1671,10 +1671,10 @@ server.tool(
 
         // Inject recent O-entries (session logs) on bulk reads when none are cached
         let recentOSection = "";
-        if (isBulkListing && storeName === "personal" && hmemConfig.recentOEntries > 0) {
+        if (isBulkListing && storeName === "personal" && hmemConfig.bulkReadOEntries > 0) {
           const cachedOIds = [...(cachedIds || []), ...(hiddenIds || [])].filter(id => id.startsWith("O"));
           if (cachedOIds.length === 0) {
-            const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.recentOEntries, 10);
+            const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.bulkReadOEntries, 10);
             if (text) {
               recentOSection = `\n${text}\n`;
               sessionCache.registerDelivered(ids);

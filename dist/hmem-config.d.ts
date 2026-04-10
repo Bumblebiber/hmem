@@ -85,10 +85,16 @@ export interface HmemConfig {
      */
     checkpointMode: "remind" | "auto";
     /**
-     * Number of recent O-entries (session logs) to inject at startup and on load_project.
+     * Number of recent O-entries (session logs) to inject on load_project.
      * Set to 0 to disable. Default: 10.
      */
     recentOEntries: number;
+    /**
+     * Number of recent O-entries to inject in bulk reads (read_memory without id/prefix).
+     * Separate from recentOEntries so load_project can show history while bulk reads stay clean.
+     * Default: 0 (no O-entries in bulk read — they are noise when selecting a project).
+     */
+    bulkReadOEntries: number;
     /**
      * Token threshold for context clear recommendation.
      * When cumulative hmem output exceeds this, the agent is told to flush + /clear.
