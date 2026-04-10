@@ -29,7 +29,7 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult, Screen
 from textual.widgets import Tree, Header, Footer, ListView, ListItem, Label, Static, Input
-from textual.containers import Horizontal
+from textual.containers import Horizontal, VerticalScroll
 from textual.binding import Binding
 
 HMEM_BASE = Path.home() / ".hmem"
@@ -67,9 +67,7 @@ class McpClient:
 
     async def call_tool(self, name: str, arguments: dict | None = None) -> str:
         """Call an MCP tool, return its text content."""
-        params = {"name": name}
-        if arguments:
-            params["arguments"] = arguments
+        params = {"name": name, "arguments": arguments or {}}
         result = await self._request("tools/call", params)
         # Extract text from content array
         contents = result.get("content", [])
@@ -170,7 +168,7 @@ ENTRY_RE = re.compile(r"^\s*([A-Z]\d{4})\s+(.*)$")
 NODE_RE = re.compile(r"^(\s+)(\.(\d+))\s+(.*)$")
 # Matches bracketed sub-nodes like "    [Session 2026-04-10] ..." or "    [Rolling Summary] ..."
 # Excludes [+N] expandable markers
-BRACKET_NODE_RE = re.compile(r"^(\s+)\[([^\]+][^\]]*)\]\s*(.*)$")
+BRACKET_NODE_RE = re.compile(r"^(\s+)\[([^+\]][^\]]*)\]\s*(.*)$")
 # Matches expandable markers like [+4] or [+1]
 EXPANDABLE_RE = re.compile(r"\[\+(\d+)\]")
 
@@ -318,11 +316,12 @@ class MemoryScreen(Screen):
             width: 40%;
             min-width: 20;
         }
-        #detail-pane {
+        #detail-scroll {
             width: 1fr;
             border-left: solid $primary;
+        }
+        #detail-pane {
             padding: 0 1;
-            overflow-y: auto;
         }
         #search-bar {
             dock: bottom;
@@ -342,7 +341,8 @@ class MemoryScreen(Screen):
         yield Header()
         with Horizontal(id="split"):
             yield Tree(self.agent_name, id="tree-pane")
-            yield Static("Select an entry to view details.", id="detail-pane")
+            with VerticalScroll(id="detail-scroll"):
+                yield Static("Select an entry to view details.", id="detail-pane")
         yield Input(placeholder="Search...", id="search-bar")
         yield Footer()
 
