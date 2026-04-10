@@ -53,20 +53,49 @@ These control the automatic knowledge extraction pipeline:
 | `recentOEntries` | 10 | How many recent session logs to show when loading a project. All entries include full user/agent exchanges (L4/L5), not just titles. Higher = more context but more tokens at project load. |
 | `contextTokenThreshold` | 100000 | When cumulative hmem output exceeds this, the agent is told to flush context and /clear. Prevents runaway token usage in long sessions. Set to 0 to disable. |
 
-### load_project display (v5.1.8+)
+### Entry schemas (v6.3.0+)
 
-Controls which P-entry sections are expanded when loading a project:
+Define per-prefix section schemas that control `create_project` structure and `load_project` rendering depth. When a schema is defined, it replaces the hardcoded R0009 sections and the `loadProjectExpand` settings.
+
+```json
+{
+  "memory": {
+    "schemas": {
+      "P": {
+        "sections": [
+          { "name": "Overview",    "loadDepth": 3, "defaultChildren": ["Current state", "Goals", "Environment"] },
+          { "name": "Codebase",    "loadDepth": 1 },
+          { "name": "Protocol",    "loadDepth": 0 },
+          { "name": "Next Steps",  "loadDepth": 3 }
+        ],
+        "createLinkedO": true
+      }
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sections[].name` | string | L2 section title. Used for matching during auto-reconcile (case-insensitive). |
+| `sections[].loadDepth` | 0-4 | 0=skip, 1=title only, 2=+L3 titles, 3=+L3 body, 4=full subtree |
+| `sections[].defaultChildren` | string[] | L3 nodes created by `create_project`. Optional. |
+| `createLinkedO` | boolean | Auto-create matching O-entry on `create_project`. Default: false. |
+
+**Auto-reconcile:** On every `load_project`, missing schema sections are automatically added as empty L2 nodes. Extra sections not in the schema are kept (loaded at depth 1).
+
+**No schema defined:** Falls back to hardcoded R0009 behavior and `loadProjectExpand` settings.
+
+### load_project display (legacy, pre-v6.3.0)
+
+Only used when no `schemas` entry exists for the prefix. Controls which P-entry sections are expanded:
 
 | Parameter | Default | Purpose |
 |-----------|---------|---------|
 | `loadProjectExpand.withBody` | `[1]` | L2 section seq numbers where L3 children show title + body content. Default: `.1 Overview` — shows full architecture/state/goals detail. |
 | `loadProjectExpand.withChildren` | `[6, 8]` | L2 section seq numbers where all L3 children are listed as titles. Default: `.6 Bugs`, `.8 Open Tasks` — all items visible at a glance. |
 
-Sections not in either list show L3 titles only in compact mode. Example config:
-```json
-{ "memory": { "loadProjectExpand": { "withBody": [1, 4], "withChildren": [6, 8, 9] } } }
-```
-This would expand Overview + Context with body, and list all Bugs + Tasks + Ideas as titles.
+Sections not in either list show L3 titles only in compact mode.
 
 ### Bulk-read tuning
 

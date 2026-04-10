@@ -1,9 +1,10 @@
 ---
 name: hmem-new-project
 description: >
-  Create a new P-entry with the standard R0009 schema. Use when the user says
+  Create a new P-entry. Uses the schema from hmem.config.json if configured,
+  otherwise falls back to the standard R0009 schema. Use when the user says
   "neues Projekt", "new project", "Projekt anlegen", or "/hmem-new-project".
-  Uses the create_project MCP tool which auto-creates P-entry + O-entry.
+  Uses the create_project MCP tool which auto-creates P-entry (+ O-entry if createLinkedO is set).
 ---
 
 # /hmem-new-project — New Project Entry
@@ -51,8 +52,8 @@ create_project({
 ```
 
 This creates:
-- **P00XX** with all 9 R0009 sections (Overview → Ideas)
-- **O00XX** matching O-entry for session logging
+- **P00XX** with sections from the configured schema (or 9 R0009 defaults if no schema)
+- **O00XX** matching O-entry for session logging (if `createLinkedO: true` in schema, or always when no schema)
 
 ## Step 4: Fill in details
 
