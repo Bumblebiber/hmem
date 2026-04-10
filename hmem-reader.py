@@ -414,26 +414,34 @@ class MemoryScreen(Screen):
         if not entry_id:
             return
         try:
-            text = await self._mcp.call_tool("read_memory", {"id": root_id(entry_id)})
+            # Fetch the specific entry (not always the root) so child nodes
+            # like P0048.1 get their own content, not P0048's.
+            text = await self._mcp.call_tool("read_memory", {"id": entry_id})
         except Exception as e:
             self.query_one("#detail-pane", Static).update(f"Error: {e}")
             return
 
         self.query_one("#detail-pane", Static).update(escape_markup(text))
 
-        # Add child nodes to tree if not already populated
+        # Add DIRECT children to tree if not already populated
         if not event.node.children:
             parsed = parse_response_lines(text, parent_id=root_id(entry_id))
+            prefix = entry_id + "."
             for pl in parsed:
-                if pl.indent > 0 and pl.entry_id.startswith(root_id(entry_id)):
-                    label = escape_markup(pl.label)
-                    child_label = f"{pl.entry_id}  {label}"
-                    if pl.expandable_count > 0:
-                        child = event.node.add(child_label, data=pl.entry_id)
-                        child.allow_expand = True
-                    else:
-                        event.node.add_leaf(child_label, data=pl.entry_id)
-            event.node.expand()
+                # Only direct children: start with "entry_id." and have no further dot
+                if not pl.entry_id.startswith(prefix):
+                    continue
+                if "." in pl.entry_id[len(prefix):]:
+                    continue  # skip grandchildren
+                label = escape_markup(pl.label)
+                child_label = f"{pl.entry_id}  {label}"
+                if pl.expandable_count > 0:
+                    child = event.node.add(child_label, data=pl.entry_id)
+                    child.allow_expand = True
+                else:
+                    event.node.add_leaf(child_label, data=pl.entry_id)
+            if event.node.children:
+                event.node.expand()
 
     # ── Keybinding Actions ───────────────────────────────────────────────
 
