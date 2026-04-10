@@ -56,6 +56,7 @@ const dbMtimeAtStart = (() => {
 })();
 // ---- Security helpers ----
 import os from "node:os";
+import { currentSessionId } from "./session-state.js";
 /** Validate that a file path stays within the hmem directory or user's home. */
 function validateFilePath(userPath, hmemDir) {
     const resolved = path.resolve(userPath);
@@ -876,7 +877,7 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
             const rootId = id.includes(".") ? id.split(".")[0] : id;
             let crossProjectNotice = "";
             if (rootId.startsWith("P") && storeName === "personal") {
-                const current = hmemStore.getActiveProject();
+                const current = hmemStore.getActiveProject(currentSessionId());
                 if (!current || current.id !== rootId) {
                     crossProjectNotice = `\n\nNotice: ${rootId} is not the currently active project${current ? ` (active: ${current.id})` : ""}. ` +
                         `Session exchanges will continue to log under the active project's O-entry. ` +
@@ -1072,7 +1073,7 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
             const rootId = id.includes(".") ? id.split(".")[0] : id;
             let crossProjectNotice = "";
             if (rootId.startsWith("P") && storeName === "personal") {
-                const current = hmemStore.getActiveProject();
+                const current = hmemStore.getActiveProject(currentSessionId());
                 if (!current || current.id !== rootId) {
                     crossProjectNotice = `\n\nNotice: ${rootId} is not the currently active project${current ? ` (active: ${current.id})` : ""}. ` +
                         `Session exchanges will continue to log under the active project's O-entry. ` +
@@ -1714,7 +1715,7 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             // load_project is the ONLY path that switches the active project; write/update/append
             // on a different P only emit a notice (see below) so a one-off cross-project bug-fix
             // doesn't disrupt the agent's current work.
-            hmemStore.setActiveProject(id);
+            hmemStore.setActiveProject(id, currentSessionId());
             activeProjectId = id;
             // Cache check: if project was already loaded recently, return short confirmation
             const hiddenIds = sessionCache.getHiddenIds();
@@ -1939,33 +1940,58 @@ server.tool("create_project", "Create a new project with the standard R0009 sche
             const titleLine = `${name} | ${status} | ${tech} | ${description}`;
             const bodyLine = goal ? `> ${goal}` : `> ${description}`;
             const sections = [titleLine, bodyLine];
-            // .1 Overview
-            sections.push(`\tOverview`);
-            sections.push(`\t\tCurrent state: ${status}, ${tech}`);
-            if (goal)
-                sections.push(`\t\tGoals: ${goal}`);
-            if (repo)
-                sections.push(`\t\tEnvironment: ${repo}`);
-            // .2 Codebase
-            sections.push(`\tCodebase`);
-            // .3 Usage
-            sections.push(`\tUsage`);
-            // .4 Context
-            sections.push(`\tContext`);
-            if (audience)
-                sections.push(`\t\tTarget audience: ${audience}`);
-            // .5 Deployment
-            sections.push(`\tDeployment`);
-            if (deployment)
-                sections.push(`\t\t${deployment}`);
-            // .6 Bugs
-            sections.push(`\tBugs`);
-            // .7 Protocol
-            sections.push(`\tProtocol`);
-            // .8 Open tasks
-            sections.push(`\tOpen tasks`);
-            // .9 Ideas
-            sections.push(`\tIdeas`);
+            const schema = hmemConfig.schemas?.P;
+            if (schema) {
+                // Schema-driven creation
+                for (const sec of schema.sections) {
+                    sections.push(`\t${sec.name}`);
+                    if (sec.defaultChildren) {
+                        for (const child of sec.defaultChildren) {
+                            // Inject known values for standard Overview children
+                            if (sec.name === "Overview" && child === "Current state") {
+                                sections.push(`\t\tCurrent state: ${status}, ${tech}`);
+                            }
+                            else if (sec.name === "Overview" && child === "Goals" && goal) {
+                                sections.push(`\t\tGoals: ${goal}`);
+                            }
+                            else if (sec.name === "Overview" && child === "Environment" && repo) {
+                                sections.push(`\t\tEnvironment: ${repo}`);
+                            }
+                            else if (sec.name === "Context" && child === "Target audience" && audience) {
+                                sections.push(`\t\tTarget audience: ${audience}`);
+                            }
+                            else {
+                                sections.push(`\t\t${child}`);
+                            }
+                        }
+                    }
+                    // Backward compat: inject deployment into Deployment section if no defaultChildren
+                    if (sec.name === "Deployment" && deployment && !sec.defaultChildren) {
+                        sections.push(`\t\t${deployment}`);
+                    }
+                }
+            }
+            else {
+                // Fallback: hardcoded R0009 schema (backward compat)
+                sections.push(`\tOverview`);
+                sections.push(`\t\tCurrent state: ${status}, ${tech}`);
+                if (goal)
+                    sections.push(`\t\tGoals: ${goal}`);
+                if (repo)
+                    sections.push(`\t\tEnvironment: ${repo}`);
+                sections.push(`\tCodebase`);
+                sections.push(`\tUsage`);
+                sections.push(`\tContext`);
+                if (audience)
+                    sections.push(`\t\tTarget audience: ${audience}`);
+                sections.push(`\tDeployment`);
+                if (deployment)
+                    sections.push(`\t\t${deployment}`);
+                sections.push(`\tBugs`);
+                sections.push(`\tProtocol`);
+                sections.push(`\tOpen tasks`);
+                sections.push(`\tIdeas`);
+            }
             const content = sections.join("\n");
             // Merge tags
             const allTags = ["#project", ...(tags ?? [])];
@@ -1978,22 +2004,25 @@ server.tool("create_project", "Create a new project with the standard R0009 sche
             const result = hmemStore.write("P", content, links ?? [], undefined, false, allTags);
             const pId = result.id;
             const pSeq = parseInt(pId.replace(/\D/g, ""), 10);
-            // Create matching O-entry
+            // Create matching O-entry (only if schema says so, or no schema = backward compat)
+            const shouldCreateO = schema ? (schema.createLinkedO === true) : true;
             const oId = `O${String(pSeq).padStart(4, "0")}`;
-            const existingO = hmemStore.readEntry(oId);
-            if (!existingO) {
-                // Reserve the O-prefix slot too — even though we may rename it afterwards,
-                // the initial write needs collision protection
-                if (storeName === "personal")
-                    reserveNextId(HMEM_PATH, "O", hmemStore);
-                hmemStore.write("O", `${name} — Session Log`, [pId], undefined, false, ["#session-log"]);
-                // The O-entry gets auto-assigned the next seq, which may not match pSeq.
-                // We need to ensure it has the right ID. Check if it matches:
-                const lastO = hmemStore.read({ prefix: "O", depth: 1 })
-                    .sort((a, b) => b.seq - a.seq)[0];
-                if (lastO && lastO.id !== oId) {
-                    // Rename to match P-entry seq
-                    hmemStore.renameId(lastO.id, oId);
+            if (shouldCreateO) {
+                const existingO = hmemStore.readEntry(oId);
+                if (!existingO) {
+                    // Reserve the O-prefix slot too — even though we may rename it afterwards,
+                    // the initial write needs collision protection
+                    if (storeName === "personal")
+                        reserveNextId(HMEM_PATH, "O", hmemStore);
+                    hmemStore.write("O", `${name} — Session Log`, [pId], undefined, false, ["#session-log"]);
+                    // The O-entry gets auto-assigned the next seq, which may not match pSeq.
+                    // We need to ensure it has the right ID. Check if it matches:
+                    const lastO = hmemStore.read({ prefix: "O", depth: 1 })
+                        .sort((a, b) => b.seq - a.seq)[0];
+                    if (lastO && lastO.id !== oId) {
+                        // Rename to match P-entry seq
+                        hmemStore.renameId(lastO.id, oId);
+                    }
                 }
             }
             // Note: write() with prefix "P" auto-activates the project (deactivates others)
@@ -2001,12 +2030,15 @@ server.tool("create_project", "Create a new project with the standard R0009 sche
             if (storeName === "personal")
                 syncPushWithRetry(HMEM_PATH);
             log(`create_project: ${pId} + ${oId} created and activated`);
+            const sectionNames = schema
+                ? schema.sections.map(s => s.name).join(", ")
+                : "Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Open tasks, Ideas";
             return trackTokens({
                 content: [{
                         type: "text",
                         text: `✓ Project ${pId} created and activated.\n` +
-                            `  O-entry: ${oId} (session logging)\n` +
-                            `  Sections: Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Open tasks, Ideas\n\n` +
+                            (shouldCreateO ? `  O-entry: ${oId} (session logging)\n` : "") +
+                            `  Sections: ${sectionNames}\n\n` +
                             `Next: Use load_project(id="${pId}") to see the full briefing.\n` +
                             `Tip: Use append_memory(id="${pId}.2", content="...") to fill in Codebase details.`,
                     }],

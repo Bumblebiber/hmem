@@ -2210,37 +2210,49 @@ server.tool(
 
         const sections: string[] = [titleLine, bodyLine];
 
-        // .1 Overview
-        sections.push(`\tOverview`);
-        sections.push(`\t\tCurrent state: ${status}, ${tech}`);
-        if (goal) sections.push(`\t\tGoals: ${goal}`);
-        if (repo) sections.push(`\t\tEnvironment: ${repo}`);
-
-        // .2 Codebase
-        sections.push(`\tCodebase`);
-
-        // .3 Usage
-        sections.push(`\tUsage`);
-
-        // .4 Context
-        sections.push(`\tContext`);
-        if (audience) sections.push(`\t\tTarget audience: ${audience}`);
-
-        // .5 Deployment
-        sections.push(`\tDeployment`);
-        if (deployment) sections.push(`\t\t${deployment}`);
-
-        // .6 Bugs
-        sections.push(`\tBugs`);
-
-        // .7 Protocol
-        sections.push(`\tProtocol`);
-
-        // .8 Open tasks
-        sections.push(`\tOpen tasks`);
-
-        // .9 Ideas
-        sections.push(`\tIdeas`);
+        const schema = hmemConfig.schemas?.P;
+        if (schema) {
+          // Schema-driven creation
+          for (const sec of schema.sections) {
+            sections.push(`\t${sec.name}`);
+            if (sec.defaultChildren) {
+              for (const child of sec.defaultChildren) {
+                // Inject known values for standard Overview children
+                if (sec.name === "Overview" && child === "Current state") {
+                  sections.push(`\t\tCurrent state: ${status}, ${tech}`);
+                } else if (sec.name === "Overview" && child === "Goals" && goal) {
+                  sections.push(`\t\tGoals: ${goal}`);
+                } else if (sec.name === "Overview" && child === "Environment" && repo) {
+                  sections.push(`\t\tEnvironment: ${repo}`);
+                } else if (sec.name === "Context" && child === "Target audience" && audience) {
+                  sections.push(`\t\tTarget audience: ${audience}`);
+                } else {
+                  sections.push(`\t\t${child}`);
+                }
+              }
+            }
+            // Backward compat: inject deployment into Deployment section if no defaultChildren
+            if (sec.name === "Deployment" && deployment && !sec.defaultChildren) {
+              sections.push(`\t\t${deployment}`);
+            }
+          }
+        } else {
+          // Fallback: hardcoded R0009 schema (backward compat)
+          sections.push(`\tOverview`);
+          sections.push(`\t\tCurrent state: ${status}, ${tech}`);
+          if (goal) sections.push(`\t\tGoals: ${goal}`);
+          if (repo) sections.push(`\t\tEnvironment: ${repo}`);
+          sections.push(`\tCodebase`);
+          sections.push(`\tUsage`);
+          sections.push(`\tContext`);
+          if (audience) sections.push(`\t\tTarget audience: ${audience}`);
+          sections.push(`\tDeployment`);
+          if (deployment) sections.push(`\t\t${deployment}`);
+          sections.push(`\tBugs`);
+          sections.push(`\tProtocol`);
+          sections.push(`\tOpen tasks`);
+          sections.push(`\tIdeas`);
+        }
 
         const content = sections.join("\n");
 
@@ -2258,21 +2270,24 @@ server.tool(
         const pId = result.id;
         const pSeq = parseInt(pId.replace(/\D/g, ""), 10);
 
-        // Create matching O-entry
+        // Create matching O-entry (only if schema says so, or no schema = backward compat)
+        const shouldCreateO = schema ? (schema.createLinkedO === true) : true;
         const oId = `O${String(pSeq).padStart(4, "0")}`;
-        const existingO = hmemStore.readEntry(oId);
-        if (!existingO) {
-          // Reserve the O-prefix slot too — even though we may rename it afterwards,
-          // the initial write needs collision protection
-          if (storeName === "personal") reserveNextId(HMEM_PATH, "O", hmemStore);
-          hmemStore.write("O", `${name} — Session Log`, [pId], undefined, false, ["#session-log"]);
-          // The O-entry gets auto-assigned the next seq, which may not match pSeq.
-          // We need to ensure it has the right ID. Check if it matches:
-          const lastO = hmemStore.read({ prefix: "O", depth: 1 })
-            .sort((a: any, b: any) => b.seq - a.seq)[0];
-          if (lastO && lastO.id !== oId) {
-            // Rename to match P-entry seq
-            hmemStore.renameId(lastO.id, oId);
+        if (shouldCreateO) {
+          const existingO = hmemStore.readEntry(oId);
+          if (!existingO) {
+            // Reserve the O-prefix slot too — even though we may rename it afterwards,
+            // the initial write needs collision protection
+            if (storeName === "personal") reserveNextId(HMEM_PATH, "O", hmemStore);
+            hmemStore.write("O", `${name} — Session Log`, [pId], undefined, false, ["#session-log"]);
+            // The O-entry gets auto-assigned the next seq, which may not match pSeq.
+            // We need to ensure it has the right ID. Check if it matches:
+            const lastO = hmemStore.read({ prefix: "O", depth: 1 })
+              .sort((a: any, b: any) => b.seq - a.seq)[0];
+            if (lastO && lastO.id !== oId) {
+              // Rename to match P-entry seq
+              hmemStore.renameId(lastO.id, oId);
+            }
           }
         }
 
@@ -2283,12 +2298,16 @@ server.tool(
 
         log(`create_project: ${pId} + ${oId} created and activated`);
 
+        const sectionNames = schema
+          ? schema.sections.map(s => s.name).join(", ")
+          : "Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Open tasks, Ideas";
+
         return trackTokens({
           content: [{
             type: "text" as const,
             text: `✓ Project ${pId} created and activated.\n` +
-              `  O-entry: ${oId} (session logging)\n` +
-              `  Sections: Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Open tasks, Ideas\n\n` +
+              (shouldCreateO ? `  O-entry: ${oId} (session logging)\n` : "") +
+              `  Sections: ${sectionNames}\n\n` +
               `Next: Use load_project(id="${pId}") to see the full briefing.\n` +
               `Tip: Use append_memory(id="${pId}.2", content="...") to fill in Codebase details.`,
           }],
