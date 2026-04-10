@@ -77,13 +77,18 @@ class McpClient:
                 parts.append(c["text"])
         return "\n".join(parts)
 
-    def close(self):
-        """Terminate the subprocess."""
+    async def close(self):
+        """Terminate the subprocess, wait up to 3s, kill if stuck."""
         if self._proc and self._proc.returncode is None:
             try:
                 self._proc.terminate()
-            except ProcessLookupError:
-                pass
+                await asyncio.wait_for(self._proc.wait(), timeout=3.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                try:
+                    self._proc.kill()
+                except ProcessLookupError:
+                    pass
+        self._proc = None
 
     async def _request(self, method: str, params: dict) -> dict:
         """Send a JSON-RPC request and read the response."""
@@ -91,10 +96,7 @@ class McpClient:
         self._next_id += 1
         msg = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params}
         await self._send(msg)
-        resp = await self._read_response()
-        if "error" in resp:
-            raise RuntimeError(f"MCP error: {resp['error']}")
-        return resp.get("result", {})
+        return await self._read_response(msg_id)
 
     async def _notify(self, method: str, params: dict | None = None):
         """Send a JSON-RPC notification (no response expected)."""
@@ -109,12 +111,19 @@ class McpClient:
         self._proc.stdin.write(data)
         await self._proc.stdin.drain()
 
-    async def _read_response(self) -> dict:
-        """Read a single newline-delimited JSON response from stdout."""
-        line = await asyncio.wait_for(self._proc.stdout.readline(), timeout=30)
-        if not line:
-            raise RuntimeError("MCP subprocess closed unexpectedly")
-        return json.loads(line)
+    async def _read_response(self, expected_id: int) -> dict:
+        """Read responses, skip notifications, return result for expected_id."""
+        while True:
+            line = await asyncio.wait_for(self._proc.stdout.readline(), timeout=30)
+            if not line:
+                raise RuntimeError("MCP subprocess closed unexpectedly")
+            data = json.loads(line)
+            if "id" not in data:
+                continue  # skip notifications
+            if data["id"] == expected_id:
+                if "error" in data:
+                    raise RuntimeError(f"MCP error: {data['error']}")
+                return data.get("result", {})
 
 
 # ── Agent Discovery ──────────────────────────────────────────────────────────
@@ -149,12 +158,10 @@ def resolve_hmem_path(arg: str) -> tuple[str, Path]:
 def count_entries(db_path: Path) -> int:
     """Quick SQLite COUNT(*) — the only direct DB access in the reader."""
     try:
-        conn = sqlite3.connect(str(db_path))
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM memories WHERE (obsolete = 0 OR obsolete IS NULL) AND seq > 0")
-        n = cur.fetchone()[0]
-        conn.close()
-        return n
+        with sqlite3.connect(str(db_path)) as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE (obsolete = 0 OR obsolete IS NULL) AND seq > 0"
+            ).fetchone()[0]
     except Exception:
         return 0
 
@@ -335,7 +342,6 @@ class MemoryScreen(Screen):
         self.db_path = db_path
         self._mcp: McpClient | None = None
         self._tree_width_pct = 40
-        self._selected_id: str = ""
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -406,8 +412,6 @@ class MemoryScreen(Screen):
         entry_id = event.node.data
         if not entry_id:
             return
-        self._selected_id = entry_id
-
         try:
             text = await self._mcp.call_tool("read_memory", {"id": root_id(entry_id)})
         except Exception as e:
@@ -458,11 +462,20 @@ class MemoryScreen(Screen):
         search.display = False
         self.query_one("#tree-pane", Tree).focus()
 
+    def _cursor_root_id(self) -> str | None:
+        """Get root entry ID from the currently highlighted tree node."""
+        tree = self.query_one("#tree-pane", Tree)
+        node = tree.cursor_node
+        entry_id = node.data if node else None
+        if not entry_id or not isinstance(entry_id, str):
+            return None
+        return root_id(entry_id)
+
     async def action_find_related(self):
-        """Find entries related to the currently selected root entry."""
-        if not self._selected_id or not self._mcp:
+        """Find entries related to the currently highlighted root entry."""
+        rid = self._cursor_root_id()
+        if not rid or not self._mcp:
             return
-        rid = root_id(self._selected_id)
         try:
             text = await self._mcp.call_tool("find_related", {"id": rid})
         except Exception as e:
@@ -471,9 +484,9 @@ class MemoryScreen(Screen):
 
     async def action_load_project(self):
         """Load project details (only for P-entries)."""
-        if not self._selected_id or not self._mcp:
+        rid = self._cursor_root_id()
+        if not rid or not self._mcp:
             return
-        rid = root_id(self._selected_id)
         if not rid.startswith("P"):
             self.query_one("#detail-pane", Static).update(
                 "load_project only works on P-entries. Select a project entry first."
@@ -538,10 +551,10 @@ class MemoryScreen(Screen):
         for node in tree.root.children:
             node.collapse_all()
 
-    def on_unmount(self):
+    async def on_unmount(self):
         """Clean up MCP client when screen is removed."""
         if self._mcp:
-            self._mcp.close()
+            await self._mcp.close()
             self._mcp = None
 
 
@@ -568,7 +581,7 @@ def main():
         try:
             agent_name, db_path = resolve_hmem_path(arg)
         except FileNotFoundError as e:
-            print(f"Error: {e}")
+            print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
         screen = MemoryScreen(agent_name, db_path)
     else:
