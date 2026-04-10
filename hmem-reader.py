@@ -56,6 +56,7 @@ class McpClient:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            limit=4 * 1024 * 1024,  # 4MB buffer for large responses (export_memory)
         )
         result = await self._request("initialize", {
             "protocolVersion": "2024-11-05",
