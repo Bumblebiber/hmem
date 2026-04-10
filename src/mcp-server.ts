@@ -571,20 +571,37 @@ function trackTokens<T extends { content: { type: "text"; text: string }[]; isEr
  * @param expandAll - if true, expand all O-entries (not just the first)
  * @returns formatted string + list of O-entry IDs for cache registration
  */
-/** Compress exchange text for display: collapse to first meaningful line, truncate at maxLen. */
+/** Compress exchange text for display: strip noise, collapse to meaningful lines, truncate. */
 function compressExchangeText(text: string, maxLen: number): string {
   if (!text) return "";
-  // Take first non-empty line (skip blank lines)
-  const lines = text.split("\n").filter(l => l.trim());
-  let result = lines[0] || "";
-  // If there are more lines, hint at continuation
-  if (lines.length > 1 && result.length < maxLen - 10) {
-    // Add second line if it fits
-    const second = lines[1].trim();
-    if (result.length + second.length + 3 < maxLen) {
-      result += " | " + second;
+
+  // Replace code blocks with placeholder
+  let cleaned = text.replace(/```[\s\S]*?```/g, "[code]");
+
+  // Replace markdown tables (lines with |---|) with placeholder
+  const tablePattern = /(?:^|\n)\|[^\n]+\|(?:\n\|[-: |]+\|)?(?:\n\|[^\n]+\|)*/g;
+  cleaned = cleaned.replace(tablePattern, "\n[table]");
+
+  // Replace inline JSON objects (multi-line { ... }) with placeholder
+  cleaned = cleaned.replace(/\{[\s\S]{80,}?\}/g, "[config]");
+
+  // Collect meaningful lines (skip blanks, deduplicate placeholders)
+  const lines = cleaned.split("\n")
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+
+  // Build result from meaningful lines, joining with " | "
+  let result = "";
+  for (const line of lines) {
+    if (!result) {
+      result = line;
+    } else if (result.length + line.length + 3 <= maxLen) {
+      result += " | " + line;
+    } else {
+      break;
     }
   }
+
   if (result.length > maxLen) {
     result = result.substring(0, maxLen - 3) + "...";
   }
@@ -683,19 +700,33 @@ function formatRecentOEntries(
         let userClean = ex.userText.replace(/<channel[^>]*>\s*/g, "").replace(/<\/channel>\s*/g, "").trim();
         let agentClean = ex.agentText?.replace(/<[^>]+>/g, "").trim() ?? "";
 
+        // Skip meta-only exchanges (session management, no real content)
+        const userLower = userClean.toLowerCase();
+        if (/^(restarted|reconnected|mcp reconnected|\/mcp|\/clear|\/compact)$/i.test(userClean)) continue;
+
         // Detect and compress skill injections (huge user messages from /skill invocations)
         if (userClean.startsWith("Base directory for this skill:")) {
           const skillMatch = userClean.match(/skills\/([^/\n]+)/);
           userClean = skillMatch ? `[invoked /${skillMatch[1]}]` : "[invoked skill]";
-        } else if (userClean.startsWith("---\nname:") || userClean.startsWith("# ")) {
-          // YAML frontmatter or markdown heading — likely injected skill/doc content
-          const firstLine = userClean.split("\n")[0];
-          userClean = `[skill/doc injection: ${firstLine.substring(0, 80)}]`;
+        } else if (/^---\nname:/m.test(userClean)) {
+          // YAML frontmatter — injected skill content
+          const nameMatch = userClean.match(/name:\s*(.+)/);
+          userClean = nameMatch ? `[invoked /${nameMatch[1].trim()}]` : "[invoked skill]";
+        } else if (userClean.startsWith("# ") && userClean.length > 500) {
+          // Large markdown doc injection
+          const heading = userClean.split("\n")[0].replace(/^#+\s*/, "");
+          userClean = `[doc: ${heading.substring(0, 80)}]`;
         }
 
-        // Compress multiline text to first meaningful line + truncate
+        // Strip system-reminder tags that leak into exchange text
+        userClean = userClean.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
+        agentClean = agentClean.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
+
+        // Compress multiline text: strip code blocks, tables, collapse to key lines
         userClean = compressExchangeText(userClean, 300);
         agentClean = compressExchangeText(agentClean, 300);
+
+        if (!userClean && !agentClean) continue; // nothing left after filtering
 
         lines.push(`    USER: ${userClean}`);
         if (agentClean) lines.push(`    AGENT: ${agentClean}`);
