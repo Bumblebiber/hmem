@@ -67,17 +67,20 @@ export async function hookStartup(): Promise<void> {
   count++;
   fs.writeFileSync(counterFile, String(count), "utf8");
 
-  // Initialize session marker on first message (idempotent)
-  if (sessionId && sessionId !== "global" && hmemPath && count === 1) {
-    const existing = readSessionMarker(sessionId);
-    if (!existing) {
-      writeSessionMarker(sessionId, { projectId: null, hmemPath });
+  // Initialize session marker on first message, refresh PPID bridge on every message
+  if (sessionId && sessionId !== "global" && hmemPath) {
+    if (count === 1) {
+      const existing = readSessionMarker(sessionId);
+      if (!existing) {
+        writeSessionMarker(sessionId, { projectId: null, hmemPath });
+      }
+      try { purgeStaleSessionMarkers(7); } catch { /* ignore */ }
     }
     // Bridge for MCP server: map Claude Code's PID → our session id
+    // Written on EVERY message — PPID changes when MCP server is reconnected
     if (typeof process.ppid === "number" && process.ppid > 0) {
       writePpidMapping(process.ppid, sessionId, hmemPath);
     }
-    try { purgeStaleSessionMarkers(7); } catch { /* ignore */ }
   }
 
   // First message: load memory
