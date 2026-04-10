@@ -50,6 +50,9 @@ class McpClient:
         import os
         env = dict(os.environ)
         env["HMEM_PATH"] = hmem_path
+        # Don't inherit Claude's session ID — reader needs its own fresh session
+        # so load_project doesn't see projects already marked active by Claude.
+        env.pop("HMEM_SESSION_ID", None)
         self._proc = await asyncio.create_subprocess_exec(
             "hmem", "serve",
             stdin=asyncio.subprocess.PIPE,
@@ -503,13 +506,14 @@ class MemoryScreen(Screen):
             return
         try:
             text = await self._mcp.call_tool("load_project", {"id": rid})
-            # If session cache blocks the load (project "already active"), force
-            # a fresh read so the user always sees the full project content.
+            # If session cache blocks (project "already active"), force a fresh read.
             if "already active" in text:
                 text = await self._mcp.call_tool("read_memory", {"id": rid, "expand": True})
         except Exception as e:
             text = f"Error: {e}"
         self.query_one("#detail-pane", Static).update(escape_markup(text))
+        # Project is now active — rebuild tree so all entries (L, D, E, ...) appear.
+        await self._load_overview()
 
     async def action_memory_stats(self):
         """Show memory statistics."""
