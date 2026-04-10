@@ -1979,6 +1979,35 @@ server.tool(
         hmemStore.setActiveProject(id, currentSessionId());
         activeProjectId = id;
 
+        // Auto-reconcile: add missing schema sections to existing entry
+        const pSchemaForReconcile = hmemConfig.schemas?.P;
+        let reconcileNotice = "";
+        if (pSchemaForReconcile && pSchemaForReconcile.sections.length > 0) {
+          try {
+            const l2Entries = hmemStore.read({ id, depth: 2 });
+            if (l2Entries.length > 0 && l2Entries[0].children) {
+              const existingTitles = new Set(
+                l2Entries[0].children.map((c: any) => (c.title || c.content || "").trim().toLowerCase())
+              );
+              const missing: string[] = [];
+              for (const sec of pSchemaForReconcile.sections) {
+                if (!existingTitles.has(sec.name.toLowerCase())) {
+                  missing.push(sec.name);
+                }
+              }
+              if (missing.length > 0) {
+                for (const name of missing) {
+                  hmemStore.appendChildren(id, name);
+                }
+                reconcileNotice = `Reconciled: added sections ${missing.join(", ")}`;
+                log(`load_project: ${id} reconciled — added: ${missing.join(", ")}`);
+              }
+            }
+          } catch (e) {
+            log(`load_project: reconcile failed for ${id}: ${safeError(e)}`);
+          }
+        }
+
         // Cache check: if project was already loaded recently, return short confirmation
         const hiddenIds = sessionCache.getHiddenIds();
         if (hiddenIds.has(id)) {
@@ -2195,6 +2224,11 @@ server.tool(
             }
           }
         } catch { /* conventions are optional */ }
+
+        if (reconcileNotice) {
+          lines.push("");
+          lines.push(`  ⚡ ${reconcileNotice}`);
+        }
 
         const irrelevantTip = `Tip: update_memory(id, { irrelevant: true }) to hide noisy entries from future loads.`;
         const output = lines.join("\n");
