@@ -109,8 +109,21 @@ export interface HmemConfig {
     withBody: number[];
     withChildren: number[];
   };
+  /** Per-prefix entry schemas. Keys are prefix letters ("P", "E", etc.). */
+  schemas?: Record<string, EntrySchema>;
   /** Sync configuration — single server or array for multi-server redundancy. */
   sync?: SyncConfigBlock | SyncConfigBlock[];
+}
+
+export interface SchemaSection {
+  name: string;
+  loadDepth: number;       // 0-4
+  defaultChildren?: string[];
+}
+
+export interface EntrySchema {
+  sections: SchemaSection[];
+  createLinkedO?: boolean;
 }
 
 export interface SyncConfigBlock {
@@ -256,7 +269,7 @@ export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
 
 /** Known memory config keys — used to detect unified vs flat format. */
 const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
-  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "contextTokenThreshold", "loadProjectExpand"]);
+  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas"]);
 
 /**
  * Load hmem.config.json from projectDir.
@@ -300,6 +313,32 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
       const lpe = memoryRaw.loadProjectExpand;
       if (Array.isArray(lpe.withBody) && lpe.withBody.every((n: unknown) => typeof n === "number")) cfg.loadProjectExpand.withBody = lpe.withBody;
       if (Array.isArray(lpe.withChildren) && lpe.withChildren.every((n: unknown) => typeof n === "number")) cfg.loadProjectExpand.withChildren = lpe.withChildren;
+    }
+
+    // Entry schemas (per-prefix)
+    if (memoryRaw.schemas && typeof memoryRaw.schemas === "object" && !Array.isArray(memoryRaw.schemas)) {
+      const schemas: Record<string, EntrySchema> = {};
+      for (const [prefix, schemaRaw] of Object.entries(memoryRaw.schemas)) {
+        if (!/^[A-Z]$/.test(prefix) || !schemaRaw || typeof schemaRaw !== "object") continue;
+        const sr = schemaRaw as any;
+        if (!Array.isArray(sr.sections)) continue;
+        const validSections: SchemaSection[] = [];
+        for (const sec of sr.sections) {
+          if (!sec || typeof sec !== "object") continue;
+          if (typeof sec.name !== "string" || !sec.name) continue;
+          if (typeof sec.loadDepth !== "number" || sec.loadDepth < 0 || sec.loadDepth > 4) continue;
+          const section: SchemaSection = { name: sec.name, loadDepth: sec.loadDepth };
+          if (Array.isArray(sec.defaultChildren) && sec.defaultChildren.every((c: unknown) => typeof c === "string")) {
+            section.defaultChildren = sec.defaultChildren;
+          }
+          validSections.push(section);
+        }
+        schemas[prefix] = {
+          sections: validSections,
+          createLinkedO: sr.createLinkedO === true,
+        };
+      }
+      if (Object.keys(schemas).length > 0) cfg.schemas = schemas;
     }
 
     // Prefixes: merge user-defined with defaults (user can override or add)
