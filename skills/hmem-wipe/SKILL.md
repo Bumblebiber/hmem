@@ -56,6 +56,9 @@ needs to know what to work on next.
    - What's done vs. still open
    - Immediate next actions for the next session
    - Any blockers or decisions pending
+4. Mark completed steps as irrelevant: `update_memory(id="P00XX.N.M", irrelevant=true)` for
+   each L3 child under Next Steps that has been fully completed. This keeps the section clean
+   for the next session — irrelevant nodes are hidden from `load_project` output.
 
 Skip if Next Steps is already current (updated within the last few exchanges).
 
