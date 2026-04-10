@@ -42,7 +42,24 @@ Redundant writes waste tokens and create duplicates that clutter memory.
 Auto-checkpoints already call `read_memory` to deduplicate before writing —
 manual writes during wipe bypass that check and risk creating noise.
 
-## Step 2: Tell the user to /clear
+## Step 2: Update Next Steps
+
+Before clearing context, ensure the active project's "Next Steps" section is up to date.
+This is critical for session handoff — after /clear, the next session (or restored context)
+needs to know what to work on next.
+
+1. Find the "Next Steps" section: `read_memory(id="P00XX")` at depth 2 to list L2 children,
+   then identify the "Next Steps" node by title (seq may vary per project).
+2. Review current content: `read_memory(id="P00XX.N")` where N is the Next Steps seq.
+3. Update with current priorities: `write_memory(id="P00XX.N", content="...")` with:
+   - What was being worked on
+   - What's done vs. still open
+   - Immediate next actions for the next session
+   - Any blockers or decisions pending
+
+Skip if Next Steps is already current (updated within the last few exchanges).
+
+## Step 3: Tell the user to /clear
 
 O-entries are auto-logged by the Stop hook — every exchange is already saved
 to the active project's O-entry. No need to manually create O-entries or call
