@@ -366,7 +366,7 @@ class MemoryScreen(Screen):
         await self._load_overview()
 
     async def _load_overview(self):
-        """Fetch read_memory() overview and populate the tree."""
+        """Fetch read_memory() overview, populate tree AND detail pane."""
         try:
             text = await self._mcp.call_tool("read_memory")
         except Exception as e:
@@ -374,6 +374,14 @@ class MemoryScreen(Screen):
             return
         self.query_one("#detail-pane", Static).update(escape_markup(text))
         self._populate_tree(text)
+
+    async def _refresh_tree(self):
+        """Rebuild tree from read_memory() without touching the detail pane."""
+        try:
+            text = await self._mcp.call_tool("read_memory")
+            self._populate_tree(text)
+        except Exception:
+            pass
 
     def _populate_tree(self, text: str):
         """Parse MCP response and build the tree, grouped by prefix letter."""
@@ -512,8 +520,9 @@ class MemoryScreen(Screen):
         except Exception as e:
             text = f"Error: {e}"
         self.query_one("#detail-pane", Static).update(escape_markup(text))
-        # Project is now active — rebuild tree so all entries (L, D, E, ...) appear.
-        await self._load_overview()
+        # Project is now active — rebuild tree so L/D/E/... entries appear,
+        # but keep the project briefing in the detail pane.
+        await self._refresh_tree()
 
     async def action_memory_stats(self):
         """Show memory statistics."""
