@@ -503,6 +503,10 @@ class MemoryScreen(Screen):
             return
         try:
             text = await self._mcp.call_tool("load_project", {"id": rid})
+            # If session cache blocks the load (project "already active"), force
+            # a fresh read so the user always sees the full project content.
+            if "already active" in text:
+                text = await self._mcp.call_tool("read_memory", {"id": rid, "expand": True})
         except Exception as e:
             text = f"Error: {e}"
         self.query_one("#detail-pane", Static).update(escape_markup(text))
