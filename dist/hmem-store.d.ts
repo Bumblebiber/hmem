@@ -182,7 +182,7 @@ export interface ImportResult {
 }
 export declare class HmemStore {
     db: Database.Database;
-    private readonly dbPath;
+    readonly dbPath: string;
     getDbPath(): string;
     private readonly cfg;
     /** True if integrity_check found errors on open (read-only mode recommended). */
@@ -442,7 +442,7 @@ export declare class HmemStore {
      * file there must only ever be one active project — otherwise getActiveProject()
      * (LIMIT 1) becomes nondeterministic and log-exchange routes to the wrong O-entry.
      */
-    setActiveProject(id: string): void;
+    setActiveProject(id: string, sessionId?: string): void;
     /** Auto-resolve linked entries on an entry (extracted for reuse in chain resolution). */
     private resolveEntryLinks;
     /** Get child nodes created after a given ISO timestamp (for "new since last session" detection). */
@@ -460,7 +460,7 @@ export declare class HmemStore {
     /** @deprecated Use resolveProjectO() instead. Will be removed in v6.0. Get the active O-entry ID without creating one. Returns null if none active. */
     getActiveOId(): string | null;
     /** Get the active project entry. Returns null if none active. */
-    getActiveProject(): {
+    getActiveProject(sessionId?: string): {
         id: string;
         title: string;
     } | null;

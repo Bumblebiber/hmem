@@ -30,6 +30,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DEFAULT_CONFIG, DEFAULT_PREFIX_DESCRIPTIONS } from "./hmem-config.js";
+import { readSessionMarker, writeSessionMarker } from "./session-state.js";
 // Prefixes are now loaded from config — see this.cfg.prefixes
 // (limits are now instance-level via this.cfg.maxCharsPerLevel)
 const SCHEMA = `
@@ -2377,13 +2378,16 @@ export class HmemStore {
      * file there must only ever be one active project — otherwise getActiveProject()
      * (LIMIT 1) becomes nondeterministic and log-exchange routes to the wrong O-entry.
      */
-    setActiveProject(id) {
+    setActiveProject(id, sessionId) {
         const now = new Date().toISOString();
         const tx = this.db.transaction(() => {
             this.db.prepare("UPDATE memories SET active = 0, updated_at = ? WHERE prefix = 'P' AND active = 1 AND id != ?").run(now, id);
             this.db.prepare("UPDATE memories SET active = 1, updated_at = ? WHERE id = ?").run(now, id);
         });
         tx();
+        if (sessionId) {
+            writeSessionMarker(sessionId, { projectId: id, hmemPath: this.dbPath });
+        }
     }
     /** Auto-resolve linked entries on an entry (extracted for reuse in chain resolution). */
     resolveEntryLinks(entry, opts) {
@@ -2469,7 +2473,17 @@ export class HmemStore {
         return row?.id ?? null;
     }
     /** Get the active project entry. Returns null if none active. */
-    getActiveProject() {
+    getActiveProject(sessionId) {
+        if (sessionId) {
+            const marker = readSessionMarker(sessionId);
+            if (marker && marker.projectId) {
+                const row = this.db.prepare("SELECT id, title FROM memories WHERE id = ? AND prefix = 'P' AND obsolete != 1 LIMIT 1").get(marker.projectId);
+                if (row)
+                    return row;
+                // Marker points to non-existent/obsolete project → fall through
+            }
+            // marker is null OR marker.projectId is null → fall through to DB flag
+        }
         return this.db.prepare("SELECT id, title FROM memories WHERE prefix = 'P' AND active = 1 AND obsolete != 1 LIMIT 1").get() ?? null;
     }
     /** Get a project entry by ID. Returns null if not found or obsolete. */

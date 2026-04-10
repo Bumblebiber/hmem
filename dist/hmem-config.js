@@ -123,7 +123,7 @@ export function saveHmemConfig(projectDir, config) {
 }
 /** Known memory config keys — used to detect unified vs flat format. */
 const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
-    "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "contextTokenThreshold", "loadProjectExpand"]);
+    "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas"]);
 /**
  * Load hmem.config.json from projectDir.
  * Unknown keys are ignored. Missing keys fall back to defaults.
@@ -171,6 +171,37 @@ export function loadHmemConfig(projectDir) {
                 cfg.loadProjectExpand.withBody = lpe.withBody;
             if (Array.isArray(lpe.withChildren) && lpe.withChildren.every((n) => typeof n === "number"))
                 cfg.loadProjectExpand.withChildren = lpe.withChildren;
+        }
+        // Entry schemas (per-prefix)
+        if (memoryRaw.schemas && typeof memoryRaw.schemas === "object" && !Array.isArray(memoryRaw.schemas)) {
+            const schemas = {};
+            for (const [prefix, schemaRaw] of Object.entries(memoryRaw.schemas)) {
+                if (!/^[A-Z]$/.test(prefix) || !schemaRaw || typeof schemaRaw !== "object")
+                    continue;
+                const sr = schemaRaw;
+                if (!Array.isArray(sr.sections))
+                    continue;
+                const validSections = [];
+                for (const sec of sr.sections) {
+                    if (!sec || typeof sec !== "object")
+                        continue;
+                    if (typeof sec.name !== "string" || !sec.name)
+                        continue;
+                    if (typeof sec.loadDepth !== "number" || sec.loadDepth < 0 || sec.loadDepth > 4)
+                        continue;
+                    const section = { name: sec.name, loadDepth: sec.loadDepth };
+                    if (Array.isArray(sec.defaultChildren) && sec.defaultChildren.every((c) => typeof c === "string")) {
+                        section.defaultChildren = sec.defaultChildren;
+                    }
+                    validSections.push(section);
+                }
+                schemas[prefix] = {
+                    sections: validSections,
+                    createLinkedO: sr.createLinkedO === true,
+                };
+            }
+            if (Object.keys(schemas).length > 0)
+                cfg.schemas = schemas;
         }
         // Prefixes: merge user-defined with defaults (user can override or add)
         if (memoryRaw.prefixes && typeof memoryRaw.prefixes === "object" && !Array.isArray(memoryRaw.prefixes)) {

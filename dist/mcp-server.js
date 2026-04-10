@@ -1750,83 +1750,128 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             if (e.level_1 && e.level_1 !== e.title)
                 lines.push(`  ${e.level_1}`);
             if (e.children) {
-                const { withBody, withChildren } = hmemConfig.loadProjectExpand;
-                // Sections completely hidden from load_project output
-                const SKIP_SECTIONS = [];
-                const TAIL_SECTIONS = []; // tail-only sections (show last N children)
-                const TAIL_COUNT = 3;
-                // Sections where L3 children are hidden entirely (title-only with count)
-                const HIDE_CHILDREN_SECTIONS = [7, 9, 2]; // .7 Protocol, .9 Ideas, .2 Codebase
-                // Sections where completed items (title starts with ✓) are filtered out
-                const FILTER_DONE_SECTIONS = [8]; // .8 Open tasks
-                for (const child of e.children.filter(c => !c.irrelevant)) {
-                    if (SKIP_SECTIONS.includes(child.seq))
-                        continue;
-                    const cId = lastSeg(child.id);
-                    const expandBody = withBody.includes(child.seq);
-                    const expandChildTitles = withChildren.includes(child.seq);
-                    const hideChildren = HIDE_CHILDREN_SECTIONS.includes(child.seq);
-                    lines.push(`  ${cId}  ${cleanTitle(child.title || child.content, 60)}`);
-                    // For hidden sections: show body text but skip children
-                    // If no body and no children with content, skip the section entirely
-                    if (hideChildren) {
-                        const childCount = child.children ? child.children.filter((g) => !g.irrelevant).length : 0;
-                        if (childCount > 0) {
-                            // Replace section title with count hint
-                            lines[lines.length - 1] += ` (${childCount} entries)`;
-                        }
-                        else if (child.content && child.content !== child.title) {
-                            lines.push(`    ${child.content}`);
-                        }
-                        else {
-                            lines.pop(); // nothing to show, remove section title
-                        }
-                        continue;
+                const pSchema = hmemConfig.schemas?.P;
+                if (pSchema) {
+                    // ── Schema-driven rendering ──
+                    const sectionMap = new Map();
+                    for (const sec of pSchema.sections) {
+                        sectionMap.set(sec.name.toLowerCase(), { loadDepth: sec.loadDepth });
                     }
-                    if (child.children && child.children.length > 0) {
-                        let grandchildren = child.children.filter((g) => !g.irrelevant);
-                        // For open-tasks sections, filter out completed items
-                        if (FILTER_DONE_SECTIONS.includes(child.seq)) {
-                            grandchildren = grandchildren.filter((g) => {
-                                const t = (g.title || g.content || "").trim();
-                                return !t.startsWith("✓") && !t.startsWith("DONE");
-                            });
+                    for (const child of e.children.filter(c => !c.irrelevant)) {
+                        const childTitle = (child.title || child.content || "").trim();
+                        const match = sectionMap.get(childTitle.toLowerCase());
+                        const depth = match ? match.loadDepth : 1; // unmatched → title only
+                        if (depth === 0)
+                            continue; // skip entirely
+                        const cId = lastSeg(child.id);
+                        lines.push(`  ${cId}  ${cleanTitle(childTitle, 60)}`);
+                        if (depth === 1) {
+                            // Title only — show child count hint if present
+                            const childCount = child.children ? child.children.filter((g) => !g.irrelevant).length : 0;
+                            if (childCount > 0)
+                                lines[lines.length - 1] += ` (${childCount} entries)`;
+                            continue;
                         }
-                        // For tail sections, only show the last N children
-                        if (TAIL_SECTIONS.includes(child.seq) && grandchildren.length > TAIL_COUNT) {
-                            grandchildren = grandchildren.slice(-TAIL_COUNT);
-                        }
-                        for (const gc of grandchildren) {
-                            const gcId = lastSeg(gc.id);
-                            if (expandBody) {
-                                // Show L3 title + body content
-                                lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
-                                if (gc.content && gc.content !== gc.title) {
-                                    for (const bodyLine of gc.content.split("\n")) {
-                                        lines.push(`      ${bodyLine}`);
+                        if (child.children && child.children.length > 0) {
+                            const grandchildren = child.children.filter((g) => !g.irrelevant);
+                            for (const gc of grandchildren) {
+                                const gcId = lastSeg(gc.id);
+                                if (depth >= 3) {
+                                    // L3 title + body
+                                    lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
+                                    if (gc.content && gc.content !== gc.title) {
+                                        for (const bodyLine of gc.content.split("\n")) {
+                                            lines.push(`      ${bodyLine}`);
+                                        }
                                     }
                                 }
-                            }
-                            else {
-                                // Compact title
-                                lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
-                            }
-                            // L4 children titles
-                            if (gc.children && gc.children.length > 0) {
-                                const visibleL4 = gc.children.filter((l4) => !l4.irrelevant);
-                                for (const l4 of visibleL4) {
-                                    const l4Id = lastSeg(l4.id);
-                                    const l4Title = cleanTitle(l4.title || l4.content || "", 60);
-                                    lines.push(`      ${l4Id}  ${l4Title}`);
+                                else {
+                                    // depth === 2: L3 title only
+                                    lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
+                                }
+                                // depth >= 4: L4 children
+                                if (depth >= 4 && gc.children && gc.children.length > 0) {
+                                    for (const l4 of gc.children.filter((l4) => !l4.irrelevant)) {
+                                        lines.push(`      ${lastSeg(l4.id)}  ${cleanTitle(l4.title || l4.content || "", 60)}`);
+                                    }
+                                }
+                                else if (gc.child_count && gc.child_count > 0) {
+                                    lines.push(`      [+${gc.child_count}]`);
                                 }
                             }
-                            else if (gc.child_count && gc.child_count > 0) {
-                                lines.push(`      [+${gc.child_count}]`);
-                            }
+                        }
+                        else if (child.child_count && child.child_count > 0) {
+                            lines.push(`    [+${child.child_count}]`);
                         }
                     }
-                    else if (child.child_count && child.child_count > 0) {
-                        lines.push(`    [+${child.child_count}]`);
+                }
+                else {
+                    // ── Legacy rendering (no schema) — exact current code ──
+                    const { withBody, withChildren } = hmemConfig.loadProjectExpand;
+                    const SKIP_SECTIONS = [];
+                    const TAIL_SECTIONS = [];
+                    const TAIL_COUNT = 3;
+                    const HIDE_CHILDREN_SECTIONS = [7, 9, 2];
+                    const FILTER_DONE_SECTIONS = [8];
+                    for (const child of e.children.filter(c => !c.irrelevant)) {
+                        if (SKIP_SECTIONS.includes(child.seq))
+                            continue;
+                        const cId = lastSeg(child.id);
+                        const expandBody = withBody.includes(child.seq);
+                        const expandChildTitles = withChildren.includes(child.seq);
+                        const hideChildren = HIDE_CHILDREN_SECTIONS.includes(child.seq);
+                        lines.push(`  ${cId}  ${cleanTitle(child.title || child.content, 60)}`);
+                        if (hideChildren) {
+                            const childCount = child.children ? child.children.filter((g) => !g.irrelevant).length : 0;
+                            if (childCount > 0) {
+                                lines[lines.length - 1] += ` (${childCount} entries)`;
+                            }
+                            else if (child.content && child.content !== child.title) {
+                                lines.push(`    ${child.content}`);
+                            }
+                            else {
+                                lines.pop();
+                            }
+                            continue;
+                        }
+                        if (child.children && child.children.length > 0) {
+                            let grandchildren = child.children.filter((g) => !g.irrelevant);
+                            if (FILTER_DONE_SECTIONS.includes(child.seq)) {
+                                grandchildren = grandchildren.filter((g) => {
+                                    const t = (g.title || g.content || "").trim();
+                                    return !t.startsWith("✓") && !t.startsWith("DONE");
+                                });
+                            }
+                            if (TAIL_SECTIONS.includes(child.seq) && grandchildren.length > TAIL_COUNT) {
+                                grandchildren = grandchildren.slice(-TAIL_COUNT);
+                            }
+                            for (const gc of grandchildren) {
+                                const gcId = lastSeg(gc.id);
+                                if (expandBody) {
+                                    lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
+                                    if (gc.content && gc.content !== gc.title) {
+                                        for (const bodyLine of gc.content.split("\n")) {
+                                            lines.push(`      ${bodyLine}`);
+                                        }
+                                    }
+                                }
+                                else {
+                                    lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
+                                }
+                                if (gc.children && gc.children.length > 0) {
+                                    const visibleL4 = gc.children.filter((l4) => !l4.irrelevant);
+                                    for (const l4 of visibleL4) {
+                                        lines.push(`      ${lastSeg(l4.id)}  ${cleanTitle(l4.title || l4.content || "", 60)}`);
+                                    }
+                                }
+                                else if (gc.child_count && gc.child_count > 0) {
+                                    lines.push(`      [+${gc.child_count}]`);
+                                }
+                            }
+                        }
+                        else if (child.child_count && child.child_count > 0) {
+                            lines.push(`    [+${child.child_count}]`);
+                        }
                     }
                 }
             }

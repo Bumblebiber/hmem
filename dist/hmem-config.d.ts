@@ -105,8 +105,19 @@ export interface HmemConfig {
         withBody: number[];
         withChildren: number[];
     };
+    /** Per-prefix entry schemas. Keys are prefix letters ("P", "E", etc.). */
+    schemas?: Record<string, EntrySchema>;
     /** Sync configuration — single server or array for multi-server redundancy. */
     sync?: SyncConfigBlock | SyncConfigBlock[];
+}
+export interface SchemaSection {
+    name: string;
+    loadDepth: number;
+    defaultChildren?: string[];
+}
+export interface EntrySchema {
+    sections: SchemaSection[];
+    createLinkedO?: boolean;
 }
 export interface SyncConfigBlock {
     /** Display name for this server (optional, for multi-server identification) */
