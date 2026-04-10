@@ -1,124 +1,157 @@
 #!/usr/bin/env python3
 """
-hmem-reader — Interactive viewer for .hmem SQLite memory files
+hmem-reader v2 — Interactive TUI viewer for .hmem memory files (MCP-based)
 
 Usage:
   hmem-reader                        # agent selection screen
-  hmem-reader THOR                   # opens Agents/THOR/THOR.hmem directly
+  hmem-reader DEVELOPER              # opens Agents/DEVELOPER/DEVELOPER.hmem
   hmem-reader /path/to/file.hmem     # opens a specific file
 
-Keys:
-  r          Toggle V2 bulk-read view (what agents see on read_memory())
-  e / c      Expand / collapse all
+Keys (MemoryScreen):
+  /          Search memories
+  f          Find related entries
+  p          Load project (P-entries only)
+  i          Memory stats
+  x          Export memory (text)
+  r          Re-fetch overview
+  e / c      Expand / collapse all tree nodes
+  [ / ]      Adjust tree width (-/+ 10%)
+  Escape     Close search bar / go back
   q          Quit
-  Escape     Back to agent list
 """
 
 import sys
+import re
 import json
-import math
 import sqlite3
+import asyncio
 from pathlib import Path
-from collections import defaultdict
-from datetime import datetime, timezone
-
-
-def weighted_access_score(entry: dict) -> float:
-    """Time-weighted access score: access_count / log2(age_in_days + 2).
-    Newer entries with fewer accesses can outrank older entries."""
-    ac = entry.get("access_count", 0) or 0
-    created = entry.get("created_at", "")
-    if not created or ac == 0:
-        return 0.0
-    try:
-        age_s = (datetime.now(timezone.utc) - datetime.fromisoformat(created.replace("Z", "+00:00"))).total_seconds()
-        age_days = max(age_s / 86400, 0)
-    except Exception:
-        return float(ac)
-    return ac / math.log2(age_days + 2)
 
 from textual.app import App, ComposeResult, Screen
-from textual.widgets import Tree, Header, Footer, ListView, ListItem, Label, Static
+from textual.widgets import Tree, Header, Footer, ListView, ListItem, Label, Static, Input
+from textual.containers import Horizontal
 from textual.binding import Binding
 
-PROJECT_DIR = Path(__file__).resolve().parent / "Althing_CEO"
-
-# Built-in prefix labels — extended/overridden by hmem.config.json
-DEFAULT_PREFIX_LABELS = {
-    "P": "Projects",
-    "L": "Lessons Learned",
-    "E": "Error Patterns",
-    "D": "Decisions",
-    "T": "Tasks",
-    "M": "Milestones",
-    "S": "Skills",
-    "N": "Navigator",
-    "H": "Human",
-    "R": "Rules",
-}
-
-# V2 bulk-read defaults (must match hmem-store.ts DEFAULT_CONFIG.bulkReadV2)
-DEFAULT_V2_CONFIG = {
-    "topAccessCount": 3,
-    "topNewestCount": 5,
-    "topObsoleteCount": 3,
-}
+HMEM_BASE = Path.home() / ".hmem"
 
 
-def load_prefix_labels(db_path: Path) -> dict[str, str]:
-    """Merge built-in labels with any custom prefixes from hmem.config.json."""
-    labels = dict(DEFAULT_PREFIX_LABELS)
-    for config_dir in [db_path.parent, PROJECT_DIR]:
-        cfg = config_dir / "hmem.config.json"
-        if cfg.exists():
+# ── MCP Client ───────────────────────────────────────────────────────────────
+
+
+class McpClient:
+    """Communicate with hmem via MCP subprocess (newline-delimited JSON)."""
+
+    def __init__(self):
+        self._proc = None
+        self._next_id = 1
+
+    async def connect(self, hmem_path: str) -> dict:
+        """Spawn `hmem serve`, perform initialize handshake. Returns server info."""
+        import os
+        env = dict(os.environ)
+        env["HMEM_PATH"] = hmem_path
+        self._proc = await asyncio.create_subprocess_exec(
+            "hmem", "serve",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        result = await self._request("initialize", {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "hmem-reader", "version": "2.0"},
+        })
+        await self._notify("notifications/initialized")
+        return result
+
+    async def call_tool(self, name: str, arguments: dict | None = None) -> str:
+        """Call an MCP tool, return its text content."""
+        params = {"name": name}
+        if arguments:
+            params["arguments"] = arguments
+        result = await self._request("tools/call", params)
+        # Extract text from content array
+        contents = result.get("content", [])
+        parts = []
+        for c in contents:
+            if c.get("type") == "text":
+                parts.append(c["text"])
+        return "\n".join(parts)
+
+    def close(self):
+        """Terminate the subprocess."""
+        if self._proc and self._proc.returncode is None:
             try:
-                data = json.loads(cfg.read_text())
-                for k, v in (data.get("prefixes") or {}).items():
-                    labels[k.upper()] = v
-            except Exception:
+                self._proc.terminate()
+            except ProcessLookupError:
                 pass
-            break
-    return labels
+
+    async def _request(self, method: str, params: dict) -> dict:
+        """Send a JSON-RPC request and read the response."""
+        msg_id = self._next_id
+        self._next_id += 1
+        msg = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params}
+        await self._send(msg)
+        resp = await self._read_response()
+        if "error" in resp:
+            raise RuntimeError(f"MCP error: {resp['error']}")
+        return resp.get("result", {})
+
+    async def _notify(self, method: str, params: dict | None = None):
+        """Send a JSON-RPC notification (no response expected)."""
+        msg = {"jsonrpc": "2.0", "method": method}
+        if params:
+            msg["params"] = params
+        await self._send(msg)
+
+    async def _send(self, msg: dict):
+        """Write a newline-delimited JSON message to stdin."""
+        data = (json.dumps(msg) + "\n").encode()
+        self._proc.stdin.write(data)
+        await self._proc.stdin.drain()
+
+    async def _read_response(self) -> dict:
+        """Read a single newline-delimited JSON response from stdout."""
+        line = await asyncio.wait_for(self._proc.stdout.readline(), timeout=30)
+        if not line:
+            raise RuntimeError("MCP subprocess closed unexpectedly")
+        return json.loads(line)
 
 
-def load_v2_config(db_path: Path) -> dict:
-    """Load bulkReadV2 config from hmem.config.json."""
-    for config_dir in [db_path.parent, PROJECT_DIR]:
-        cfg = config_dir / "hmem.config.json"
-        if cfg.exists():
-            try:
-                data = json.loads(cfg.read_text())
-                v2 = data.get("bulkReadV2", {})
-                return {**DEFAULT_V2_CONFIG, **v2}
-            except Exception:
-                pass
-    return dict(DEFAULT_V2_CONFIG)
+# ── Agent Discovery ──────────────────────────────────────────────────────────
 
 
 def find_all_hmems() -> list[tuple[str, Path]]:
-    """Scan Agents/ and Assistenten/ for all .hmem files."""
+    """Scan ~/.hmem/Agents/*/ for *.hmem files, skipping dot-dirs."""
     results = []
-    for subdir in ["Agents", "Assistenten"]:
-        base = PROJECT_DIR / subdir
-        if not base.exists():
+    agents_dir = HMEM_BASE / "Agents"
+    if not agents_dir.exists():
+        return results
+    for subdir in sorted(agents_dir.iterdir()):
+        if not subdir.is_dir() or subdir.name.startswith("."):
             continue
-        for hmem_file in sorted(base.glob("*/*.hmem")):
-            agent_name = hmem_file.stem
-            results.append((agent_name, hmem_file))
+        for hmem_file in sorted(subdir.glob("*.hmem")):
+            results.append((hmem_file.stem, hmem_file))
     return results
 
 
-def resolve_path(agent_name: str) -> Path:
-    for subdir in ["Agents", "Assistenten"]:
-        p = PROJECT_DIR / subdir / agent_name / f"{agent_name}.hmem"
-        if p.exists():
-            return p
-    raise FileNotFoundError(f"No .hmem found for agent '{agent_name}'")
+def resolve_hmem_path(arg: str) -> tuple[str, Path]:
+    """Resolve a CLI argument to (agent_name, path). Accepts file path or agent name."""
+    path = Path(arg)
+    if path.exists() and path.suffix == ".hmem":
+        return (path.stem, path.resolve())
+    # Try as agent name under ~/.hmem/Agents/<name>/<name>.hmem
+    candidate = HMEM_BASE / "Agents" / arg / f"{arg}.hmem"
+    if candidate.exists():
+        return (arg, candidate)
+    raise FileNotFoundError(f"No .hmem found for '{arg}' (tried {candidate})")
 
 
 def count_entries(db_path: Path) -> int:
+    """Quick SQLite COUNT(*) — the only direct DB access in the reader."""
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(str(db_path))
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM memories WHERE (obsolete = 0 OR obsolete IS NULL) AND seq > 0")
         n = cur.fetchone()[0]
@@ -128,494 +161,125 @@ def count_entries(db_path: Path) -> int:
         return 0
 
 
-def auto_extract_title(text: str, max_len: int = 50) -> str:
-    """Extract a short title: text before ' — ' > word-boundary truncation > hard cut."""
-    if not text:
-        return ""
-    dash_idx = text.find(" — ")
-    if 0 < dash_idx <= max_len:
-        return text[:dash_idx]
-    if len(text) <= max_len:
-        return text
-    # Truncate at last word boundary before max_len
-    last_space = text.rfind(" ", 0, max_len)
-    if last_space > max_len * 0.4:
-        return text[:last_space]
-    return text[:max_len]
+# ── Response Parser ──────────────────────────────────────────────────────────
+
+# Matches root entries like: "P0048  hmem-mcp | Active..." or "  P0048 [!] ✓  Testdaten"
+# Allows optional leading whitespace (overview indents with 2 spaces)
+ENTRY_RE = re.compile(r"^\s*([A-Z]\d{4})\s+(.*)$")
+# Matches tree nodes like: "  .1  Overview"  or "    .2  Goals: ..."
+NODE_RE = re.compile(r"^(\s+)(\.(\d+))\s+(.*)$")
+# Matches bracketed sub-nodes like "    [Session 2026-04-10] ..." or "    [Rolling Summary] ..."
+# Excludes [+N] expandable markers
+BRACKET_NODE_RE = re.compile(r"^(\s+)\[([^\]+][^\]]*)\]\s*(.*)$")
+# Matches expandable markers like [+4] or [+1]
+EXPANDABLE_RE = re.compile(r"\[\+(\d+)\]")
 
 
-def load_all_data(db_path: Path) -> tuple[list[dict], list[dict], dict[str, list[dict]]]:
+class ParsedLine:
+    """Represents a parsed line from MCP response text."""
+
+    def __init__(self, entry_id: str, label: str, indent: int = 0, expandable_count: int = 0):
+        self.entry_id = entry_id
+        self.label = label
+        self.indent = indent
+        self.expandable_count = expandable_count
+
+    def __repr__(self):
+        return f"ParsedLine({self.entry_id!r}, {self.label!r}, indent={self.indent})"
+
+
+def parse_response_lines(text: str, parent_id: str = "") -> list[ParsedLine]:
+    """Parse MCP response text into structured lines.
+
+    For root entries (like P0048), set current_root to that ID.
+    For nodes (like .1), construct ID as {current_root}.{seq}.
     """
-    Load everything in 2 queries. Returns (active, obsolete, children_map).
-    children_map: parent_id → [child_nodes sorted by seq]
-    """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    lines = []
+    current_root = parent_id
+    bracket_seq = 0  # counter for bracketed sub-nodes without .N IDs
 
-    # Query 1: all root entries (excluding headers)
-    cur = conn.cursor()
-    try:
-        cur.execute("""
-            SELECT id, prefix, seq, title, level_1, created_at, min_role,
-                   COALESCE(favorite, 0)      AS favorite,
-                   COALESCE(access_count, 0)  AS access_count,
-                   COALESCE(obsolete, 0)      AS obsolete,
-                   COALESCE(irrelevant, 0)    AS irrelevant,
-                   COALESCE(active, 0)        AS active,
-                   COALESCE(secret, 0)        AS secret
-            FROM memories
-            WHERE seq > 0
-            ORDER BY prefix, seq
-        """)
-    except sqlite3.OperationalError:
-        # Old schema without newer columns
-        cur.execute("""
-            SELECT id, prefix, seq, NULL AS title, level_1, created_at, min_role,
-                   COALESCE(favorite, 0)      AS favorite,
-                   COALESCE(access_count, 0)  AS access_count,
-                   COALESCE(obsolete, 0)      AS obsolete,
-                   0 AS irrelevant, 0 AS active, 0 AS secret
-            FROM memories
-            WHERE seq > 0
-            ORDER BY prefix, seq
-        """)
-    rows = [dict(r) for r in cur.fetchall()]
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            continue
 
-    # Query 2: all nodes at once (with new columns via COALESCE for old schemas)
-    try:
-        cur.execute("""
-            SELECT *, COALESCE(favorite, 0) AS fav, COALESCE(secret, 0) AS sec,
-                   COALESCE(obsolete, 0) AS obs
-            FROM memory_nodes ORDER BY parent_id, seq
-        """)
-    except sqlite3.OperationalError:
-        cur.execute("SELECT *, 0 AS fav, 0 AS sec, 0 AS obs FROM memory_nodes ORDER BY parent_id, seq")
-    all_nodes = [dict(r) for r in cur.fetchall()]
-    conn.close()
+        # Check for root entry
+        m = ENTRY_RE.match(line)
+        if m:
+            entry_id = m.group(1)
+            label = m.group(2)
+            current_root = entry_id
+            bracket_seq = 0
+            expandable = 0
+            exp_m = EXPANDABLE_RE.search(label)
+            if exp_m:
+                expandable = int(exp_m.group(1))
+            lines.append(ParsedLine(entry_id, label, indent=0, expandable_count=expandable))
+            continue
 
-    # Build parent → children map in memory
-    children_map: dict[str, list[dict]] = defaultdict(list)
-    for node in all_nodes:
-        children_map[node["parent_id"]].append(node)
+        # Check for tree node (.N format)
+        m = NODE_RE.match(line)
+        if m:
+            indent_str = m.group(1)
+            seq = m.group(3)
+            label = m.group(4)
+            indent = len(indent_str) // 2  # 2 spaces per level
+            node_id = f"{current_root}.{seq}" if current_root else f".{seq}"
+            expandable = 0
+            exp_m = EXPANDABLE_RE.search(label)
+            if exp_m:
+                expandable = int(exp_m.group(1))
+            lines.append(ParsedLine(node_id, label, indent=indent, expandable_count=expandable))
+            continue
 
-    non_irrelevant = [r for r in rows if not r.get("irrelevant")]
-    active = [r for r in non_irrelevant if not r["obsolete"]]
-    obsolete = [r for r in non_irrelevant if r["obsolete"]]
-    return active, obsolete, children_map
+        # Check for bracketed sub-nodes like [Session ...] or [Rolling Summary]
+        m = BRACKET_NODE_RE.match(line)
+        if m:
+            indent_str = m.group(1)
+            bracket_label = m.group(2)
+            rest = m.group(3)
+            indent = len(indent_str) // 2
+            bracket_seq += 1
+            node_id = f"{current_root}.b{bracket_seq}" if current_root else f".b{bracket_seq}"
+            full_label = f"[{bracket_label}] {rest}" if rest else f"[{bracket_label}]"
+            lines.append(ParsedLine(node_id, full_label, indent=indent, expandable_count=0))
+            continue
+
+    return lines
 
 
-def compute_v2_selection(
-    active: list[dict], obsolete: list[dict], v2_config: dict
-) -> tuple[set[str], set[str], list[dict], set[str]]:
-    """
-    Compute V2 bulk-read selection.
-    Returns (expanded_ids, promoted_ids, visible_obsolete, active_prefixes).
-    active_prefixes: prefixes where at least one entry has active=1.
-    """
-    expanded_ids = set()
-    promoted_ids = set()
-
-    # Detect active-prefixes
-    active_prefixes = set()
-    for e in active:
-        if e.get("active"):
-            active_prefixes.add(e["prefix"])
-
-    # Group by prefix
-    by_prefix: dict[str, list[dict]] = defaultdict(list)
-    for e in active:
-        by_prefix[e["prefix"]].append(e)
-
-    for prefix, entries in by_prefix.items():
-        # In active-prefixes, only active entries compete for expansion slots
-        candidates = [e for e in entries if e.get("active")] if prefix in active_prefixes else entries
-
-        # Top N newest (by created_at DESC)
-        newest = sorted(candidates, key=lambda e: e["created_at"] or "", reverse=True)
-        for e in newest[: v2_config["topNewestCount"]]:
-            expanded_ids.add(e["id"])
-
-        # Top M most-accessed (time-weighted)
-        most_accessed = sorted(
-            [e for e in candidates if e["access_count"] > 0],
-            key=weighted_access_score,
-            reverse=True,
-        )[: v2_config["topAccessCount"]]
-        for e in most_accessed:
-            expanded_ids.add(e["id"])
-            promoted_ids.add(e["id"])
-
-    # All favorites + all active entries
-    for e in active:
-        if e.get("favorite"):
-            expanded_ids.add(e["id"])
-        if e.get("active"):
-            expanded_ids.add(e["id"])
-
-    # Top K obsolete (time-weighted)
-    visible_obsolete = sorted(
-        obsolete, key=weighted_access_score, reverse=True
-    )[: v2_config["topObsoleteCount"]]
-
-    return expanded_ids, promoted_ids, visible_obsolete, active_prefixes
-
-
-def estimate_tokens(text: str) -> int:
-    """Rough token estimate: ~4 characters per token (works for English/German mix)."""
-    return len(text) // 4 if text else 0
-
-
-def count_all_tokens(active: list[dict], obsolete: list[dict], children_map: dict[str, list[dict]]) -> int:
-    """Count total tokens across all entries and all nodes recursively."""
-    total = 0
-    for entry in active + obsolete:
-        total += estimate_tokens(entry.get("level_1", ""))
-    for nodes in children_map.values():
-        for node in nodes:
-            total += estimate_tokens(node.get("content", ""))
-    return total
-
-
-def count_shown_tokens(
-    shown_entries: list[dict],
-    children_map: dict[str, list[dict]],
-    v2_config: dict | None = None,
-) -> int:
-    """Count tokens for shown entries + their visible children (respecting V2 caps)."""
-    total = 0
-    for entry in shown_entries:
-        total += estimate_tokens(entry.get("level_1", ""))
-        children = children_map.get(entry["id"], [])
-        if v2_config and children and len(children) > v2_config["topNewestCount"]:
-            # Apply same V2 selection as the tree builder
-            newest = sorted(children, key=lambda c: c.get("created_at") or "", reverse=True)
-            newest_ids = {c["id"] for c in newest[: v2_config["topNewestCount"]]}
-            access_ids = {
-                c["id"]
-                for c in sorted(
-                    [c for c in children if c.get("access_count", 0) > 0],
-                    key=weighted_access_score,
-                    reverse=True,
-                )[: v2_config["topAccessCount"]]
-            }
-            children = [c for c in children if c["id"] in newest_ids | access_ids]
-        total += _count_subtree_tokens(children, children_map)
-    return total
-
-
-def _count_subtree_tokens(nodes: list[dict], children_map: dict[str, list[dict]]) -> int:
-    """Recursively count tokens for a list of nodes and their descendants."""
-    total = 0
-    for node in nodes:
-        total += estimate_tokens(node.get("content", ""))
-        grandchildren = children_map.get(node["id"], [])
-        if grandchildren:
-            total += _count_subtree_tokens(grandchildren, children_map)
-    return total
-
-
-def fmt_tokens(n: int) -> str:
-    """Format token count: 1234 → '1.2k', 56789 → '57k'."""
-    if n < 1000:
-        return str(n)
-    elif n < 10_000:
-        return f"{n / 1000:.1f}k"
-    else:
-        return f"{n // 1000}k"
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 
 def escape_markup(text: str) -> str:
-    """Escape Rich markup characters in text to prevent parse errors."""
+    """Escape Rich markup characters so Tree widget renders them literally."""
     return text.replace("[", "\\[")
 
 
-def node_title(node: dict) -> str:
-    """Get node title (from DB or auto-extracted from content)."""
-    return node.get("title") or auto_extract_title(node.get("content", ""))
+def root_id(entry_id: str) -> str:
+    """Extract root ID from a node ID: 'P0048.1.2' -> 'P0048'."""
+    return entry_id.split(".")[0]
 
 
-def node_markers(node: dict) -> str:
-    """Build marker string for a memory_node: [♥], [!], [s]."""
-    fav = " [♥]" if node.get("fav") or node.get("favorite") else ""
-    obs = " [!]" if node.get("obs") or node.get("obsolete") else ""
-    sec = " [s]" if node.get("sec") or node.get("secret") else ""
-    return f"{fav}{obs}{sec}"
-
-
-def add_node_to_tree(parent, node: dict, children_map: dict[str, list[dict]]):
-    """Recursively add a memory_node and its children from in-memory map."""
-    title = escape_markup(node_title(node))
-    markers = node_markers(node)
-    label = f"\\[{node['id']}]{markers} {title}"
-    content = node.get("content", "")
-    children = children_map.get(node["id"], [])
-    if children:
-        tree_node = parent.add(label, data=content)
-        for child in children:
-            add_node_to_tree(tree_node, child, children_map)
-    else:
-        parent.add_leaf(label, data=content)
-
-
-def entry_title(entry: dict) -> str:
-    """Get entry title (from DB or auto-extracted from level_1)."""
-    return entry.get("title") or auto_extract_title(entry.get("level_1", ""))
-
-
-def entry_label(entry: dict, v2_mode: bool = False) -> str:
-    date = entry["created_at"][:10] if entry["created_at"] else ""
-    mmdd = date[5:] if date else ""
-    role_tag = f" [{entry['min_role']}+]" if entry["min_role"] != "worker" else ""
-    favorite_tag = " [♥]" if entry.get("favorite") else ""
-    promoted_tag = " [★]" if entry.get("_promoted") else ""
-    obsolete_tag = " [!]" if entry.get("obsolete") else ""
-    active_tag = " [*]" if entry.get("active") else ""
-    secret_tag = " [s]" if entry.get("secret") else ""
-    irrelevant_tag = " [-]" if entry.get("irrelevant") else ""
-    title = escape_markup(entry_title(entry))
-
-    markers = f"{favorite_tag}{promoted_tag}{obsolete_tag}{active_tag}{secret_tag}{irrelevant_tag}"
-    if v2_mode:
-        # MCP-style compact: ID MM-DD [markers]  title
-        return f"{entry['id']} {mmdd}{markers}  {title}"
-    else:
-        # Full view: [ID] date [role] [markers]  title
-        return f"\\[{entry['id']}] {date}{role_tag}{markers}  {title}"
-
-
-def add_entry_to_tree(
-    parent, entry: dict, children_map: dict[str, list[dict]],
-    v2_mode: bool = False, v2_config: dict | None = None,
-):
-    label = entry_label(entry, v2_mode)
-    children = children_map.get(entry["id"], [])
-
-    # V2 mode: cap L2 children (top N newest + top M most-accessed)
-    if v2_config and children and len(children) > v2_config["topNewestCount"]:
-        newest = sorted(children, key=lambda c: c.get("created_at") or "", reverse=True)
-        newest_ids = {c["id"] for c in newest[: v2_config["topNewestCount"]]}
-        access_ids = {
-            c["id"]
-            for c in sorted(
-                [c for c in children if c.get("access_count", 0) > 0],
-                key=weighted_access_score,
-                reverse=True,
-            )[: v2_config["topAccessCount"]]
-        }
-        selected_ids = newest_ids | access_ids
-        selected = [c for c in children if c["id"] in selected_ids]
-        hidden = len(children) - len(selected)
-        children = selected
-    else:
-        hidden = 0
-
-    content = entry.get("level_1", "")
-    if children:
-        node = parent.add(label, data=content)
-        for child in children:
-            add_node_to_tree(node, child, children_map)
-        if hidden > 0:
-            node.add_leaf(f"\\[+{hidden} more → {entry['id']}]")
-    else:
-        parent.add_leaf(label, data=content)
-
-
-# ── Memory detail screen ───────────────────────────────────────────────────
-
-
-class MemoryScreen(Screen):
-    BINDINGS = [
-        Binding("q", "app.quit", "Quit"),
-        Binding("escape,backspace", "app.pop_screen", "Back"),
-        Binding("e", "expand_all", "Expand all"),
-        Binding("c", "collapse_all", "Collapse all"),
-        Binding("r", "toggle_v2", "V2 Read"),
-    ]
-    CSS = """
-        Tree { height: 1fr; padding: 0 1; }
-        #detail {
-            height: 7;
-            border-top: solid $primary;
-            padding: 0 1;
-            overflow-y: auto;
-            color: $text-muted;
-        }
-    """
-
-    def __init__(self, agent_name: str, db_path: Path):
-        super().__init__()
-        self.agent_name = agent_name
-        self.db_path = db_path
-        self.v2_mode = False
-
-    def compose(self) -> ComposeResult:
-        yield Header()
-        yield Tree(self.agent_name)
-        yield Static("", id="detail")
-        yield Footer()
-
-    def on_mount(self):
-        self.rebuild_tree()
-
-    def on_tree_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
-        content = event.node.data or ""
-        self.query_one("#detail", Static).update(escape_markup(content))
-
-    def action_toggle_v2(self):
-        self.v2_mode = not self.v2_mode
-        self.rebuild_tree()
-
-    def rebuild_tree(self):
-        tree = self.query_one(Tree)
-        tree.root.remove_children()
-
-        active, obsolete, children_map = load_all_data(self.db_path)
-        prefix_labels = load_prefix_labels(self.db_path)
-
-        if not active and not obsolete:
-            tree.root.label = f"{self.agent_name}  —  (empty)"
-            tree.root.add_leaf("No memories yet.")
-            return
-
-        if self.v2_mode:
-            self._build_v2_tree(tree, active, obsolete, prefix_labels, children_map)
-        else:
-            self._build_full_tree(tree, active, obsolete, prefix_labels, children_map)
-
-        tree.root.expand()
-
-    # ── Full view (all entries) ───────────────────────────────────────────
-
-    def _build_full_tree(self, tree, active, obsolete, prefix_labels, children_map):
-        # Global top-N promotion for [★] marker (time-weighted)
-        sorted_by_access = sorted(
-            [r for r in active if r["access_count"] > 0],
-            key=weighted_access_score,
-            reverse=True,
-        )
-        promoted_ids = {r["id"] for r in sorted_by_access[:5]}
-        for r in active:
-            r["_promoted"] = r["id"] in promoted_ids
-
-        total_tok = count_all_tokens(active, obsolete, children_map)
-        hidden_note = f"  +{len(obsolete)} obsolete hidden" if obsolete else ""
-        tree.root.label = f"{self.agent_name}  —  {len(active)} entries{hidden_note}  [{fmt_tokens(total_tok)} tokens total]"
-
-        groups: dict[str, list] = defaultdict(list)
-        for e in active:
-            groups[e["prefix"]].append(e)
-
-        for prefix in sorted(groups.keys()):
-            entries = groups[prefix]
-            label_name = prefix_labels.get(prefix, prefix)
-            group_node = tree.root.add(f"{prefix}  —  {label_name}  ({len(entries)})")
-            for entry in entries:
-                add_entry_to_tree(group_node, entry, children_map)
-
-        if obsolete:
-            obs_node = tree.root.add(f"⚠  Obsolete  ({len(obsolete)})")
-            obs_node.collapse()
-            for entry in obsolete:
-                add_entry_to_tree(obs_node, entry, children_map)
-
-    # ── V2 bulk-read view (what agents see) ───────────────────────────────
-
-    def _build_v2_tree(self, tree, active, obsolete, prefix_labels, children_map):
-        v2_config = load_v2_config(self.db_path)
-        expanded_ids, promoted_ids, visible_obsolete, active_prefixes = compute_v2_selection(
-            active, obsolete, v2_config
-        )
-
-        # Set markers
-        for r in active:
-            r["_promoted"] = r["id"] in promoted_ids
-
-        v2_active = [e for e in active if e["id"] in expanded_ids]
-        # Non-active entries in active-prefixes: shown as compact titles (not expanded)
-        non_active_visible = [
-            e for e in active
-            if e["prefix"] in active_prefixes and not e.get("active") and e["id"] not in expanded_ids
-        ]
-        total = len(active) + len(obsolete)
-        shown = len(v2_active) + len(non_active_visible) + len(visible_obsolete)
-        total_tok = count_all_tokens(active, obsolete, children_map)
-        shown_tok = count_shown_tokens(v2_active + visible_obsolete, children_map, v2_config)
-        tree.root.label = f"{self.agent_name}  —  V2 Read  ({shown}/{total} shown)  [{fmt_tokens(shown_tok)}/{fmt_tokens(total_tok)} tokens]"
-
-        # Count totals per prefix (from all active)
-        total_by_prefix: dict[str, int] = defaultdict(int)
-        for e in active:
-            total_by_prefix[e["prefix"]] += 1
-
-        # Build groups: expanded + non-active visible
-        all_visible = v2_active + non_active_visible
-        groups: dict[str, list] = defaultdict(list)
-        for e in all_visible:
-            groups[e["prefix"]].append(e)
-
-        for prefix in sorted(groups.keys()):
-            entries = groups[prefix]
-            label_name = prefix_labels.get(prefix, prefix)
-            total_count = total_by_prefix[prefix]
-            group_node = tree.root.add(
-                f"{prefix}  —  {label_name}  ({len(entries)}/{total_count} shown)"
-            )
-            for entry in entries:
-                is_expanded = entry["id"] in expanded_ids
-                if is_expanded:
-                    add_entry_to_tree(group_node, entry, children_map, v2_mode=True, v2_config=v2_config)
-                else:
-                    # Non-active compact title (leaf, no children)
-                    group_node.add_leaf(entry_label(entry, v2_mode=True))
-
-        if visible_obsolete:
-            for e in visible_obsolete:
-                e["_promoted"] = False
-            obs_node = tree.root.add(
-                f"⚠  Obsolete  ({len(visible_obsolete)}/{len(obsolete)} shown)"
-            )
-            for entry in visible_obsolete:
-                add_entry_to_tree(obs_node, entry, children_map, v2_mode=True, v2_config=v2_config)
-
-        # Auto-expand to match MCP output: groups + entries visible, L3+ collapsed
-        for group_node in tree.root.children:
-            group_node.expand()
-            for entry_node in group_node.children:
-                entry_node.expand()
-
-    # ── Tree actions ──────────────────────────────────────────────────────
-
-    def action_expand_all(self):
-        for node in self.query_one(Tree).root.children:
-            node.expand_all()
-
-    def action_collapse_all(self):
-        for node in self.query_one(Tree).root.children:
-            node.collapse_all()
-
-
-# ── Agent selection screen ─────────────────────────────────────────────────
+# ── Agent List Screen ────────────────────────────────────────────────────────
 
 
 class AgentListScreen(Screen):
     BINDINGS = [
         Binding("q", "app.quit", "Quit"),
-        Binding("enter", "select", "Open"),
     ]
     CSS = "ListView { height: 1fr; padding: 0 1; }"
 
     def __init__(self, agents: list[tuple[str, Path]]):
         super().__init__()
-        self.agents = agents  # [(name, path), ...]
+        self.agents = agents
 
     def compose(self) -> ComposeResult:
         yield Header()
         items = []
         for name, path in self.agents:
             n = count_entries(path)
-            subdir = path.parent.parent.name  # "Agents" or "Assistenten"
-            tag = "A" if subdir == "Assistenten" else " "
-            items.append(ListItem(Label(f"[{tag}] {name:<20}  {n:>3} entries")))
+            items.append(ListItem(Label(f"  {name:<20}  {n:>3} entries")))
         yield ListView(*items)
         yield Footer()
 
@@ -626,15 +290,262 @@ class AgentListScreen(Screen):
         name, path = self.agents[idx]
         self.app.push_screen(MemoryScreen(name, path))
 
-    def action_select(self):
-        idx = self.query_one(ListView).index
-        if idx is None:
+
+# ── Memory Screen (split-view) ──────────────────────────────────────────────
+
+
+class MemoryScreen(Screen):
+    BINDINGS = [
+        Binding("q", "app.quit", "Quit"),
+        Binding("escape", "go_back", "Back / Close"),
+        Binding("e", "expand_all", "Expand all"),
+        Binding("c", "collapse_all", "Collapse all"),
+        Binding("r", "refresh", "Refresh"),
+        Binding("slash", "toggle_search", "Search"),
+        Binding("f", "find_related", "Related"),
+        Binding("p", "load_project", "Project"),
+        Binding("i", "memory_stats", "Stats"),
+        Binding("x", "export_memory", "Export"),
+        Binding("left_square_bracket", "shrink_tree", "Tree -"),
+        Binding("right_square_bracket", "grow_tree", "Tree +"),
+    ]
+
+    CSS = """
+        #split {
+            height: 1fr;
+        }
+        #tree-pane {
+            width: 40%;
+            min-width: 20;
+        }
+        #detail-pane {
+            width: 1fr;
+            border-left: solid $primary;
+            padding: 0 1;
+            overflow-y: auto;
+        }
+        #search-bar {
+            dock: bottom;
+            display: none;
+        }
+    """
+
+    def __init__(self, agent_name: str, db_path: Path):
+        super().__init__()
+        self.agent_name = agent_name
+        self.db_path = db_path
+        self._mcp: McpClient | None = None
+        self._tree_width_pct = 40
+        self._selected_id: str = ""
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Horizontal(id="split"):
+            yield Tree(self.agent_name, id="tree-pane")
+            yield Static("Select an entry to view details.", id="detail-pane")
+        yield Input(placeholder="Search...", id="search-bar")
+        yield Footer()
+
+    async def on_mount(self):
+        self._mcp = McpClient()
+        try:
+            await self._mcp.connect(str(self.db_path))
+        except Exception as e:
+            self.query_one("#detail-pane", Static).update(f"MCP connection failed: {e}")
             return
-        name, path = self.agents[idx]
-        self.app.push_screen(MemoryScreen(name, path))
+        await self._load_overview()
+
+    async def _load_overview(self):
+        """Fetch read_memory() overview and populate the tree."""
+        try:
+            text = await self._mcp.call_tool("read_memory")
+        except Exception as e:
+            self.query_one("#detail-pane", Static).update(f"Error: {e}")
+            return
+        self.query_one("#detail-pane", Static).update(escape_markup(text))
+        self._populate_tree(text)
+
+    def _populate_tree(self, text: str):
+        """Parse MCP response and build the tree, grouped by prefix letter."""
+        tree = self.query_one("#tree-pane", Tree)
+        tree.root.remove_children()
+        tree.root.label = self.agent_name
+
+        parsed = parse_response_lines(text)
+        if not parsed:
+            tree.root.add_leaf("(empty)")
+            tree.root.expand()
+            return
+
+        # Group root entries by prefix letter (skip indented nodes — loaded on select)
+        groups: dict[str, list[ParsedLine]] = {}
+        for pl in parsed:
+            if pl.indent == 0:
+                prefix = pl.entry_id[0] if pl.entry_id else "?"
+                if prefix not in groups:
+                    groups[prefix] = []
+                groups[prefix].append(pl)
+
+        for prefix in sorted(groups.keys()):
+            entries = groups[prefix]
+            group_node = tree.root.add(f"{prefix} ({len(entries)})", data=None)
+            for pl in entries:
+                label = escape_markup(pl.label)
+                if pl.expandable_count > 0:
+                    node = group_node.add(f"{pl.entry_id}  {label}", data=pl.entry_id)
+                    node.allow_expand = True
+                else:
+                    group_node.add(f"{pl.entry_id}  {label}", data=pl.entry_id)
+
+        tree.root.expand()
+        for child in tree.root.children:
+            child.expand()
+
+    async def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        """When a tree node is selected, fetch its details via MCP."""
+        entry_id = event.node.data
+        if not entry_id:
+            return
+        self._selected_id = entry_id
+
+        try:
+            text = await self._mcp.call_tool("read_memory", {"id": root_id(entry_id)})
+        except Exception as e:
+            self.query_one("#detail-pane", Static).update(f"Error: {e}")
+            return
+
+        self.query_one("#detail-pane", Static).update(escape_markup(text))
+
+        # Add child nodes to tree if not already populated
+        if not event.node.children:
+            parsed = parse_response_lines(text, parent_id=root_id(entry_id))
+            for pl in parsed:
+                if pl.indent > 0 and pl.entry_id.startswith(root_id(entry_id)):
+                    label = escape_markup(pl.label)
+                    child_label = f"{pl.entry_id}  {label}"
+                    if pl.expandable_count > 0:
+                        child = event.node.add(child_label, data=pl.entry_id)
+                        child.allow_expand = True
+                    else:
+                        event.node.add_leaf(child_label, data=pl.entry_id)
+            event.node.expand()
+
+    # ── Keybinding Actions ───────────────────────────────────────────────
+
+    def action_toggle_search(self):
+        """Toggle search bar visibility and focus."""
+        search = self.query_one("#search-bar", Input)
+        if search.display:
+            search.display = False
+            self.query_one("#tree-pane", Tree).focus()
+        else:
+            search.display = True
+            search.value = ""
+            search.focus()
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Run search_memory when search input is submitted."""
+        query = event.value.strip()
+        if not query or not self._mcp:
+            return
+        try:
+            text = await self._mcp.call_tool("search_memory", {"query": query})
+        except Exception as e:
+            text = f"Search error: {e}"
+        self.query_one("#detail-pane", Static).update(escape_markup(text))
+        # Hide search bar after submission
+        search = self.query_one("#search-bar", Input)
+        search.display = False
+        self.query_one("#tree-pane", Tree).focus()
+
+    async def action_find_related(self):
+        """Find entries related to the currently selected root entry."""
+        if not self._selected_id or not self._mcp:
+            return
+        rid = root_id(self._selected_id)
+        try:
+            text = await self._mcp.call_tool("find_related", {"id": rid})
+        except Exception as e:
+            text = f"Error: {e}"
+        self.query_one("#detail-pane", Static).update(escape_markup(text))
+
+    async def action_load_project(self):
+        """Load project details (only for P-entries)."""
+        if not self._selected_id or not self._mcp:
+            return
+        rid = root_id(self._selected_id)
+        if not rid.startswith("P"):
+            self.query_one("#detail-pane", Static).update(
+                "load_project only works on P-entries. Select a project entry first."
+            )
+            return
+        try:
+            text = await self._mcp.call_tool("load_project", {"id": rid})
+        except Exception as e:
+            text = f"Error: {e}"
+        self.query_one("#detail-pane", Static).update(escape_markup(text))
+
+    async def action_memory_stats(self):
+        """Show memory statistics."""
+        if not self._mcp:
+            return
+        try:
+            text = await self._mcp.call_tool("memory_stats")
+        except Exception as e:
+            text = f"Error: {e}"
+        self.query_one("#detail-pane", Static).update(escape_markup(text))
+
+    async def action_export_memory(self):
+        """Export memory as text."""
+        if not self._mcp:
+            return
+        try:
+            text = await self._mcp.call_tool("export_memory", {"format": "text"})
+        except Exception as e:
+            text = f"Error: {e}"
+        self.query_one("#detail-pane", Static).update(escape_markup(text))
+
+    async def action_refresh(self):
+        """Re-fetch overview."""
+        await self._load_overview()
+
+    def action_go_back(self):
+        """Close search bar or go back to agent list."""
+        search = self.query_one("#search-bar", Input)
+        if search.display:
+            search.display = False
+            self.query_one("#tree-pane", Tree).focus()
+        else:
+            self.app.pop_screen()
+
+    def action_shrink_tree(self):
+        """Decrease tree pane width by 10%."""
+        self._tree_width_pct = max(20, self._tree_width_pct - 10)
+        self.query_one("#tree-pane", Tree).styles.width = f"{self._tree_width_pct}%"
+
+    def action_grow_tree(self):
+        """Increase tree pane width by 10%."""
+        self._tree_width_pct = min(80, self._tree_width_pct + 10)
+        self.query_one("#tree-pane", Tree).styles.width = f"{self._tree_width_pct}%"
+
+    def action_expand_all(self):
+        tree = self.query_one("#tree-pane", Tree)
+        for node in tree.root.children:
+            node.expand_all()
+
+    def action_collapse_all(self):
+        tree = self.query_one("#tree-pane", Tree)
+        for node in tree.root.children:
+            node.collapse_all()
+
+    def on_unmount(self):
+        """Clean up MCP client when screen is removed."""
+        if self._mcp:
+            self._mcp.close()
+            self._mcp = None
 
 
-# ── App ────────────────────────────────────────────────────────────────────
+# ── App Shell ────────────────────────────────────────────────────────────────
 
 
 class HmemApp(App):
@@ -648,27 +559,22 @@ class HmemApp(App):
         self.push_screen(self._start_screen)
 
 
-# ── Entry point ────────────────────────────────────────────────────────────
+# ── Entry Point ──────────────────────────────────────────────────────────────
 
 
 def main():
     if len(sys.argv) > 1:
         arg = sys.argv[1]
-        path = Path(arg)
-        if path.exists() and path.suffix == ".hmem":
-            db_path, agent_name = path, path.stem
-        else:
-            try:
-                db_path = resolve_path(arg)
-                agent_name = arg
-            except FileNotFoundError as e:
-                print(f"Error: {e}")
-                sys.exit(1)
+        try:
+            agent_name, db_path = resolve_hmem_path(arg)
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
         screen = MemoryScreen(agent_name, db_path)
     else:
         agents = find_all_hmems()
         if not agents:
-            print(f"No .hmem files found under {PROJECT_DIR}")
+            print(f"No .hmem files found under {HMEM_BASE}")
             sys.exit(1)
         screen = AgentListScreen(agents)
 
