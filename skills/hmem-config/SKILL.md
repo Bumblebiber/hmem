@@ -1,25 +1,19 @@
 ---
 name: hmem-config
-description: >
-  View and change hmem memory settings, hooks, sync, and checkpoint configuration.
-  Use this skill whenever the user types /hmem-config, asks to change memory settings,
-  adjust parameters, tune bulk-read behavior, configure auto-checkpoints, manage
-  hmem-sync, or troubleshoot memory-related issues. Also trigger when the user asks
-  things like "how often does auto-save fire", "why is my context so large",
-  "change checkpoint to auto", "how many tokens does startup cost", or "set up sync".
+description: "View and change hmem memory settings, hooks, sync, and checkpoint configuration. Use this skill whenever the user types /hmem-config, asks to change memory settings, adjust parameters, tune bulk-read behavior, configure auto-checkpoints, manage hmem-sync, or troubleshoot memory-related issues. Also trigger when the user asks things like 'how often does auto-save fire', 'why is my context so large', 'change checkpoint to auto', 'how many tokens does startup cost', or 'set up sync'."
 ---
 
 # hmem-config — View and Change Settings
 
-This skill guides you through reading, explaining, and updating hmem's configuration. The config controls how memory is stored, displayed, checkpointed, and synced across devices.
+This skill guides the agent through reading, explaining, and updating hmem's configuration. The config controls how memory is stored, displayed, checkpointed, and synced across devices.
 
 ## Locate and read the config
 
-The config lives at `hmem.config.json` in the same directory as your .hmem file. Located at `~/.hmem/hmem.config.json` (in the same directory as your .hmem file).
+Config path: `~/.hmem/hmem.config.json` (same directory as the .hmem file).
 
-Read the file directly — don't ask the user where it is. If it doesn't exist, offer to create one (only non-default values need to be specified).
+Read the file directly — do not ask the user where it is. If it does not exist, offer to create one with only non-default values.
 
-The config uses a unified format with a `"memory"` block and an optional `"sync"` block:
+The config uses a `"memory"` block and an optional `"sync"` block:
 
 ```json
 {
@@ -30,107 +24,64 @@ The config uses a unified format with a `"memory"` block and an optional `"sync"
 
 ## Show current settings
 
-Present a table of current values vs. defaults. Only highlight values that differ from defaults — the user cares about what they've customized, not the full list.
+Present a table of current values vs. defaults. Only highlight values that differ from defaults.
 
 ### Core parameters
 
-| Parameter | Default | Purpose |
-|-----------|---------|---------|
-| `maxCharsPerLevel` | [200, 2500, 10000, 25000, 50000] | Character limits per tree level [L1–L5]. L1 is always loaded at startup, so keeping it short saves tokens across every session. L5 is raw data, rarely accessed. |
-| `maxDepth` | 5 | Tree depth (1–5). Most users need 5. Lower values save storage but lose granularity. |
-| `defaultReadLimit` | 100 | Max entries per bulk read. Lower = faster startup, higher = more complete overview. |
-| `maxTitleChars` | 50 | Auto-extracted title length. Only applies to entries without explicit body separation — entries with a blank-line body use the first line as title verbatim. Titles are navigation labels — too short truncates meaning, too long wastes space. |
-| `accessCountTopN` | 5 | Entries with highest access count get [★] and auto-expand in bulk reads. These are "organic favorites" — the things the agent keeps coming back to. |
+| Parameter | Default | Range |
+|-----------|---------|-------|
+| `maxCharsPerLevel` | [200, 2500, 10000, 25000, 50000] | L1: 60–300, L5: 1000–100000 |
+| `maxDepth` | 5 | 2–5 |
+| `defaultReadLimit` | 100 | Positive integer |
+| `maxTitleChars` | 50 | Positive integer |
+| `accessCountTopN` | 5 | Positive integer |
+
+- `maxCharsPerLevel`: Character limits per tree level [L1–L5]. L1 loads at every startup — keep it short to save tokens. L5 is raw data, rarely accessed.
+- `accessCountTopN`: Entries with highest access count get [★] and auto-expand in bulk reads.
 
 ### Checkpoint and session parameters (v5+)
 
-These control the automatic knowledge extraction pipeline:
+| Parameter | Default | Range |
+|-----------|---------|-------|
+| `checkpointMode` | `"remind"` | `"auto"` or `"remind"` |
+| `checkpointInterval` | 20 | 0–100 |
+| `recentOEntries` | 10 | 0–20 |
+| `contextTokenThreshold` | 100000 | 0–500000 |
 
-| Parameter | Default | Purpose |
-|-----------|---------|---------|
-| `checkpointMode` | `"remind"` | **`"auto"`** spawns a Haiku subagent in the background every N exchanges — it reads the conversation, extracts lessons/errors/decisions, and writes them via MCP tools. The main agent is never interrupted. **`"remind"`** injects a prompt asking the main agent to save manually — simpler but interrupts flow. |
-| `checkpointInterval` | 20 | Exchanges between checkpoints. Counted in the active O-entry, not per session — so 10 messages on your laptop + 10 on your server = checkpoint fires at 20. Set to 0 to disable. |
-| `recentOEntries` | 10 | How many recent session logs to show when loading a project. All entries include full user/agent exchanges (L4/L5), not just titles. Higher = more context but more tokens at project load. |
-| `contextTokenThreshold` | 100000 | When cumulative hmem output exceeds this, the agent is told to flush context and /clear. Prevents runaway token usage in long sessions. Set to 0 to disable. |
+- `checkpointMode`: `"auto"` spawns a Haiku subagent in the background every N exchanges to extract lessons/errors/decisions via MCP tools without interrupting the main agent. `"remind"` injects a prompt asking the main agent to save manually.
+- `checkpointInterval`: Counted in the active O-entry, not per session. Set to 0 to disable.
+- `recentOEntries`: Recent session logs shown at project load. Higher = more context but more tokens.
+- `contextTokenThreshold`: When cumulative hmem output exceeds this, the agent flushes context and /clear. Set to 0 to disable.
 
 ### Entry schemas (v6.3.0+)
 
-Define per-prefix section schemas that control `create_project` structure and `load_project` rendering depth. When a schema is defined, it replaces the hardcoded R0009 sections and the `loadProjectExpand` settings.
-
-```json
-{
-  "memory": {
-    "schemas": {
-      "P": {
-        "sections": [
-          { "name": "Overview",    "loadDepth": 3, "defaultChildren": ["Current state", "Goals", "Environment"] },
-          { "name": "Codebase",    "loadDepth": 1 },
-          { "name": "Protocol",    "loadDepth": 0 },
-          { "name": "Next Steps",  "loadDepth": 3 }
-        ],
-        "createLinkedO": true
-      }
-    }
-  }
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `sections[].name` | string | L2 section title. Used for matching during auto-reconcile (case-insensitive). |
-| `sections[].loadDepth` | 0-4 | 0=skip, 1=title only, 2=+L3 titles, 3=+L3 body, 4=full subtree |
-| `sections[].defaultChildren` | string[] | L3 nodes created by `create_project`. Optional. |
-| `createLinkedO` | boolean | Auto-create matching O-entry on `create_project`. Default: false. |
-
-**Auto-reconcile:** On every `load_project`, missing schema sections are automatically added as empty L2 nodes. Extra sections not in the schema are kept (loaded at depth 1).
-
-**No schema defined:** Falls back to hardcoded R0009 behavior and `loadProjectExpand` settings.
-
-### load_project display (legacy, pre-v6.3.0)
-
-Only used when no `schemas` entry exists for the prefix. Controls which P-entry sections are expanded:
-
-| Parameter | Default | Purpose |
-|-----------|---------|---------|
-| `loadProjectExpand.withBody` | `[1]` | L2 section seq numbers where L3 children show title + body content. Default: `.1 Overview` — shows full architecture/state/goals detail. |
-| `loadProjectExpand.withChildren` | `[6, 8]` | L2 section seq numbers where all L3 children are listed as titles. Default: `.6 Bugs`, `.8 Open Tasks` — all items visible at a glance. |
-
-Sections not in either list show L3 titles only in compact mode.
+See [references/SCHEMAS.md](references/SCHEMAS.md) for schema definitions, field reference, auto-reconcile behavior, and legacy `loadProjectExpand` settings.
 
 ### Bulk-read tuning
 
-The bulk-read algorithm decides which entries get expanded (full L2 detail) vs. compressed (title only). Most users don't need to touch these — the defaults work well up to ~500 entries.
-
-| Parameter | Default | Purpose |
-|-----------|---------|---------|
-| `bulkReadV2.topNewestCount` | 5 | Newest entries expanded. Increase if you want more recent context at startup. |
-| `bulkReadV2.topAccessCount` | 3 | Most-accessed entries expanded (time-weighted: `access_count / log2(age_days + 2)`). |
-| `bulkReadV2.topObsoleteCount` | 3 | Obsolete entries kept visible — "biggest mistakes" are still worth seeing. |
-| `bulkReadV2.topSubnodeCount` | 3 | Entries with most children expanded. These tend to be the most detailed/important. |
+See [references/BULK-READ.md](references/BULK-READ.md) for the bulk-read algorithm parameters and tuning recipes.
 
 ### Prefixes
 
-Default: P, L, T, E, D, M, S, N, H, R, O, I. Custom prefixes are merged with defaults — they don't replace them. Each prefix can have a custom description used as group header in bulk reads.
+Default: P, L, T, E, D, M, S, N, H, R, O, I. Custom prefixes merge with defaults (do not replace). Each prefix can have a custom description used as group header in bulk reads.
 
 ## Help the user make changes
 
 For each parameter the user wants to change:
 
-1. **Explain the tradeoff** in plain language — what gets better, what gets worse
-2. **Show the recommended range** (see below)
+1. **Explain the tradeoff** — what gets better, what gets worse
+2. **Show the recommended range** from the tables above
 3. **Validate** before writing — numbers must be positive, arrays must be valid JSON
 
-### Recommended ranges
+### Recommended guidance
 
-| Parameter | Range | Guidance |
-|-----------|-------|----------|
-| `maxCharsPerLevel[0]` (L1) | 60–300 | Below 60 is too terse for useful summaries. Above 300 wastes tokens on every bulk read — L1 is loaded at every session start. |
-| `maxCharsPerLevel[4]` (L5) | 1000–100000 | Raw data storage. Higher allows more verbatim content but L5 is rarely loaded. |
-| `maxDepth` | 2–5 | 3 suffices for simple setups. 5 for multi-agent or complex projects. |
-| `checkpointMode` | `"auto"` or `"remind"` | Recommend `"auto"` — it's non-disruptive and produces better results because Haiku has MCP access to check for duplicates. Auto-checkpoints also write rolling summaries (`[CP]` nodes) and tag skill-dialog exchanges for filtering. |
-| `checkpointInterval` | 0–100 | 20 is a good balance. Lower = more frequent saves (more Haiku cost). 0 = disabled. |
-| `recentOEntries` | 0–20 | 10 is the sweet spot. With checkpoint summaries, `load_project` shows summary + recent exchanges only — much more compact than raw exchange dumps. |
-| `contextTokenThreshold` | 0–500000 | 100k is recommended for most models. Increase for 1M-context models. |
+| Parameter | Guidance |
+|-----------|----------|
+| `maxCharsPerLevel[0]` (L1) | Below 60 too terse; above 300 wastes tokens on every bulk read |
+| `checkpointMode` | Recommend `"auto"` — non-disruptive, Haiku has MCP access for dedup, writes rolling `[CP]` summaries |
+| `checkpointInterval` | 20 is a good balance. Lower = more frequent saves (more Haiku cost) |
+| `recentOEntries` | 10 is the sweet spot. With checkpoint summaries, `load_project` shows summary + recent exchanges only |
+| `contextTokenThreshold` | 100k for most models. Increase for 1M-context models |
 
 ### Common recipes
 
@@ -147,14 +98,13 @@ Increase `bulkReadV2.topAccessCount` and decrease `topNewestCount` — favor pro
 
 ## Write the updated config
 
-Write `hmem.config.json` with only non-default values. The config uses a `"memory"` wrapper:
+Write `hmem.config.json` with only non-default values. Use the `"memory"` wrapper:
 
 ```json
 {
   "memory": {
     "checkpointMode": "auto"
-  },
-  "sync": { ... }
+  }
 }
 ```
 
@@ -167,96 +117,16 @@ After writing, tell the user:
 
 Run this check as part of every /hmem-config invocation.
 
-**If installed** (`which hmem-sync`): run `npx hmem-sync status` and show server URL, user ID, last push/pull timestamps, and whether `HMEM_SYNC_PASSPHRASE` is set in `.mcp.json` (needed for auto-sync).
+**If installed** (`which hmem-sync`): run `npx hmem-sync status` and show server URL, user ID, last push/pull timestamps, and whether `HMEM_SYNC_PASSPHRASE` is set in `.mcp.json`.
 
-**If not installed**: explain that hmem-sync enables zero-knowledge encrypted cross-device sync (AES-256-GCM, server sees only opaque blobs), and offer to install it:
+**If not installed**: explain that hmem-sync enables zero-knowledge encrypted cross-device sync (AES-256-GCM) and offer to install:
 ```bash
 npm install -g hmem-sync
 npx hmem-sync connect
 ```
 
-### Sync troubleshooting
+For sync issues, see [references/SYNC-TROUBLESHOOTING.md](references/SYNC-TROUBLESHOOTING.md).
 
-| Problem | Fix |
-|---------|-----|
-| "Config not found" | Run `npx hmem-sync connect` |
-| 401 Token verification failed | Passphrase has special chars — set `HMEM_SYNC_PASSPHRASE` in .mcp.json env |
-| 0 entries after pull | `HMEM_PATH` filename must match between devices |
-| Update | `npm update -g hmem-sync` (always global, never inside a project) |
+## Hook configuration on Windows
 
-## Hook configuration on Windows (REQUIRED)
-
-On Windows, hook execution is fragile out of the box. Two issues bite every new user:
-
-**1. Git Bash routing** — On systems with Git for Windows installed, Claude Code may route hook commands through Git Bash (`bash.exe`). Its MSYS2 runtime crashes transiently with `add_item ("\??\C:\Program Files\Git", "/", ...) failed, errno 1` during cygheap init, killing the hook **before the command is even parsed**. Symptom: `UserPromptSubmit hook error` or `Stop hook error` with a bash.exe stacktrace.
-
-**2. Unix inline env-var syntax** — Commands like `HMEM_PATH=C:/... node ...` work in bash but break in cmd.exe and PowerShell. Symptom: `"HMEM_PATH" is not recognized as a command`.
-
-**The fix for Windows users (apply to every hook + statusLine):**
-
-```json
-{
-  "env": {
-    "HMEM_PATH": "C:/Users/<you>/.hmem/Agents/<AGENT>/<AGENT>.hmem"
-  },
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node C:/Users/<you>/AppData/Roaming/npm/node_modules/hmem-mcp/dist/cli.js hook-startup",
-            "shell": "powershell"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node C:/Users/<you>/AppData/Roaming/npm/node_modules/hmem-mcp/dist/cli.js log-exchange",
-            "shell": "powershell"
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "matcher": "clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node C:/Users/<you>/AppData/Roaming/npm/node_modules/hmem-mcp/dist/cli.js context-inject",
-            "shell": "powershell"
-          }
-        ]
-      }
-    ]
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "node C:/Users/<you>/AppData/Roaming/npm/node_modules/hmem-mcp/dist/cli.js statusline",
-    "shell": "powershell"
-  }
-}
-```
-
-Two things to notice:
-- `"shell": "powershell"` on **every** hook command and on statusLine — forces native PowerShell, bypasses Git Bash entirely.
-- `HMEM_PATH` lives in the top-level `env` block, **not** inline in the command. Claude Code inherits the env block to every hook subprocess, regardless of shell.
-
-**Never use inline env-var syntax in hook commands on Windows.** `VAR=value command` is bash-only syntax and will silently break under cmd.exe or PowerShell.
-
-**Troubleshooting matrix:**
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `UserPromptSubmit hook error` (no stacktrace) | Inline `VAR=value` in command + cmd.exe parses it as a command name | Move env vars to `env` block, remove inline prefix |
-| `bash.exe: *** fatal error - add_item ... errno 1` | Git Bash MSYS2 runtime crashing at startup | Add `"shell": "powershell"` to every hook command |
-| Hooks silently do nothing (no errors) | Wrong shell interpreting the command, or project not active for session logging | Verify `"shell": "powershell"`, call `load_project(id="P00XX")` every session |
-
-**Note on `load_project` per-session:** The `active` flag on a P-entry persists in the database, but the "currently active project for session logging" is a per-session attribute. After every Claude Code restart, the agent must call `load_project(id="P00XX")` again, or exchanges will be logged to O0000 (no-project fallback) instead of the project's O-entry. Consider adding this to your project briefing or session-start routine.
+Windows hook execution requires special configuration to avoid Git Bash routing crashes and inline env-var syntax failures. See [references/WINDOWS-HOOKS.md](references/WINDOWS-HOOKS.md) for the required setup, full example config, and troubleshooting matrix.

@@ -1,8 +1,6 @@
 ---
 name: hmem-setup
-description: Interactive setup guide for hmem. Run this skill to install and configure
-  the hmem MCP server — installs dependencies, configures .mcp.json, deploys skill
-  files, and registers auto-memory hooks for Claude Code, Gemini CLI, or OpenCode.
+description: "Set up and configure the hmem memory system. Run this skill to install hmem, initialize the MCP server, deploy skill files, and register auto-memory hooks for Claude Code, Gemini CLI, or OpenCode. Covers first-time setup, manual installation, and post-setup verification."
 ---
 
 # hmem Setup
@@ -23,7 +21,7 @@ hmem init
 4. Writes `.mcp.json` with the correct paths for each detected tool
 5. Adds session-start instructions to the tool's config file (CLAUDE.md, GEMINI.md, etc.)
 6. Creates `hmem.config.json` with sensible defaults
-7. Installs all 4 auto-memory hooks (Claude Code only — see Hook Reference below)
+7. Installs all 4 auto-memory hooks (Claude Code only — see [Hook Reference](references/HOOKS.md))
 8. Copies skill files (slash commands) to the tool's skill directory
 
 After `hmem init`, install the slash-command skills:
@@ -42,107 +40,14 @@ hmem init --global --tools claude-code --dir ~/.hmem --no-example
 
 ---
 
-## Hook Reference (Claude Code)
+## Hooks and Configuration
 
-`hmem init` registers 4 hooks in `~/.claude/settings.json`. Each hook is a bash script in `~/.claude/hooks/`.
+For detailed reference material on hooks and configuration options, see:
 
-### 1. UserPromptSubmit — memory load + checkpoint reminder
+- **[Hook Reference](references/HOOKS.md)** — describes the 4 Claude Code hooks registered by `hmem init` (UserPromptSubmit, Stop, SessionStart)
+- **[Configuration Reference](references/CONFIG.md)** — full `hmem.config.json` schema, defaults, and bulk-read tuning parameters
 
-Script: `~/.claude/hooks/hmem-startup.sh`
-
-- **First message**: injects `additionalContext` telling the agent to call `read_memory()` silently.
-- **Every Nth message** (N = `checkpointInterval`, default 20): injects a checkpoint reminder.
-  - `checkpointMode: "remind"` — adds an `additionalContext` nudge; the agent decides what to save.
-  - `checkpointMode: "auto"` — checkpoint is handled by the Stop hook instead (no reminder injected).
-- Subagents (messages with `parentUuid`) are skipped.
-- Uses a per-session counter file at `/tmp/claude-hmem-counter-{SESSION_ID}`.
-
-### 2. Stop (async) — exchange logging + checkpoint
-
-Script: `~/.claude/hooks/hmem-log-exchange.sh`
-
-- Runs asynchronously after every agent response (timeout: 10s).
-- Pipes the Stop hook JSON (containing `transcript_path` and `last_assistant_message`) to `hmem log-exchange`.
-- `hmem log-exchange` reads the last user message from the JSONL transcript, combines it with the agent response, and appends both to the currently active O-entry (session history).
-- If no active O-entry exists, one is created automatically.
-- Every N exchanges (configurable via `checkpointInterval`, default 20), triggers a checkpoint:
-  - **auto mode**: Spawns `hmem checkpoint` in background — Haiku subagent with MCP tools that:
-    - Titles each exchange with a descriptive summary (max 50 chars)
-    - Writes L/D/E entries for non-obvious insights
-    - Updates P-entry (protocol, bugs, open tasks, overview, codebase)
-    - Writes a checkpoint summary for context re-injection
-    - Verifies project relevance and fixes links
-  - **remind mode**: Injects a reminder for the main agent to save knowledge manually
-- Checks transcript file size and writes a warning flag when context exceeds `contextTokenThreshold` (default 100k tokens).
-
-### 3. SessionStart[clear] — context re-injection
-
-Script: `~/.claude/hooks/hmem-context-inject.sh`
-
-- Fires only after `/clear` (matcher: `"clear"`).
-- Pipes session JSON to `hmem context-inject`, which outputs `additionalContext` containing:
-  - Last 20 user/assistant messages from the pre-clear transcript
-  - Active project briefing (title + overview)
-  - Recent O-entries (session logs) linked to the project
-  - R-entries (rules)
-- Keeps the agent oriented after a context reset without a full `read_memory()` call.
-
----
-
-## Configuration Reference
-
-Place `hmem.config.json` in your memory directory (the path you chose during `hmem init`). All keys are optional — defaults are applied for anything missing.
-
-```json
-{
-  "memory": {
-    "maxCharsPerLevel": [200, 2500, 10000, 25000, 50000],
-    "maxDepth": 5,
-    "defaultReadLimit": 100,
-    "maxTitleChars": 50,
-    "checkpointInterval": 20,
-    "checkpointMode": "remind",
-    "recentOEntries": 10,
-    "contextTokenThreshold": 100000,
-    "bulkReadV2": {
-      "topAccessCount": 3,
-      "topNewestCount": 5,
-      "topObsoleteCount": 3,
-      "topSubnodeCount": 3,
-      "newestPercent": 20,
-      "newestMin": 5,
-      "newestMax": 15,
-      "accessPercent": 10,
-      "accessMin": 3,
-      "accessMax": 8
-    }
-  }
-}
-```
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `maxCharsPerLevel` | `number[]` | `[200,2500,10000,25000,50000]` | Character limit per tree depth (L1..L5). Alternative: set `maxL1Chars` + `maxLnChars` and levels are interpolated linearly. |
-| `maxDepth` | `number` | `5` | Max tree depth (1 = L1 only, 5 = full). |
-| `defaultReadLimit` | `number` | `100` | Max entries returned by a default `read_memory()`. |
-| `maxTitleChars` | `number` | `50` | Max characters for auto-extracted titles. |
-| `checkpointInterval` | `number` | `20` | Messages between checkpoint reminders. Set 0 to disable. |
-| `checkpointMode` | `"remind"` or `"auto"` | `"remind"` | `"remind"` = inject a save-reminder via `additionalContext`. `"auto"` = spawn a Haiku subagent that saves directly (no user interaction). |
-| `recentOEntries` | `number` | `10` | Number of recent O-entries (session logs) injected at startup and on `load_project`. Set 0 to disable. |
-| `contextTokenThreshold` | `number` | `100000` | Token threshold for context-clear recommendation. When cumulative hmem output exceeds this, the agent is told to flush + `/clear`. Set 0 to disable. |
-
-**Bulk-read tuning** (`bulkReadV2`): controls which entries get expanded (all L2 children shown) in a default `read_memory()` call. Per prefix category, the top N newest + top M most-accessed entries are expanded. Favorites are always expanded.
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `topAccessCount` | `3` | Fixed fallback: top-accessed entries to expand. |
-| `topNewestCount` | `5` | Fixed fallback: newest entries to expand. |
-| `topObsoleteCount` | `3` | Obsolete entries to keep visible. |
-| `topSubnodeCount` | `3` | Entries with most sub-nodes to always expand. |
-| `newestPercent` | `20` | Percentage-based selection (overrides `topNewestCount`). |
-| `newestMin` / `newestMax` | `5` / `15` | Clamp for percentage-based newest selection. |
-| `accessPercent` | `10` | Percentage-based selection (overrides `topAccessCount`). |
-| `accessMin` / `accessMax` | `3` / `8` | Clamp for percentage-based access selection. |
+Key configuration defaults: `checkpointInterval: 20`, `checkpointMode: "remind"`, `contextTokenThreshold: 100000`. Place `hmem.config.json` in the memory directory chosen during `hmem init`.
 
 ---
 
