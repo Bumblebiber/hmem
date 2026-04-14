@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync, spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import { searchMemory } from "./memory-search.js";
-import { openCompanyMemory, resolveHmemPath, resolveHmemPathLegacy, routeTask, HmemStore } from "./hmem-store.js";
+import { openCompanyMemory, resolveHmemPath, resolveHmemPathLegacy, routeTask, HmemStore, SimilarEntriesError } from "./hmem-store.js";
 import type { MemoryEntry, MemoryNode } from "./hmem-store.js";
 import { loadHmemConfig, formatPrefixList, getSyncServers } from "./hmem-config.js";
 import type { HmemConfig } from "./hmem-config.js";
@@ -44,6 +44,26 @@ try {
 function log(msg: string) {
   const name = path.basename(HMEM_PATH, ".hmem");
   console.error(`[hmem:${name}] ${msg}`);
+}
+
+/**
+ * Coerce LLM-provided array arguments: some models serialize arrays as JSON strings
+ * (e.g. tags: '["#foo","#bar"]' instead of tags: ["#foo", "#bar"]). Accept both.
+ * Wrap a zod string-array schema so the preprocessing happens before validation.
+ */
+function jsonArrayString<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess((val) => {
+    if (typeof val === "string") {
+      const trimmed = val.trim();
+      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) return parsed;
+        } catch { /* fall through — zod will report the type mismatch */ }
+      }
+    }
+    return val;
+  }, schema);
 }
 
 // ---- Session-scoped active project (not shared via DB — safe for multi-agent) ----
@@ -842,14 +862,14 @@ server.tool(
         "\tReact + Vite, ShadcnUI components, SSE for real-time updates\n" +
         "\t\tAuth was tricky — EventSource can't send custom headers"
     ),
-    links: z.array(z.string()).optional().describe(
+    links: jsonArrayString(z.array(z.string()).optional()).describe(
       "Optional: IDs of related memories, e.g. ['P0001', 'L0005']"
     ),
     favorite: z.coerce.boolean().optional().describe(
       "Mark this entry as a favorite — shown with [♥] in bulk reads and always inlined with L2 detail. " +
       "Use for reference info you need to see every session, regardless of category."
     ),
-    tags: z.array(z.string()).min(1).describe(
+    tags: jsonArrayString(z.array(z.string()).min(1)).describe(
       "Required hashtags for cross-cutting search (min 1, recommend 3+). " +
       "E.g. ['#hmem', '#curation']. Max 10, lowercase, must start with #. Shown after title in reads."
     ),
@@ -876,27 +896,32 @@ server.tool(
       };
     }
 
-    // P-prefix: validate L2 structure against standard schema
-    if (prefix.toUpperCase() === "P") {
-      const VALID_L2_CATEGORIES = [
-        "overview", "codebase", "usage", "context", "deployment",
-        "bugs", "protocol", "open tasks", "ideas",
-      ];
+    // Schema validation: if a schema is defined for this prefix, validate L2 node names.
+    // This prevents agents from creating off-schema sections in structured entries.
+    const writeSchema = hmemConfig.schemas?.[prefix.toUpperCase()];
+    if (writeSchema) {
+      const sectionNames = writeSchema.sections.map(s => s.name.toLowerCase());
       const lines = content.split("\n");
-      const l2Lines = lines.filter(l => /^\t[^\t]/.test(l)).map(l => l.replace(/^\t/, "").toLowerCase().trim());
+      // L2 candidates: exactly one tab indent AND not a legacy body line ("\t> ...").
+      // Blank-line-separated bodies under an L2 title are safe to ignore here because
+      // they appear AFTER a valid L2 title and fail the schema check only if the user
+      // placed free-form prose right under a valid section — in which case the title
+      // line above already satisfies the schema.
+      const l2Lines = lines
+        .filter(l => /^\t[^\t]/.test(l) && !/^\t>(?: |$)/.test(l))
+        .map(l => l.replace(/^\t/, "").toLowerCase().trim());
       if (l2Lines.length > 0) {
         const invalid = l2Lines.filter(l => {
           const firstWord = l.split(/\s*[—\-:]/)[0].trim();
-          return !VALID_L2_CATEGORIES.some(cat => firstWord.startsWith(cat));
+          return !sectionNames.some(sec => firstWord.startsWith(sec));
         });
         if (invalid.length > 0) {
           return {
             content: [{ type: "text" as const, text:
-              `WARNING: P-entry L2 nodes must use standard categories.\n` +
-              `Valid: ${VALID_L2_CATEGORIES.join(", ")}\n` +
-              `Invalid L2 nodes found: ${invalid.map(l => `"${l.substring(0, 50)}"`).join(", ")}\n\n` +
-              `See R0009 (P-Entry Standard Schema) for the full specification.\n` +
-              `Fix the L2 node names and retry. If this is intentional, explain why in the content.`
+              `ERROR: ${prefix.toUpperCase()}-entry schema violation.\n` +
+              `Valid sections: ${writeSchema.sections.map(s => s.name).join(", ")}\n` +
+              `Invalid L2 nodes: ${invalid.map(l => `"${l.substring(0, 50)}"`).join(", ")}\n\n` +
+              `L2 node names must match defined schema sections. Fix and retry.`
             }],
             isError: true,
           };
@@ -964,6 +989,13 @@ server.tool(
         hmemStore.close();
       }
     } catch (e) {
+      // Similar-entries hit is not a real error — it's a deduplication hint.
+      // Return it as a non-error so the UI doesn't flag it in red (issue #15).
+      if (e instanceof SimilarEntriesError) {
+        return {
+          content: [{ type: "text" as const, text: `Note: ${e.message}` }],
+        };
+      }
       return {
         content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
         isError: true,
@@ -992,7 +1024,7 @@ server.tool(
   {
     id: z.string().describe("ID of the entry or node to update, e.g. 'L0003' or 'L0003.2'"),
     content: z.string().min(1).describe("New text content for this node (plain text, no indentation)"),
-    links: z.array(z.string()).optional().describe(
+    links: jsonArrayString(z.array(z.string()).optional()).describe(
       "Optional: update linked entry IDs (root entries only). Replaces existing links."
     ),
     obsolete: z.coerce.boolean().optional().describe(
@@ -1007,7 +1039,7 @@ server.tool(
       "Mark as irrelevant [-]. Works on root entries and sub-nodes. " +
       "No correction entry needed (unlike obsolete). Irrelevant entries/nodes are hidden from output."
     ),
-    tags: z.array(z.string()).optional().describe(
+    tags: jsonArrayString(z.array(z.string()).optional()).describe(
       "Set tags on this entry/node. Replaces all existing tags. " +
       "Pass empty array [] to remove all tags. E.g. ['#hmem', '#curation']."
     ),
@@ -1182,10 +1214,10 @@ server.tool(
     l5: z.string().optional().describe(
       "Raw conversation chunk. Full text, no summarization."
     ),
-    tags: z.array(z.string()).min(1).describe(
+    tags: jsonArrayString(z.array(z.string()).min(1)).describe(
       "Required hashtags for discovery. E.g. ['#hmem', '#context-for', '#ux']"
     ),
-    links: z.array(z.string()).optional().describe(
+    links: jsonArrayString(z.array(z.string()).optional()).describe(
       "Link to related entries. E.g. ['P0029', 'D0120']"
     ),
   },
@@ -1248,6 +1280,24 @@ server.tool(
     ),
   },
   async ({ id, content, store: storeName }) => {
+    // Schema enforcement: if a schema is defined for this prefix, block appends to root
+    // entries. New L2 nodes are not allowed — agents must append to specific sections.
+    if (!id.includes(".")) {
+      const appendPrefix = id.match(/^([A-Z])/)?.[1];
+      if (appendPrefix && hmemConfig.schemas?.[appendPrefix]) {
+        const appendSchema = hmemConfig.schemas[appendPrefix];
+        const sections = appendSchema.sections.map((s, i) => `  .${i + 1}  ${s.name}`).join("\n");
+        return {
+          content: [{ type: "text" as const, text:
+            `ERROR: ${id} uses a fixed schema — cannot add new L2 nodes directly.\n` +
+            `Defined sections:\n${sections}\n\n` +
+            `Append to a specific section instead, e.g.:\n` +
+            `  append_memory(id="${id}.1", content="...")  → ${appendSchema.sections[0]?.name ?? "first section"}`
+          }],
+          isError: true,
+        };
+      }
+    }
     try {
       const hmemStore = storeName === "company"
         ? openCompanyMemory(PROJECT_DIR, hmemConfig)
@@ -2341,8 +2391,8 @@ server.tool(
     goal: z.string().optional().describe("Main project goal (1-2 sentences)"),
     audience: z.string().optional().describe("Target audience / who uses it"),
     deployment: z.string().optional().describe("How it's deployed (npm, exe, server, manual)"),
-    tags: z.array(z.string()).optional().describe("Additional tags beyond #project (auto-added)"),
-    links: z.array(z.string()).optional().describe("Related entry IDs, e.g. ['T0044', 'L0095']"),
+    tags: jsonArrayString(z.array(z.string()).optional()).describe("Additional tags beyond #project (auto-added)"),
+    links: jsonArrayString(z.array(z.string()).optional()).describe("Related entry IDs, e.g. ['T0044', 'L0095']"),
     store: z.enum(["personal", "company"]).default("personal"),
   },
   async ({ name, tech, description, status, repo, goal, audience, deployment, tags, links, store: storeName }) => {
@@ -2849,15 +2899,36 @@ server.tool(
       }
     }
 
-    // Also check for standalone memory.hmem in PROJECT_DIR
+    // Also check for standalone memory.hmem in PROJECT_DIR. read_agent_memory
+    // resolves agents via Agents/{name}/{name}.hmem — only offer a "default"
+    // entry here when Agents/default/default.hmem exists too, otherwise the
+    // curator sees a phantom queue item that cannot be read (see issue #11).
     const defaultHmem = path.join(PROJECT_DIR, "memory.hmem");
-    if (fs.existsSync(defaultHmem)) {
+    const defaultAgentHmem = path.join(PROJECT_DIR, "Agents", "default", "default.hmem");
+    if (fs.existsSync(defaultHmem) && fs.existsSync(defaultAgentHmem)) {
       const stat = fs.statSync(defaultHmem);
       const modified = stat.mtime.toISOString();
       const lastAudit = auditState["default"] || null;
       if (!lastAudit || new Date(modified) > new Date(lastAudit)) {
         queue.push({ name: "default", hmemPath: defaultHmem, modified, lastAudit });
       }
+    }
+
+    // Prune stale audit_state entries that no longer correspond to an actual
+    // .hmem file — they produce phantom queue items on subsequent checks.
+    let prunedCount = 0;
+    const inQueue = new Set(queue.map(q => q.name));
+    for (const name of Object.keys(auditState)) {
+      if (inQueue.has(name)) continue;
+      const candidate = path.join(PROJECT_DIR, "Agents", name, `${name}.hmem`);
+      const altCandidate = path.join(PROJECT_DIR, "Assistenten", name, `${name}.hmem`);
+      if (!fs.existsSync(candidate) && !fs.existsSync(altCandidate)) {
+        delete auditState[name];
+        prunedCount++;
+      }
+    }
+    if (prunedCount > 0) {
+      try { saveAuditState(auditState); } catch { /* ignore */ }
     }
 
     if (queue.length === 0) {

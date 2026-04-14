@@ -131,10 +131,20 @@ append_memory(id="P0048.6", content="Auto-sync fails with multiple .hmem in CWD 
 ```
 Custom prefixes are merged with the defaults — they don't replace them. Without registering, the system will reject the prefix.
 
-### P-Entry Standard Schema (enforced by MCP server)
+### Schema-Enforced Entries (P and any prefix with a defined schema)
 
-Every project entry MUST follow this structure. The MCP server validates L2 nodes
-against the standard categories when `prefix="P"`.
+The MCP server enforces schemas for any prefix that has a `schemas` entry in `hmem.config.json`.
+For those prefixes, two rules apply:
+
+1. **`write_memory`**: L2 node names must match the defined section names (error otherwise).
+2. **`append_memory` to root entry (e.g. `P0029`, no dot)**: **blocked** — you cannot add new L2 sections.
+   You must append to a specific section: `append_memory(id="P0029.N", content="...")`.
+
+By default, `P` has a schema. If `L`, `D`, or other prefixes are configured with schemas, the same rules apply.
+
+### P-Entry Standard Schema
+
+Every project entry MUST follow this structure.
 
 **L1 Title:** `Name | Status | Tech Stack | GH: owner/repo | Short description`
 The GH field is optional — include it when a GitHub repo exists, omit otherwise.
@@ -327,7 +337,8 @@ read_memory(id="P0029")   # shows root + all L2 titles
 ```
 Do any L2 titles match the sub-topic?
 
-- **No match** → `append_memory(id="P0029", content="...")` adds a new L2
+- **No match (and no schema)** → `append_memory(id="P0029", content="...")` adds a new L2
+- **No match (schema-constrained entry like P)** → find the closest existing section and append there (L2 additions are blocked)
 - **Match found (e.g. .15)** → continue to Step 3
 
 **Step 3 — Drill into that L2**
@@ -411,12 +422,24 @@ Appends new child nodes under an existing root or node. Existing children are pr
 Content indentation is **relative to the parent** — 0 tabs = direct child of `id`.
 Body works the same as in `write_memory` — blank line separates title from body.
 
+> **Schema enforcement:** For entries with a defined schema (e.g., all P-entries), appending
+> to the root (e.g., `id="P0029"`) is **blocked** — that would create a new L2 section outside
+> the schema. You must target a specific section: `append_memory(id="P0029.3", content="...")`.
+> For entries without a schema (L, D, E, etc. by default), root appends are allowed.
+
 ```
 append_memory(
   id="L0003",
   content="New finding discovered later\n\nDetailed explanation of what was found and why it matters.\nThis can span multiple lines.\n\tSub-detail about it"
 )
 # → adds L0003.N (L2 with title + body) and L0003.N.1 (L3)
+# ↑ only works if L has no schema defined; use L0003.N for schema-constrained entries
+
+append_memory(
+  id="P0029.3",
+  content="New detail in the Usage section"
+)
+# → adds P0029.3.M (L3 under section .3) — correct way for schema-constrained entries
 
 append_memory(
   id="L0003.2",

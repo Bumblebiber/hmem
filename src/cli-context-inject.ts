@@ -78,7 +78,13 @@ export async function contextInject(): Promise<void> {
       }
     }
 
-    lines.push(`\n(Context re-injected after /clear. Use load_project for full briefing, read_memory(id) to drill into specific entries.)`);
+    // Explicitly name the active project so the agent doesn't guess an ID when
+    // multiple P-entries exist (see issue #20).
+    if (activeProject) {
+      lines.push(`\n(Context re-injected after /clear. Continue with: load_project(id="${activeProject.id}")  — ${activeProject.title})`);
+    } else {
+      lines.push(`\n(Context re-injected after /clear. No active project — call load_project(id="P00XX") with the ID of the project you want to resume, or read_memory() to list them.)`);
+    }
 
     process.stdout.write(lines.join("\n") + "\n");
 

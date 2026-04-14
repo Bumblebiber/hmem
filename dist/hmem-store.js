@@ -31,6 +31,20 @@ import os from "node:os";
 import path from "node:path";
 import { DEFAULT_CONFIG, DEFAULT_PREFIX_DESCRIPTIONS } from "./hmem-config.js";
 import { readSessionMarker, writeSessionMarker } from "./session-state.js";
+/**
+ * Thrown by write_memory when similar existing entries are detected.
+ * Handled specially by callers — surfaced as a non-error hint so the
+ * agent can decide whether to append to an existing entry or retry with
+ * force=true, without the UI flagging it in red.
+ */
+export class SimilarEntriesError extends Error {
+    bestMatch;
+    constructor(message, bestMatch) {
+        super(message);
+        this.name = "SimilarEntriesError";
+        this.bestMatch = bestMatch;
+    }
+}
 // Prefixes are now loaded from config — see this.cfg.prefixes
 // (limits are now instance-level via this.cfg.maxCharsPerLevel)
 const SCHEMA = `
@@ -270,7 +284,10 @@ export class HmemStore {
             throw new Error("Tags are required. Provide at least 1 tag (3+ recommended) for discoverability. Example: tags=['#hmem', '#sqlite', '#bug']");
         }
         const validatedTags = this.validateTags(tags);
-        // Duplicate detection: check for existing entries with significant tag overlap
+        // Duplicate detection: check for existing entries with significant tag overlap.
+        // Threshold: require at least 3 shared tags for a tag-only match — project/framework
+        // tags alone (2 overlapping generic tags like #python+#bug) are not enough to block
+        // a new entry. See issue #12.
         if (prefix !== "O" && !force) { // O-entries are auto-generated, skip check
             const tagPlaceholders = validatedTags.map(() => "?").join(", ");
             const overlapRows = this.db.prepare(`
@@ -290,7 +307,7 @@ export class HmemStore {
           AND m.obsolete != 1
           AND m.irrelevant != 1
         GROUP BY root_id
-        HAVING shared >= 2
+        HAVING shared >= 3
         ORDER BY shared DESC
         LIMIT 3
       `).all(...validatedTags, prefix);
@@ -336,9 +353,9 @@ export class HmemStore {
                     parts.push(`Similar titles:\n${ftsHits}`);
                 }
                 const bestMatch = overlapRows[0]?.root_id ?? ftsMatches[0]?.root_id;
-                throw new Error(`Similar ${prefix}-entries already exist:\n${parts.join("\n")}\n\n` +
+                throw new SimilarEntriesError(`Similar ${prefix}-entries already exist:\n${parts.join("\n")}\n\n` +
                     `If this belongs to an existing entry, use: append_memory(id="${bestMatch}", content="...")\n` +
-                    `If this is intentionally a NEW entry, retry with: force=true`);
+                    `If this is intentionally a NEW entry, retry with: force=true`, bestMatch);
             }
         }
         // Run in a transaction
@@ -3162,20 +3179,7 @@ export class HmemStore {
             }
             catch { /* malformed JSON — skip */ }
         }
-        // Scan memory_nodes.links
-        const nodeRows = this.db.prepare("SELECT id, links FROM memory_nodes WHERE links IS NOT NULL AND links LIKE ?").all(`%"${obsoleteId}"%`);
-        for (const row of nodeRows) {
-            try {
-                const arr = JSON.parse(row.links);
-                if (!arr.includes(obsoleteId))
-                    continue;
-                const updated = arr.map(l => l === obsoleteId ? correctionId : l);
-                const deduped = [...new Set(updated)];
-                this.db.prepare("UPDATE memory_nodes SET links = ? WHERE id = ?")
-                    .run(JSON.stringify(deduped), row.id);
-            }
-            catch { /* malformed JSON — skip */ }
-        }
+        // memory_nodes has no `links` column — only root entries (memories) carry links.
     }
     /** Fetch direct children of a node (root or compound), including their grandchild counts. */
     /** Bulk-fetch direct child counts for multiple parent IDs in one query. */

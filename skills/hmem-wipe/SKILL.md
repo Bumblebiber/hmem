@@ -76,14 +76,16 @@ Do NOT attempt to run /clear yourself — it is a built-in CLI command only the 
 
 ## What happens after /clear
 
-The `SessionStart[clear]` hook automatically:
+Context is restored **automatically** by the `SessionStart[clear]` hook — no
+agent action needed after /clear. Do **NOT** call `load_project` or `read_memory`
+during or after this skill; the next session's first UserPromptSubmit hook will
+trigger the normal hmem-read flow with a verified active project ID.
+
+The hook:
 1. Resets the MCP session cache
 2. Injects recent conversation exchanges from the project's O-entry transcript
 3. Injects the active project briefing (overview expanded)
 4. Injects recent O-entry titles + rules
-
-The agent then calls `load_project` and has full context to continue working.
-No manual restoration needed.
 
 ## Why this flow works
 

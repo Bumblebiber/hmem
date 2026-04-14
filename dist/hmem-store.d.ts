@@ -27,6 +27,16 @@
 import Database from "better-sqlite3";
 import type { HmemConfig } from "./hmem-config.js";
 export type AgentRole = "worker" | "al" | "pl" | "ceo";
+/**
+ * Thrown by write_memory when similar existing entries are detected.
+ * Handled specially by callers — surfaced as a non-error hint so the
+ * agent can decide whether to append to an existing entry or retry with
+ * force=true, without the UI flagging it in red.
+ */
+export declare class SimilarEntriesError extends Error {
+    readonly bestMatch: string | undefined;
+    constructor(message: string, bestMatch: string | undefined);
+}
 export interface MemoryEntry {
     id: string;
     prefix: string;

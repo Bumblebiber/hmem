@@ -513,10 +513,11 @@ class MemoryScreen(Screen):
             )
             return
         try:
+            # Reconnect before load_project so each call gets a fresh MCP session
+            # (no session cache that would block the full briefing on repeated presses).
+            await self._mcp.close()
+            await self._mcp.connect(str(self.db_path))
             text = await self._mcp.call_tool("load_project", {"id": rid})
-            # If session cache blocks (project "already active"), force a fresh read.
-            if "already active" in text:
-                text = await self._mcp.call_tool("read_memory", {"id": rid, "expand": True})
         except Exception as e:
             text = f"Error: {e}"
         self.query_one("#detail-pane", Static).update(escape_markup(text))
