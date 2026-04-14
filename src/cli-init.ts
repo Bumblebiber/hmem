@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import readline from "node:readline";
+import { spawnSync } from "node:child_process";
 import { saveHmemConfig, DEFAULT_CONFIG } from "./hmem-config.js";
 
 // ---- Tool definitions ----
@@ -327,6 +328,60 @@ function writeConfigFile(filePath: string, config: Record<string, unknown>): voi
   fs.writeFileSync(filePath, JSON.stringify(config, null, 2) + "\n", "utf-8");
 }
 
+/**
+ * Detect whether `claude mcp` already has hmem registered. If so, refresh the
+ * registration via `claude mcp remove` + `claude mcp add` so HMEM_PATH points
+ * at the file the user just selected. Returns true when handled (caller skips
+ * writing ~/.claude.json), false when the `claude` CLI is unavailable or no
+ * existing entry was found.
+ */
+function updateClaudeMcpRegistration(hmemFilePath: string): boolean {
+  const which = spawnSync(process.platform === "win32" ? "where" : "which", ["claude"], { encoding: "utf8" });
+  if (which.status !== 0) return false;
+
+  const list = spawnSync("claude", ["mcp", "list"], { encoding: "utf8" });
+  if (list.status !== 0) return false;
+  const entries = `${list.stdout || ""}\n${list.stderr || ""}`;
+  const hasHmem = /(^|\s)hmem\b/m.test(entries);
+  if (!hasHmem) return false;
+
+  spawnSync("claude", ["mcp", "remove", "hmem", "-s", "user"], { encoding: "utf8" });
+
+  const add = spawnSync(
+    "claude",
+    ["mcp", "add", "hmem", "-s", "user", "-e", `HMEM_PATH=${hmemFilePath}`, "--", resolveNodePath(), resolveMcpServerPath()],
+    { encoding: "utf8" },
+  );
+  if (add.status !== 0) {
+    console.log(`  WARNING: \`claude mcp add hmem\` failed:\n${(add.stderr || add.stdout || "").trim()}`);
+    return false;
+  }
+  console.log(`  [ok] Claude Code: refreshed via \`claude mcp\` (HMEM_PATH=${hmemFilePath})`);
+  return true;
+}
+
+/**
+ * Install the hmem OpenCode plugin file. OpenCode auto-loads any .js file in
+ * its plugins directory at startup — no opencode.json registration needed.
+ * Returns true on success (file copied or already present), false if the
+ * bundled plugin source could not be found.
+ */
+function installOpencodePlugin(isGlobal: boolean): boolean {
+  const pluginsDir = isGlobal
+    ? path.join(HOME, ".config", "opencode", "plugins")
+    : path.join(process.cwd(), ".opencode", "plugins");
+  const pluginSrc = path.join(import.meta.dirname, "..", "opencode-plugin", "hmem.js");
+  if (!fs.existsSync(pluginSrc)) {
+    console.log(`  WARNING: OpenCode plugin source not found at ${pluginSrc}`);
+    return false;
+  }
+  fs.mkdirSync(pluginsDir, { recursive: true });
+  const pluginDst = path.join(pluginsDir, "hmem.js");
+  fs.copyFileSync(pluginSrc, pluginDst);
+  console.log(`  [ok] OpenCode plugin: ${pluginDst}`);
+  return true;
+}
+
 // ---- Main ----
 
 /**
@@ -491,6 +546,14 @@ export async function runInit(args: string[] = []): Promise<void> {
 
     for (const toolId of selectedTools) {
       const tool = TOOLS[toolId];
+
+      // Special path: Claude Code with `claude` CLI installed and existing
+      // `claude mcp add hmem` registration. The CLI's MCP registry is the
+      // source of truth for Claude Code; writing ~/.claude.json is silently
+      // ignored. Update via `claude mcp remove`/`add` instead. (Issue #18)
+      if (toolId === "claude-code" && isGlobal && updateClaudeMcpRegistration(hmemFilePath)) {
+        continue;
+      }
 
       // Determine file path
       let configPath: string;
@@ -697,6 +760,29 @@ export async function runInit(args: string[] = []): Promise<void> {
           }
         }
       }
+    }
+
+    // Step 8b: Install OpenCode plugin (auto-loaded from plugins directory)
+    if (selectedTools.includes("opencode")) {
+      let installPlugin: boolean;
+      if (flags["hooks"] === "true") {
+        installPlugin = true;
+      } else if (flags["hooks"] === "false") {
+        installPlugin = false;
+      } else if (nonInteractive) {
+        installPlugin = true;
+      } else {
+        const choice = await askChoice(
+          "Install OpenCode hmem plugin?\n" +
+          "  Adds an OpenCode plugin that:\n" +
+          "  - Logs every user/assistant exchange to the active project's O-entry\n" +
+          "  - Triggers checkpoint extraction asynchronously\n" +
+          "  - Injects hmem context into compaction prompts",
+          ["Yes — install plugin", "No — skip"],
+        );
+        installPlugin = choice === 0;
+      }
+      if (installPlugin) installOpencodePlugin(isGlobal);
     }
 
     console.log(`\n  Done! Restart your AI tool(s) to activate hmem.\n`);

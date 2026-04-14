@@ -29,6 +29,8 @@ const HMEM_BIN = path.resolve(__dirname, "../dist/cli.js");
 interface HookInput {
   transcript_path?: string;
   last_assistant_message?: string;
+  /** Direct mode (e.g. OpenCode plugin): bypass transcript_path lookup. */
+  last_user_message?: string;
   stop_hook_active?: boolean;
   session_id?: string;
 }
@@ -132,7 +134,9 @@ export async function logExchange(): Promise<void> {
   // Guards
   if (input.stop_hook_active) process.exit(0);
   if (process.env.HMEM_NO_SESSION === "1") process.exit(0);
-  if (!input.transcript_path) process.exit(0);
+
+  const directMode = !!input.last_user_message;
+  if (!directMode && !input.transcript_path) process.exit(0);
 
   // Fallback: if last_assistant_message is missing (e.g. channel sessions),
   // read it from the transcript
@@ -145,7 +149,9 @@ export async function logExchange(): Promise<void> {
   // and contain MCP tool calls, not real user conversation
   if (input.transcript_path && input.transcript_path.includes("/tasks/")) process.exit(0);
 
-  const userMessage = readLastUserMessage(input.transcript_path);
+  const userMessage = directMode
+    ? input.last_user_message!
+    : readLastUserMessage(input.transcript_path!);
   if (!userMessage) process.exit(0);
 
   // Skip empty exchanges and internal hook prompts
@@ -209,8 +215,10 @@ export async function logExchange(): Promise<void> {
       console.error(`[hmem] DRIFT: marker hmemPath=${marker.hmemPath} resolved=${hmemPath}`);
     }
 
-    // Step 2: Resolve session (transcript_path tracking) — internal DB session row
-    const internalSessionId = store.resolveSession(oId, input.transcript_path!);
+    // Step 2: Resolve session (transcript_path tracking, or session_id in direct mode)
+    //         — internal DB session row keyed by a stable per-conversation identifier
+    const sessionKey = input.transcript_path || `direct:${claudeSessionId ?? "global"}`;
+    const internalSessionId = store.resolveSession(oId, sessionKey);
 
     // Step 3: Resolve batch (create new if full)
     const batchSize = hmemConfig.checkpointInterval || 5;

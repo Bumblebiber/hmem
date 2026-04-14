@@ -124,7 +124,8 @@ export async function logExchange() {
         process.exit(0);
     if (process.env.HMEM_NO_SESSION === "1")
         process.exit(0);
-    if (!input.transcript_path)
+    const directMode = !!input.last_user_message;
+    if (!directMode && !input.transcript_path)
         process.exit(0);
     // Fallback: if last_assistant_message is missing (e.g. channel sessions),
     // read it from the transcript
@@ -137,7 +138,9 @@ export async function logExchange() {
     // and contain MCP tool calls, not real user conversation
     if (input.transcript_path && input.transcript_path.includes("/tasks/"))
         process.exit(0);
-    const userMessage = readLastUserMessage(input.transcript_path);
+    const userMessage = directMode
+        ? input.last_user_message
+        : readLastUserMessage(input.transcript_path);
     if (!userMessage)
         process.exit(0);
     // Skip empty exchanges and internal hook prompts
@@ -196,8 +199,10 @@ export async function logExchange() {
         if (marker && marker.hmemPath && marker.hmemPath !== hmemPath) {
             console.error(`[hmem] DRIFT: marker hmemPath=${marker.hmemPath} resolved=${hmemPath}`);
         }
-        // Step 2: Resolve session (transcript_path tracking) — internal DB session row
-        const internalSessionId = store.resolveSession(oId, input.transcript_path);
+        // Step 2: Resolve session (transcript_path tracking, or session_id in direct mode)
+        //         — internal DB session row keyed by a stable per-conversation identifier
+        const sessionKey = input.transcript_path || `direct:${claudeSessionId ?? "global"}`;
+        const internalSessionId = store.resolveSession(oId, sessionKey);
         // Step 3: Resolve batch (create new if full)
         const batchSize = hmemConfig.checkpointInterval || 5;
         const batchId = store.resolveBatch(internalSessionId, oId, batchSize);
