@@ -40,7 +40,11 @@ Or check GitHub releases: `gh release list -R Bumblebiber/hmem --limit 5`
 hmem update-skills
 ```
 
-This syncs all skill files from the npm package to the local skills directory. Verify:
+This syncs all skill files from the npm package to the local skills directory
+**and prunes stale `hmem-*` skills that are no longer bundled** (as of v6.3.2).
+Example output: `× hmem-self-curate (removed, no longer bundled)`.
+
+Verify:
 
 ```bash
 ls ~/.claude/skills/hmem-*/SKILL.md   # Claude Code
@@ -48,6 +52,8 @@ ls ~/.config/gemini/skills/hmem-*/     # Gemini CLI (if applicable)
 ```
 
 Check for new skills that weren't there before — inform the user about new capabilities.
+If a skill was removed (e.g. merged into another), mention that too so the user knows
+the workflow has moved.
 
 ---
 
