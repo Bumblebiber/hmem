@@ -3,7 +3,7 @@
  *
  * Public API for using hmem as a library.
  */
-export { HmemStore, openAgentMemory, openCompanyMemory, resolveHmemPath, resolveHmemPathLegacy } from "./hmem-store.js";
+export { HmemStore, openCompanyMemory, resolveHmemPath } from "./hmem-store.js";
 export type { AgentRole, MemoryEntry, MemoryNode } from "./hmem-store.js";
 export { loadHmemConfig, saveHmemConfig, DEFAULT_CONFIG, DEFAULT_PREFIXES, formatPrefixList } from "./hmem-config.js";
 export type { HmemConfig } from "./hmem-config.js";

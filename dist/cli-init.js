@@ -753,7 +753,9 @@ export function updateSkills() {
         return;
     }
     console.log(`Found ${skillNames.length} skills: ${skillNames.join(", ")}\n`);
+    const bundledSet = new Set(skillNames);
     let totalCopied = 0;
+    let totalRemoved = 0;
     for (const { tool, dir } of targets) {
         console.log(`${tool}: ${dir}/`);
         fs.mkdirSync(dir, { recursive: true });
@@ -773,8 +775,22 @@ export function updateSkills() {
             totalCopied++;
             console.log(`  ✓ ${skillName}`);
         }
+        // Remove stale hmem-* skills that are no longer bundled
+        for (const existing of fs.readdirSync(dir)) {
+            if (!existing.startsWith("hmem-"))
+                continue;
+            if (bundledSet.has(existing))
+                continue;
+            const stalePath = path.join(dir, existing);
+            if (fs.statSync(stalePath).isDirectory()) {
+                fs.rmSync(stalePath, { recursive: true, force: true });
+                totalRemoved++;
+                console.log(`  × ${existing} (removed, no longer bundled)`);
+            }
+        }
         console.log();
     }
-    console.log(`Done — ${totalCopied} skills updated across ${targets.length} tool(s).`);
+    const removedNote = totalRemoved > 0 ? `, ${totalRemoved} stale removed` : "";
+    console.log(`Done — ${totalCopied} skills updated${removedNote} across ${targets.length} tool(s).`);
 }
 //# sourceMappingURL=cli-init.js.map

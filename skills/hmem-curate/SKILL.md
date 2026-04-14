@@ -1,206 +1,213 @@
 ---
 name: hmem-curate
-description: >
-  Memory curation workflow. Use when asked to curate, audit, or clean up agent memories.
-  Processes one agent at a time — read, fix, mark audited, summarize, terminate.
-  Requires role: ceo.
+description: Curate hmem memory — your own or a foreign .hmem file. Systematically review entries, mark obsolete/irrelevant/favorite, fix titles, consolidate duplicates. Use when asked to "aufräumen", "clean up memory", "curate", "Speicher bereinigen", "tidy up", or when memory_health() shows issues.
 ---
 
-# /hmem-curate — hmem Curation Workflow
+# hmem Curation
 
-You are the memory curator. Process **one agent per run**, then terminate.
+Curate hmem memory — mark obsolete/irrelevant/favorite, fix titles, consolidate duplicates, fix broken links.
 
----
-
-## Step-by-Step
-
-```
-1. get_audit_queue()
-   → Empty → write a short summary to LAST_CURATION.md and terminate
-   → Not empty → take the FIRST agent from the list
-
-2. read_agent_memory(agent_name, depth=5)
-   → Study all entries carefully
-
-3. Fix every issue found (see criteria below)
-
-4. mark_audited(agent_name)
-
-5. Append one line to LAST_CURATION.md:
-   "- **AGENTNAME**: N entries — [OK | fixed L0003 | marked E0002 obsolete (dup) | consolidated P0004+P0007→P0004]"
-
-6. Terminate.
-```
+**Two modes:**
+- **Self-curation** (default): you curate your own memory. No extra params.
+- **Foreign-file curation**: pass `hmem_path=/absolute/path/to/file.hmem` to `read_memory`, `update_memory`, `memory_health`, `find_related`. Sync and session cache are disabled. All updates land in that file.
 
 ---
 
-## Quality Criteria
-
-### L1 Quality
-| Check | Rule |
-|-------|------|
-| Too long | Single concise sentence, ~15–20 tokens. Fix with `fix_agent_memory(agent_name, id, content="shorter")` |
-| Too vague | "Fixed a bug" → mark obsolete. "SQLite failed due to wrong path in .mcp.json" → keep |
-| Factually wrong | Fix content or mark obsolete. |
-| Duplicate of another entry | Merge the best content from both into the keeper (see merge workflow below), then mark the weaker entry obsolete. |
-
-### Compound Node IDs
-Memory content lives in `memory_nodes` — not in flat `level_2/3` fields.
-To fix an L2 or deeper node, use the compound ID: `fix_agent_memory(agent_name, "L0003.2", content="corrected text")`.
-To navigate the tree: `read_memory` shows node IDs like `L0003.2`, `L0003.2.1` — use those directly.
-
-### Obsolete entries
-Entries marked `[!]` (or `[OBSOLETE]` in curator view) are already hidden from bulk reads — they do not need to be deleted.
-Leave them in place. The curator's job is to *mark* entries obsolete, not remove them.
-
-**Curator bypass:** As curator, you can mark entries obsolete **without** the `[✓ID]` correction reference that agents are required to include. Use this for stale entries where no correction exists (e.g., entries about deleted features, abandoned approaches).
+## Step 0: Health Check First
 
 ```
-# Curator can bypass [✓ID] enforcement:
-fix_agent_memory(agent_name, id, obsolete=true)
-
-# But prefer including a correction reference when one exists:
-fix_agent_memory(agent_name, id, content="Outdated — see [✓E0076]", obsolete=true)
+memory_health()                  # own store
+memory_health(hmem_path="...")   # foreign file
 ```
 
-### Merging entries (duplicates and fragmented P entries)
+Shows:
+- **Broken links** — entries with refs to deleted IDs
+- **Orphaned entries** — roots with no sub-nodes (likely draft stubs)
+- **Stale favorites/pinned** — not accessed in >60 days (demote or verify)
+- **Broken obsolete chains** — `[✓ID]` pointing to deleted entries
 
-**Merge workflow:**
-1. Read both entries fully (`read_memory(id=X)` for each)
-2. Pick the **keeper** (usually the older/more informative one)
-3. Fix the keeper's L1 if needed: `fix_agent_memory(agent_name, keeper_id, content="Broader title")`
-4. Carry over the best content from the entry to be deleted:
-   - Existing nodes with better wording → `fix_agent_memory(agent_name, "KEEPER.2", content="improved text")`
-   - Content that only exists in the entry to be deleted → `append_agent_memory(agent_name, keeper_id, content="carried-over detail\n\tsub-detail")`
-5. `fix_agent_memory(agent_name, fragment_id, obsolete=true)` once content is carried over
-
-**For fragmented P entries** (same project, multiple entries):
-- Same workflow. Pick oldest as keeper.
-- Goal: one P entry per project, growing over time.
-
-*Note: only carry over content with lasting value. Low-value session notes can be dropped.*
-
-### Links — cross-references
-
-When two entries have a clear causal or contextual relationship (e.g. a P entry and the L/E entries that resulted from it, or an E entry and the D entry that documents the fix decision), add links at **both** entries so they resolve each other on drill-down:
-
+Useful before starting:
 ```
-fix_agent_memory(agent_name, "P0001", links=["L0023", "E0009"])
-fix_agent_memory(agent_name, "L0023", links=["P0001"])
-fix_agent_memory(agent_name, "E0009", links=["P0001"])
+memory_stats()
+read_memory(stale_days=60)                   # stale entries in own store
+read_memory(stale_days=60, hmem_path="...")  # same, foreign file
 ```
 
-`read_memory(id=X)` auto-resolves linked entries — the agent sees both sides when drilling into either one.
+---
 
-Don't over-link: only add links where the connection adds real navigational value, not just topical similarity.
+## Workflow: Prefix by Prefix
 
-### Title/Body Quality (v5.1+)
+Work one prefix at a time. Load all entries of a prefix with full depth:
 
-Entries support explicit title/body separation via a blank line (like git commits). During curation:
+```
+read_memory(prefix="P", show_all=true)
+read_memory(prefix="P", show_all=true, hmem_path="...")
+```
+
+`show_all=true` bypasses the bulk-read algorithm and session cache — every entry is expanded with L2+L3 children visible. Review the output directly.
+
+**Order:** Start with the prefix with the most entries (usually P), then L, E, D, etc.
+
+If context overflows mid-prefix, continue with the remaining entries — memory survives compression.
+
+---
+
+## For Each Entry: Decide and Act
+
+| Decision | Action |
+|----------|--------|
+| Still valid and useful | Skip |
+| Important reference (every session) | `update_memory(id="X", content="...", favorite=true)` |
+| Outdated — a better entry exists | Mark obsolete (see below) |
+| Just noise — not wrong, but irrelevant | `update_memory(id="X", content="...", irrelevant=true)` |
+| Title vague or misleading | `update_memory(id="X", content="Better wording")` |
+| Sub-node has valuable reference info | `update_memory(id="X.N", content="...", favorite=true)` |
+
+Add `hmem_path="..."` to every call when curating a foreign file.
+
+---
+
+## Marking Obsolete
+
+Obsolete requires a correction reference. Three patterns:
+
+**A: Replacement exists already**
+```
+update_memory(id="E0023", content="Wrong approach — see [✓E0076]", obsolete=true)
+```
+
+**B: No replacement exists yet**
+```
+write_memory(prefix="L", content="Correct approach is XYZ\n\tDetails...")  # -> L0090
+update_memory(id="L0042", content="Superseded — see [✓L0090]", obsolete=true)
+```
+
+**C: Just stale, no correction needed**
+```
+update_memory(id="T0005", content="...", irrelevant=true)
+```
+
+Foreign file: curator may mark obsolete without `[✓ID]` for stale entries where no correction exists.
+
+---
+
+## Consolidate Duplicates
+
+1. Pick the **keeper** (more complete, usually older)
+2. Copy unique info: `append_memory(id="P0029", content="Carry-over\n\tDetail")`
+3. Mark duplicate obsolete: `update_memory(id="P0031", content="Merged into [✓P0029]", obsolete=true)`
+
+**Fragmented P-entries (same project, multiple entries):** same workflow. One P per project.
+
+---
+
+## Links — Cross-References
+
+When two entries have a clear causal/contextual relationship (e.g. a P and the L/E entries that resulted from it), add links at **both** so drill-down resolves them:
+
+```
+update_memory(id="P0001", content="...", links=["L0023", "E0009"])
+update_memory(id="L0023", content="...", links=["P0001"])
+```
+
+Don't over-link — only where navigation benefits.
+
+---
+
+## Title/Body Quality
+
+Every node has a **title** (short, ~50 chars) and optional **body** (blank line separator). During curation:
 
 **Root entries (L1):**
-- Check if the auto-extracted title is meaningful. If it's truncated or vague, rewrite with explicit title + body:
+- Auto-title truncated/meaningless? Rewrite with explicit title + body:
   ```
-  fix_agent_memory(agent_name, id, content="Clear navigation title\n\nOriginal detailed L1 text that was too long for a title")
+  update_memory(id="L0042", content="Clear title\n\nDetailed L1 body that was too long for a title")
   ```
-- Old entries without body separation still work — the title is auto-extracted from `level_1`. Only rewrite if the auto-title is genuinely bad.
 
 **Child nodes (L2+):**
-- Same principle: if a node has dense content, split into title + body:
+- Dense content? Split into title + body:
   ```
-  fix_agent_memory(agent_name, "L0003.2", content="Short node title\n\nDetailed explanation\nspanning multiple lines")
+  update_memory(id="L0003.2", content="Short node title\n\nDetailed explanation")
   ```
-- Nodes with short, clear content don't need body separation — leave them as-is.
 
-**When to rewrite old entries:**
-- Auto-title is truncated mid-word or meaningless
-- Node has >200 chars of content crammed into one line
-- Content is valuable but hard to scan in listings (title = full text)
+**Rewrite when:** auto-title is truncated mid-word, node has >200 chars crammed in one line, content is valuable but unscannable.
+**Don't rewrite when:** title is already clear, or entry has low access count and marginal value.
 
-**When NOT to rewrite:**
-- Title is already clear and navigable
-- Entry has low access count and marginal value (not worth the effort)
+---
 
-### P-Entry Standard-Schema (R0009)
+## P-Entry Standard-Schema (R0009)
 
-All P-entries must follow the standard L2 structure (see R0009):
+P-entries follow the standard L2 structure:
 `.1 Overview`, `.2 Codebase`, `.3 Usage`, `.4 Context`, `.5 Deployment`, `.6 Bugs`, `.7 Protocol`, `.8 Open tasks`, `.9 Ideas`
 
-During curation, check P-entries against this schema:
-- **Missing sections:** Add them using `append_agent_memory(agent_name, "P00XX", content="\tOverview\n\t\tCurrent state: ...")`
-- **Wrong order:** Flag and restructure — order is fixed per R0009
-- **Empty sections:** OK to omit, but if content exists it must be in the right section
-- **L1 body:** Should be a one-line project summary in format `Name | Status | Stack | Description`
+Check P-entries during curation:
+- **Missing section:** `append_memory(id="P00XX", content="\tOverview\n\t\tCurrent state: ...")`
+- **Wrong order:** Restructure — order is fixed per R0009
+- **Empty section:** OK to omit, but content must be in the right section if present
+- **L1 body:** One-line project summary: `Name | Status | Stack | Description`
 
-### O-entry curation (v5.1.2+)
+---
 
-O-entries may need curation for titles, tags, and summaries:
+## O-Entries (Session Logs)
 
-**Titles:**
-- Old O-entries may have title "unassigned" or generic titles like "hmem-mcp". Fix with `fix_agent_memory(agent_name, id, content="Descriptive session title")`.
-- Good title: "Title/Body Separation design + v5.1.0 release". Bad: "hmem-mcp".
-
-**Tags:**
-- O-entries should have a `#session` tag and optionally topic tags (e.g. `#npm`, `#release`, `#refactor`).
-- Add missing tags: `fix_agent_memory(agent_name, id, tags=["#session", "#release"])`
-
-**Checkpoint summaries:**
-- O-entries with many exchanges (>10) should have a `[CP]` checkpoint summary. If missing, write one:
-  `append_agent_memory(agent_name, "O00XX", content="\t[CP] Factual 3-8 sentence summary of the session")`
-  Then tag it: the auto-tagger picks up `[CP]` prefixed nodes on the next checkpoint run.
+O-entries accumulate via the Stop hook. They're excluded from bulk reads by default — **leave them alone**. Focus curation time on L, E, D, P.
 
 **Special tagged nodes — do not modify:**
-- **`#checkpoint-summary`** nodes: Auto-generated `[CP]` summaries. Leave as-is.
-- **`#skill-dialog`** exchange nodes: Skill activations filtered from `load_project`. Leave as-is.
+- `#checkpoint-summary` — auto-generated `[CP]` summaries
+- `#skill-dialog` — skill activation exchanges
 
-### Stale entries — auto-mark obsolete
-
-Entries older than 1 month with `access_count = 0` (no `(Nx accessed)` suffix in curator read) should be marked obsolete automatically.
-
-```
-fix_agent_memory(agent_name, id, obsolete=true)
-```
-
-Exception: unique lessons or error patterns with no equivalent elsewhere — keep even if never accessed.
-
-**Note:** The V2 algorithm uses **time-weighted scoring** (`access_count / log2(age_in_days + 2)`) for "most accessed" ranking. This means genuinely stale entries (old + low access) naturally sink — but an old entry that's still frequently accessed stays visible.
-
-### N entries — flag stale code pointers
-Navigator entries go stale when code moves. Check: does the file/line referenced still exist?
-If stale and the agent hasn't updated it: mark obsolete via `fix_agent_memory(agent_name, id, obsolete=true)`.
-Do NOT fix stale N entries yourself — the agent who wrote them must verify and update.
+**Exception — old O-entries with bad titles/missing tags:**
+- `update_memory(id="O0042", content="Descriptive session title")`
+- `update_memory(id="O0042", content="...", tags=["#session", "#release"])`
 
 ---
 
-### Quick audit with titles_only
+## Bulk Operations
 
-Use `read_memory(titles_only=true)` for a compact overview of an agent's memory before drilling in. Shows V2-selected entries as one line each with `(N)` child counts — useful for spotting duplicates, poor titles, or category imbalances at a glance.
+For large-scale changes across many entries:
+
+| Tool | Purpose |
+|------|---------|
+| `update_many(updates=[...])` | Batch flag updates across multiple IDs |
+| `tag_bulk(ids=[...], add_tags=[...], remove_tags=[...])` | Add/remove tags across many entries |
+| `tag_rename(old_tag, new_tag)` | Rename a tag globally |
+
+(These operate on your own store only — for foreign files, iterate manually with `update_memory(hmem_path=...)`.)
 
 ---
 
-## V2 Bulk-Read Output
+## Relocate Misplaced Nodes
 
-The default `read_memory()` now returns **grouped output** by prefix category:
+`move_memory` cuts and re-inserts a sub-node under a new parent, rewriting all IDs + links + `[✓ID]` refs.
 
 ```
-## Project experiences and summaries (5 entries)
-
-P0001 02-14  Das Althing — Node.js/TS Multi-Agent-Orchestrator
-  2.1  Architecture: Node.js polling daemon with file-based IPC
-  2.2  Key decisions: SQLite for hmem, MCP for tool protocol
-  [+7 more → P0001]
-  Links: L0045, D0003
-
-## Lessons learned and best practices (78 entries)
-...
-
---- 5 obsolete entries hidden (E0023, D0007, ...) — top 3 shown above ---
+move_memory(source_id="P0029.15", target_parent_id="L0074")
+move_memory(source_id="P0029.15", target_parent_id="P0029.20")
 ```
 
-**Expanded entries** (newest, most-accessed, favorites) show all L2 children + links.
-**Non-expanded entries** show latest child + `[+N more → ID]` hint.
+**Constraints:** source must be a sub-node (not root); cannot move into own subtree. Operates on own store only.
 
-Use `read_memory(show_obsolete=true)` to see all obsolete entries.
+---
+
+## Favorite Audit
+
+- **Too many?** >10% favorites → demote less important: `update_memory(id="X", content="...", favorite=false)`
+- **Missing?** Reference entries (API endpoints, key decisions, patterns) should be favorites.
+- **Sub-node better than root?** Favorite the sub-node instead.
+
+---
+
+## Stale Entries
+
+Entries older than 1 month with `access_count = 0`: mark obsolete.
+
+```
+update_memory(id="L0042", obsolete=true)
+```
+
+**Exception:** unique lessons or error patterns with no equivalent — keep even if never accessed.
+
+The V2 algorithm uses time-weighted scoring (`access_count / log2(age_in_days + 2)`) — old+low-access entries naturally sink; old+high-access stay visible.
 
 ---
 
@@ -208,22 +215,39 @@ Use `read_memory(show_obsolete=true)` to see all obsolete entries.
 
 | Store | Max entries | Action when over |
 |-------|-------------|-----------------|
-| Personal | 300 | Triage: duplicates → low-access old entries → generic lessons |
+| Personal | 300 | Triage: duplicates → low-access old → generic lessons |
 | Company | 200 | Same |
 
-**Triage order (over limit):**
-1. Mark exact duplicates obsolete (after merging content into keeper)
-2. Mark stale entries obsolete (access_count = 0, >1 month old)
-3. Consolidate fragmented P entries
-4. Mark borderline entries obsolete
+**Triage order:** exact duplicates → stale (access=0, >1 month) → fragmented P entries → borderline.
+
+---
+
+## Quick Reference
+
+| Tool | When |
+|------|------|
+| `memory_health()` | **Start here** — broken links, orphans, stale favorites |
+| `memory_stats()` | Overview before starting |
+| `read_memory(stale_days=60)` | Prime curation targets |
+| `read_memory(prefix="X", show_all=true)` | Load entire prefix |
+| `update_memory(id, content, favorite=true)` | Always-show reference |
+| `update_memory(id, content, irrelevant=true)` | Hide from bulk reads |
+| `update_memory(id, content, obsolete=true)` | Mark wrong (needs [✓ID]) |
+| `append_memory(id, content)` | Merge info into keeper |
+| `move_memory(source_id, target_parent_id)` | Relocate misplaced sub-node |
+| `update_many(updates=[...])` | Batch flag updates |
+| `tag_bulk / tag_rename` | Tag maintenance |
+| `read_memory(show_obsolete=true)` | Review already-obsolete |
+| `find_related(id)` | Discover connections / spot duplicates |
+
+All four read/update/health/find tools accept `hmem_path="..."` for foreign-file curation.
 
 ---
 
 ## Rules
 
 - Never invent or fabricate memories.
-- Never add new content — only fix, consolidate, or mark obsolete. Never delete.
-- Obsolete entries are hidden from bulk reads — they don't need to be removed.
-- Skip yourself (the curator agent) if you appear in the queue.
-- One agent per run — be called again for the next agent.
-- Always write to LAST_CURATION.md, even for clean runs ("OK — nothing to fix").
+- Prefer fix/consolidate/mark-obsolete over deletion. Obsolete entries are hidden from bulk reads anyway.
+- **When in doubt, skip.** False obsolete/irrelevant is harder to undo than leaving an entry alone.
+- **Preserve learning value.** E (errors) and L (lessons) about *why* something failed stay valuable even after the bug is fixed — only mark obsolete if the analysis is wrong.
+- **One prefix per batch.** Don't try all 200+ entries at once.

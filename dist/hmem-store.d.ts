@@ -817,39 +817,8 @@ export declare class HmemStore {
         idMap: Record<string, string>;
     };
 }
-/**
- * @deprecated Use resolveHmemPath() (no args) instead. Will be removed in v7.0.
- */
-export declare function resolveHmemPathLegacy(projectDir: string, templateName: string): string;
 export declare function resolveHmemPath(cwdOverride?: string): string;
-/**
- * @deprecated Use `new HmemStore(resolveHmemPath(), config)` instead.
- */
-export declare function openAgentMemory(projectDir: string, templateName: string, config?: HmemConfig): HmemStore;
 /**
  * Open (or create) the shared company knowledge store (company.hmem).
  */
 export declare function openCompanyMemory(projectDir: string, config?: HmemConfig): HmemStore;
-export interface AgentRouteResult {
-    agent: string;
-    score: number;
-    entryCount: number;
-    topEntries: {
-        id: string;
-        title: string;
-        score: number;
-    }[];
-}
-/**
- * Route a task to the best-matching agent based on memory content.
- * @deprecated This function scans the Agents/ directory structure which is being phased out.
- * Future versions will use a config-based file list instead.
- *
- * Scans all agent .hmem files in the project directory and scores them
- * against the provided tags and/or search keywords.
- *
- * Scoring: for each agent store, find entries sharing the given tags
- * with tier-weighted scoring (rare=3, medium=2, common=1).
- * FTS5 keyword matching supplements tag scoring.
- */
-export declare function routeTask(projectDir: string, tags: string[], keywords?: string, limit?: number, config?: HmemConfig): AgentRouteResult[];

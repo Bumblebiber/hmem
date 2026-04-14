@@ -136,7 +136,7 @@ The migration tags old O-entries as `#legacy`. These still use the old flat form
 
 1. **Keep for now** — they don't hurt anything, just take space
 2. **Mark irrelevant** — `update_memory(id="O0042", irrelevant=true)` for entries you don't need
-3. **Delete later** — run `/hmem-self-curate` to review and clean up `#legacy` entries
+3. **Delete later** — run `/hmem-curate` to review and clean up `#legacy` entries
 4. **Auto-purge** — irrelevant entries older than 30 days are automatically deleted
 
 Recommendation: keep them for a week to make sure everything works, then curate.

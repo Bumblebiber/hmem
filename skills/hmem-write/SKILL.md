@@ -457,7 +457,7 @@ Use when: you have new context to add without replacing what's there.
 | L1 wording is wrong/outdated | `update_memory` |
 | A sub-node has wrong detail | `update_memory` |
 | You have new info to add | `append_memory` |
-| Entry is completely wrong | curator: `delete_agent_memory` + `write_memory` |
+| Entry is completely wrong | mark obsolete with `[✓newId]`, then `write_memory` for the correction |
 
 ---
 

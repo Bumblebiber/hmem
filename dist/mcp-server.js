@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync, spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import { searchMemory } from "./memory-search.js";
-import { openCompanyMemory, resolveHmemPath, resolveHmemPathLegacy, routeTask, HmemStore, SimilarEntriesError } from "./hmem-store.js";
+import { openCompanyMemory, resolveHmemPath, HmemStore, SimilarEntriesError } from "./hmem-store.js";
 import { loadHmemConfig, formatPrefixList, getSyncServers } from "./hmem-config.js";
 import { SessionCache } from "./session-cache.js";
 // ---- Environment ----
@@ -92,13 +92,6 @@ function validateFilePath(userPath, hmemDir) {
 function safeError(e) {
     const msg = e instanceof Error ? e.message : String(e);
     return msg.replace(/\/[^\s:)]+/g, "[path]").substring(0, 300);
-}
-/** Validate agent_name against path traversal. */
-function validateAgentName(name) {
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
-        throw new Error(`Invalid agent name "${name}". Use alphanumeric, underscore, or hyphen only (max 64 chars).`);
-    }
-    return name;
 }
 // ---- hmem-sync integration ----
 let lastPullAt = 0;
@@ -478,6 +471,36 @@ function compareIds(a, b) {
 // Load hmem config (hmem.config.json in project dir, falls back to defaults)
 const hmemConfig = loadHmemConfig(PROJECT_DIR);
 log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth}`);
+/** Resolve which store to open. hmem_path wins over storeName. */
+function resolveStore(storeName, hmemPath) {
+    if (hmemPath) {
+        if (!fs.existsSync(hmemPath)) {
+            throw new Error(`hmem_path not found: ${hmemPath}`);
+        }
+        const extConfig = loadHmemConfig(path.dirname(hmemPath));
+        return {
+            store: new HmemStore(hmemPath, extConfig),
+            label: path.basename(hmemPath, ".hmem"),
+            path: hmemPath,
+            isExternal: true,
+        };
+    }
+    if (storeName === "company") {
+        const companyPath = path.join(PROJECT_DIR, "company.hmem");
+        return {
+            store: openCompanyMemory(PROJECT_DIR, hmemConfig),
+            label: "company",
+            path: companyPath,
+            isExternal: false,
+        };
+    }
+    return {
+        store: new HmemStore(HMEM_PATH, hmemConfig),
+        label: path.basename(HMEM_PATH, ".hmem"),
+        path: HMEM_PATH,
+        isExternal: false,
+    };
+}
 // ---- Version upgrade detection ----
 import { createRequire } from "node:module";
 const _require = createRequire(import.meta.url);
@@ -931,7 +954,7 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
     "- Mark as irrelevant: update_memory(id='L0042', content='...', irrelevant=true)\n" +
     "  No correction entry needed (unlike obsolete). Hidden from bulk reads.\n\n" +
     "To add new child nodes, use append_memory. " +
-    "To replace the entire tree, use delete_agent_memory + write_memory.", {
+    "To replace an entire entry, mark the old root obsolete and write a new one.", {
     id: z.string().describe("ID of the entry or node to update, e.g. 'L0003' or 'L0003.2'"),
     content: z.string().min(1).describe("New text content for this node (plain text, no indentation)"),
     links: jsonArrayString(z.array(z.string()).optional()).describe("Optional: update linked entry IDs (root entries only). Replaces existing links."),
@@ -949,11 +972,12 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
         "When any entry in a prefix has active=true, only active entries of that prefix are shown with children in bulk reads. " +
         "Non-active entries in the same prefix are shown as title-only (no children)."),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
-}, async ({ id, content, links, obsolete, favorite, irrelevant, tags, pinned, active, store: storeName }) => {
+    hmem_path: z.string().optional().describe("Curator mode: absolute path to an external .hmem file to update. " +
+        "Overrides the `store` parameter. Sync is skipped for external files."),
+}, async ({ id, content, links, obsolete, favorite, irrelevant, tags, pinned, active, store: storeName, hmem_path }) => {
     try {
-        const hmemStore = storeName === "company"
-            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : new HmemStore(HMEM_PATH, hmemConfig);
+        const { store: hmemStore, label: storeLabelResolved } = resolveStore(storeName, hmem_path);
+        const isExternal = !!hmem_path;
         try {
             if (hmemStore.corrupted) {
                 return {
@@ -961,7 +985,7 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                     isError: true,
                 };
             }
-            if (storeName === "personal")
+            if (storeName === "personal" && !isExternal)
                 syncPullThenPush(HMEM_PATH);
             // Cross-project write notice: if updating a P-sub-node of a project that isn't currently
             // active, do NOT auto-switch. The agent may be doing a quick cross-project edit (e.g.
@@ -969,7 +993,7 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
             // response so the agent can decide whether to load_project() and switch context.
             const rootId = id.includes(".") ? id.split(".")[0] : id;
             let crossProjectNotice = "";
-            if (rootId.startsWith("P") && storeName === "personal") {
+            if (rootId.startsWith("P") && storeName === "personal" && !isExternal) {
                 const current = hmemStore.getActiveProject(currentSessionId());
                 if (!current || current.id !== rootId) {
                     crossProjectNotice = `\n\nNotice: ${rootId} is not the currently active project${current ? ` (active: ${current.id})` : ""}. ` +
@@ -985,7 +1009,7 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                 }
             }
             const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant, tags, pinned, active);
-            const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
+            const storeLabel = storeLabelResolved;
             log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${irrelevant ? " (marked irrelevant)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}${active !== undefined ? ` (active=${active})` : ""}`);
             if (!ok) {
                 return {
@@ -1016,7 +1040,7 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                 parts.push("active flag cleared");
             if (tags !== undefined)
                 parts.push(tags.length > 0 ? `tags: ${tags.join(" ")}` : "tags cleared");
-            if (storeName === "personal") {
+            if (storeName === "personal" && !isExternal) {
                 const retry = syncPushWithRetry(HMEM_PATH);
                 if (!retry.resolved) {
                     parts.push(`⚠ unresolved push conflicts after ${retry.attempts} attempts`);
@@ -1283,13 +1307,14 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
         "Example: read_memory({ context_for: 'P0029' }) — loads P0029 + all contextually related entries."),
     min_tag_score: z.number().optional().describe("Minimum weighted tag score for context_for matches (default: 5). " +
         "Score 4 = e.g. 2 medium tags, or 1 rare + 1 common. Lower = more results, higher = stricter."),
-}, async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator, show_all, tag, stale_days, context_for, min_tag_score }) => {
+    hmem_path: z.string().optional().describe("Curator mode: absolute path to an external .hmem file to read from. " +
+        "Overrides the `store` parameter. Use to audit/curate another .hmem file."),
+}, async ({ id, depth, prefix, after, before, search, limit: maxResults, time, period, time_around, show_obsolete, show_obsolete_path, titles_only, expand, mode, store: storeName, curator, show_all, tag, stale_days, context_for, min_tag_score, hmem_path }) => {
     // Pull before read to get latest from server (30s cooldown)
-    const newEntries = storeName === "personal" ? syncPull(HMEM_PATH) : [];
+    const newEntries = storeName === "personal" && !hmem_path ? syncPull(HMEM_PATH) : [];
     try {
-        const hmemStore = storeName === "company"
-            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : new HmemStore(HMEM_PATH, hmemConfig);
+        const { store: hmemStore, label: storeLabelResolved, path: resolvedPath } = resolveStore(storeName, hmem_path);
+        const isExternal = !!hmem_path;
         try {
             const corruptionWarning = hmemStore.corrupted
                 ? "⚠ WARNING: Memory database is corrupted! Reads may be incomplete. A backup (.corrupt) was saved.\n\n"
@@ -1348,7 +1373,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                         }
                     }
                 }
-                const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
+                const storeLabel = storeLabelResolved;
                 const output = lines.join("\n");
                 // Add token estimate to header line (2nd line)
                 const fmtTok = (n) => n < 1000 ? String(n) : n < 10000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
@@ -1363,7 +1388,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             // Session cache: cached entries shown as titles in subsequent bulk reads
             // Explicit filters (after, before, prefix, stale_days, tag) bypass V2 selection + cache
             const isBulkListing = !id && !search && !time_around && !after && !before && !prefix && !stale_days && !tag;
-            const useCache = isBulkListing && storeName === "personal" && !show_all;
+            const useCache = isBulkListing && storeName === "personal" && !show_all && !isExternal;
             const cachedIds = useCache ? sessionCache.getCachedIds() : undefined;
             const hiddenIds = useCache ? sessionCache.getHiddenIds() : undefined;
             const slotFraction = useCache ? sessionCache.getSlotFraction() : undefined;
@@ -1387,11 +1412,9 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                 directResults: !isBulkListing && !id && !search && !time_around,
             });
             if (entries.length === 0) {
-                const hmemPath = storeName === "company"
-                    ? path.join(PROJECT_DIR, "company.hmem")
-                    : HMEM_PATH;
+                const hmemPath = resolvedPath;
                 const dbExists = fs.existsSync(hmemPath);
-                const label = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
+                const label = storeLabelResolved;
                 const storeInfo = `\nStore: ${label} | DB: ${hmemPath}${dbExists ? "" : " [FILE NOT FOUND]"}`;
                 // Sync hint: if memory is empty and hmem-sync is not configured, suggest it
                 let syncHint = "";
@@ -1423,7 +1446,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                     ? formatGroupedOutput(hmemStore, entries, curator ?? false, hmemConfig)
                     : formatFlatOutput(entries, curator ?? false, expand ?? false);
             const stats = hmemStore.stats();
-            const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
+            const storeLabel = storeLabelResolved;
             const visibleCount = entries.length;
             // Cache status in header (when active)
             const hiddenCount = hiddenIds?.size ?? 0;
@@ -1519,7 +1542,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
             }
             // Inject recent O-entries (session logs) on bulk reads when none are cached
             let recentOSection = "";
-            if (isBulkListing && storeName === "personal" && hmemConfig.bulkReadOEntries > 0) {
+            if (isBulkListing && storeName === "personal" && !isExternal && hmemConfig.bulkReadOEntries > 0) {
                 const cachedOIds = [...(cachedIds || []), ...(hiddenIds || [])].filter(id => id.startsWith("O"));
                 if (cachedOIds.length === 0) {
                     const { text, ids } = formatRecentOEntries(hmemStore, hmemConfig.bulkReadOEntries, 10);
@@ -1722,11 +1745,10 @@ server.tool("find_related", "Find entries related to the given entry. " +
     id: z.string().describe("Root entry ID to find related entries for, e.g. 'P0001'"),
     limit: z.number().min(1).max(20).default(5).describe("Max results to return (default: 5)"),
     store: z.enum(["personal", "company"]).default("personal"),
-}, async ({ id, limit, store: storeName }) => {
+    hmem_path: z.string().optional().describe("Curator mode: absolute path to an external .hmem file. Overrides `store`."),
+}, async ({ id, limit, store: storeName, hmem_path }) => {
     try {
-        const hmemStore = storeName === "company"
-            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : new HmemStore(HMEM_PATH, hmemConfig);
+        const { store: hmemStore } = resolveStore(storeName, hmem_path);
         try {
             const results = hmemStore.findRelatedCombined(id, limit);
             if (results.length === 0) {
@@ -1743,39 +1765,6 @@ server.tool("find_related", "Find entries related to the given entry. " +
         finally {
             hmemStore.close();
         }
-    }
-    catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
-    }
-});
-server.tool("route_task", "[DEPRECATED: route_task requires the legacy Agents/ directory structure. Future versions will use config-based agent discovery.]\n\n" +
-    "Multi-agent only: find the best agent for a task based on memory content. " +
-    "Scans all agent .hmem files in the Agents/ directory and scores them against tags + keywords. " +
-    "Only useful in multi-agent setups (Heimdall, Das Althing) — single-agent users should ignore this tool.\n\n" +
-    "Example: route_task(tags=['#backend', '#sqlite'], keywords='connection pooling bug')\n" +
-    "Returns agents ranked by memory relevance with their top matching entries.", {
-    tags: z.array(z.string()).min(1).describe("Tags to match against agent memories. E.g. ['#backend', '#sqlite', '#bug']"),
-    keywords: z.string().optional().describe("Free-text keywords for FTS5 search supplement. E.g. 'connection pooling timeout'"),
-    limit: z.number().min(1).max(20).default(5).describe("Max agents to return (default: 5)"),
-}, async ({ tags, keywords, limit: maxResults }) => {
-    try {
-        const results = routeTask(PROJECT_DIR, tags, keywords, maxResults, hmemConfig);
-        if (results.length <= 1) {
-            return {
-                content: [{ type: "text", text: results.length === 0
-                            ? "No agents found. route_task requires a multi-agent setup with Agents/*/*.hmem files."
-                            : `Only one agent found (${results[0].agent}). route_task is designed for multi-agent setups.` }],
-            };
-        }
-        const lines = [`## Agent Routing (${results.length} matches)\n`];
-        for (const r of results) {
-            lines.push(`**${r.agent}** — score: ${r.score} (${r.entryCount} matching entries)`);
-            for (const e of r.topEntries) {
-                lines.push(`  ${e.id} (${e.score}) ${e.title}`);
-            }
-            lines.push("");
-        }
-        return { content: [{ type: "text", text: lines.join("\n") }] };
     }
     catch (e) {
         return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
@@ -2243,14 +2232,13 @@ server.tool("memory_health", "Audit report for your memory: broken links (links 
     "and tag orphans (tags with no matching entry). " +
     "Run before/after a curation session.", {
     store: z.enum(["personal", "company"]).default("personal"),
-}, async ({ store: storeName }) => {
+    hmem_path: z.string().optional().describe("Curator mode: absolute path to an external .hmem file. Overrides `store`."),
+}, async ({ store: storeName, hmem_path }) => {
     try {
-        const hmemStore = storeName === "company"
-            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : new HmemStore(HMEM_PATH, hmemConfig);
+        const { store: hmemStore, label: storeLabelResolved } = resolveStore(storeName, hmem_path);
         try {
             const h = hmemStore.healthCheck();
-            const lines = [`Memory health report (${storeName}):`];
+            const lines = [`Memory health report (${storeLabelResolved}):`];
             const ok = (label) => lines.push(`  ✓ ${label}`);
             const warn = (label) => lines.push(`  ⚠ ${label}`);
             if (h.brokenLinks.length === 0) {
@@ -2490,413 +2478,6 @@ server.tool("move_nodes", "Move session (L2), batch (L3), or exchange (L4) nodes
     catch (e) {
         return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
     }
-});
-// ---- Tool: reorder_sessions ----
-server.tool("reorder_sessions", "Reorder L2 session-nodes under an O-entry so their seq matches chronological order by created_at (ascending). Useful after a move_nodes call that landed a session at the wrong seq slot, or to clean up out-of-order sessions after curation. Uses 2-phase rename via staging IDs so existing sub-node IDs are safely rewritten. Returns the number of sessions actually renamed.", {
-    o_id: z.string().describe("O-entry ID whose L2 sessions should be reordered, e.g. 'O0048'"),
-    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
-}, async ({ o_id, store }) => {
-    try {
-        const hmemStore = store === "company"
-            ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-            : new HmemStore(HMEM_PATH, hmemConfig);
-        try {
-            if (store === "personal")
-                syncPullThenPush(HMEM_PATH);
-            const renamed = hmemStore.reorderSessionsByDate(o_id);
-            let text = renamed === 0
-                ? `${o_id}: sessions already in chronological order (no changes).`
-                : `${o_id}: reordered ${renamed} session(s) by created_at.`;
-            if (store === "personal") {
-                const retry = syncPushWithRetry(HMEM_PATH);
-                if (!retry.resolved)
-                    text += `\n⚠ unresolved push conflicts after ${retry.attempts} attempts`;
-                else if (retry.attempts > 1)
-                    text += `\n(resolved push conflict after ${retry.attempts} attempts)`;
-            }
-            return { content: [{ type: "text", text }] };
-        }
-        finally {
-            hmemStore.close();
-        }
-    }
-    catch (e) {
-        return { content: [{ type: "text", text: `ERROR: ${safeError(e)}` }], isError: true };
-    }
-});
-// ---- Curator Tools (ceo role only) ----
-const AUDIT_STATE_FILE = process.env.HMEM_AUDIT_STATE_PATH
-    || path.join(PROJECT_DIR, "audit_state.json");
-function loadAuditState() {
-    try {
-        if (fs.existsSync(AUDIT_STATE_FILE)) {
-            return JSON.parse(fs.readFileSync(AUDIT_STATE_FILE, "utf-8"));
-        }
-    }
-    catch { /* ignore */ }
-    return {};
-}
-function saveAuditState(state) {
-    const dir = path.dirname(AUDIT_STATE_FILE);
-    if (!fs.existsSync(dir))
-        fs.mkdirSync(dir, { recursive: true });
-    const tmp = AUDIT_STATE_FILE + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2), "utf-8");
-    fs.renameSync(tmp, AUDIT_STATE_FILE);
-}
-function isCurator() {
-    return process.env.HMEM_AGENT_ROLE === "ceo";
-}
-server.tool("get_audit_queue", "CURATOR ONLY (ceo role). Returns agents whose .hmem has changed since last audit. " +
-    "Use this at the start of each curation run to get the list of agents to process. " +
-    "Each agent should be audited in a separate spawn to keep context bounded.", {}, async () => {
-    if (!isCurator()) {
-        return {
-            content: [{ type: "text", text: "ERROR: get_audit_queue is only available to the ceo/curator role. Set HMEM_AGENT_ROLE=ceo in your MCP server config to use curation tools." }],
-            isError: true,
-        };
-    }
-    const auditState = loadAuditState();
-    // Scan for .hmem files in PROJECT_DIR and subdirectories (1 level deep)
-    const queue = [];
-    // Check common agent directory patterns
-    for (const subdir of ["Agents", "Assistenten", "agents", "."]) {
-        const dir = path.join(PROJECT_DIR, subdir);
-        if (!fs.existsSync(dir))
-            continue;
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            if (!entry.isDirectory())
-                continue;
-            const name = entry.name;
-            const hmemPath = path.join(dir, name, `${name}.hmem`);
-            if (!fs.existsSync(hmemPath))
-                continue;
-            const stat = fs.statSync(hmemPath);
-            const modified = stat.mtime.toISOString();
-            const lastAudit = auditState[name] || null;
-            if (!lastAudit || new Date(modified) > new Date(lastAudit)) {
-                queue.push({ name, hmemPath, modified, lastAudit });
-            }
-        }
-    }
-    // Also check for standalone memory.hmem in PROJECT_DIR. read_agent_memory
-    // resolves agents via Agents/{name}/{name}.hmem — only offer a "default"
-    // entry here when Agents/default/default.hmem exists too, otherwise the
-    // curator sees a phantom queue item that cannot be read (see issue #11).
-    const defaultHmem = path.join(PROJECT_DIR, "memory.hmem");
-    const defaultAgentHmem = path.join(PROJECT_DIR, "Agents", "default", "default.hmem");
-    if (fs.existsSync(defaultHmem) && fs.existsSync(defaultAgentHmem)) {
-        const stat = fs.statSync(defaultHmem);
-        const modified = stat.mtime.toISOString();
-        const lastAudit = auditState["default"] || null;
-        if (!lastAudit || new Date(modified) > new Date(lastAudit)) {
-            queue.push({ name: "default", hmemPath: defaultHmem, modified, lastAudit });
-        }
-    }
-    // Prune stale audit_state entries that no longer correspond to an actual
-    // .hmem file — they produce phantom queue items on subsequent checks.
-    let prunedCount = 0;
-    const inQueue = new Set(queue.map(q => q.name));
-    for (const name of Object.keys(auditState)) {
-        if (inQueue.has(name))
-            continue;
-        const candidate = path.join(PROJECT_DIR, "Agents", name, `${name}.hmem`);
-        const altCandidate = path.join(PROJECT_DIR, "Assistenten", name, `${name}.hmem`);
-        if (!fs.existsSync(candidate) && !fs.existsSync(altCandidate)) {
-            delete auditState[name];
-            prunedCount++;
-        }
-    }
-    if (prunedCount > 0) {
-        try {
-            saveAuditState(auditState);
-        }
-        catch { /* ignore */ }
-    }
-    if (queue.length === 0) {
-        return {
-            content: [{ type: "text", text: "Audit queue is empty — all agent memories are up to date." }],
-        };
-    }
-    const lines = queue.map(a => `- **${a.name}**: modified ${a.modified.substring(0, 16)}` +
-        (a.lastAudit ? ` | last audited ${a.lastAudit.substring(0, 16)}` : " | never audited"));
-    return {
-        content: [{
-                type: "text",
-                text: `## Audit Queue (${queue.length} agents to check)\n\n${lines.join("\n")}\n\n` +
-                    `Process one agent per spawn: terminate after each to keep context bounded.`,
-            }],
-    };
-});
-server.tool("read_agent_memory", "CURATOR ONLY (ceo role). Read the full memory of any agent (for audit purposes). " +
-    "Returns all entries at the specified depth. Use depth=3 for a thorough audit.", {
-    agent_name: z.string().describe("Template name of the agent, e.g. 'THOR', 'SIGURD'"),
-    depth: z.number().int().min(1).max(5).optional().describe("Depth to read (1-5, default: 3)"),
-}, async ({ agent_name, depth }) => {
-    if (!isCurator()) {
-        return {
-            content: [{ type: "text", text: "ERROR: read_agent_memory is only available to the ceo/curator role." }],
-            isError: true,
-        };
-    }
-    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, validateAgentName(agent_name));
-    if (!fs.existsSync(hmemPath)) {
-        return {
-            content: [{ type: "text", text: `No .hmem found for agent "${agent_name}" (expected: ${hmemPath}).` }],
-        };
-    }
-    const store = new HmemStore(hmemPath, hmemConfig);
-    try {
-        const entries = store.read({ depth: depth || 3, limit: 500 });
-        const stats = store.stats();
-        if (entries.length === 0) {
-            return { content: [{ type: "text", text: `Agent "${agent_name}" has no memory entries.` }] };
-        }
-        const lines = [`## Memory: ${agent_name} (${stats.total} entries, depth=${depth || 3})\n`];
-        for (const e of entries) {
-            const date = e.created_at.substring(0, 10);
-            const access = e.access_count > 0 ? ` (${e.access_count}x)` : "";
-            const obsoleteTag = e.obsolete ? " [⚠ OBSOLETE]" : "";
-            const irrelevantTag = e.irrelevant ? " [- IRRELEVANT]" : "";
-            const favTag = e.favorite ? " [♥]" : "";
-            lines.push(`[${e.id}] ${date}${favTag}${obsoleteTag}${irrelevantTag}${access}`);
-            lines.push(`  ${e.title}`);
-            if (e.level_1 && e.level_1 !== e.title) {
-                for (const bodyLine of e.level_1.split("\n")) {
-                    lines.push(`  ${bodyLine}`);
-                }
-            }
-            if (e.children && e.children.length > 0) {
-                for (const child of e.children) {
-                    const indent = "  ".repeat(child.depth - 1);
-                    const hint = (child.child_count ?? 0) > 0
-                        ? `  (${child.child_count} — use id="${child.id}" to expand)`
-                        : "";
-                    lines.push(`${indent}[${child.id}] ${child.title}${hint}`);
-                }
-            }
-            if (e.links?.length)
-                lines.push(`  Links: ${e.links.join(", ")}`);
-            lines.push("");
-        }
-        log(`read_agent_memory [CURATOR]: ${agent_name} depth=${depth || 3} → ${entries.length} entries`);
-        return { content: [{ type: "text", text: lines.join("\n") }] };
-    }
-    finally {
-        store.close();
-    }
-});
-server.tool("fix_agent_memory", "CURATOR ONLY (ceo role). Correct a specific entry or node in any agent's memory.\n\n" +
-    "Accepts both root IDs ('L0003') and compound node IDs ('L0003.2'):\n" +
-    "- Root ID: updates L1 summary text, obsolete/irrelevant/favorite flags\n" +
-    "- Compound node ID: updates the content of that specific node\n\n" +
-    "To fix wrong prefix: delete + re-add (prefix cannot be changed in-place).\n" +
-    "To consolidate fragmented P entries: use read_agent_memory to read them, " +
-    "fix_agent_memory to update the keeper entry, delete_agent_memory to remove duplicates.", {
-    agent_name: z.string().describe("Template name of the agent, e.g. 'THOR'"),
-    entry_id: z.string().describe("Root entry ID ('L0003') or compound node ID ('L0003.2'). " +
-        "Node IDs update memory_nodes.content directly."),
-    content: z.string().optional().describe("New text content. For root entries: replaces the L1 summary. " +
-        "For node IDs: replaces that node's content."),
-    obsolete: z.coerce.boolean().optional().describe("Mark or unmark as obsolete (root entries only). " +
-        "Obsolete entries stay in memory but are shown with [⚠ OBSOLETE]."),
-    favorite: z.coerce.boolean().optional().describe("Set or clear the [♥] favorite flag (root entries only)."),
-    irrelevant: z.coerce.boolean().optional().describe("Mark or unmark as irrelevant (root entries only). Irrelevant entries are hidden from bulk reads. No correction entry needed."),
-}, async ({ agent_name, entry_id, content, obsolete, favorite, irrelevant }) => {
-    if (!isCurator()) {
-        return {
-            content: [{ type: "text", text: "ERROR: fix_agent_memory is only available to the ceo/curator role." }],
-            isError: true,
-        };
-    }
-    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, validateAgentName(agent_name));
-    if (!fs.existsSync(hmemPath)) {
-        return {
-            content: [{ type: "text", text: `No .hmem found for agent "${agent_name}".` }],
-            isError: true,
-        };
-    }
-    const store = new HmemStore(hmemPath, hmemConfig);
-    try {
-        const isNode = entry_id.includes(".");
-        let ok = false;
-        const changed = [];
-        if (isNode) {
-            // Compound node ID — update memory_nodes.content
-            if (!content) {
-                return {
-                    content: [{ type: "text", text: "ERROR: 'content' is required when fixing a compound node ID." }],
-                    isError: true,
-                };
-            }
-            ok = store.updateNode(entry_id, content);
-            if (ok)
-                changed.push("content");
-        }
-        else {
-            // Root entry — update memories table
-            if (!content && obsolete === undefined && favorite === undefined && irrelevant === undefined) {
-                return {
-                    content: [{ type: "text", text: "ERROR: Provide at least one of: content, obsolete, favorite, irrelevant." }],
-                    isError: true,
-                };
-            }
-            if (content) {
-                ok = store.updateNode(entry_id, content, undefined, obsolete, favorite, true /* curatorBypass */, irrelevant);
-                changed.push("L1");
-                if (obsolete !== undefined)
-                    changed.push("obsolete");
-                if (favorite !== undefined)
-                    changed.push("favorite");
-                if (irrelevant !== undefined)
-                    changed.push("irrelevant");
-            }
-            else {
-                const fields = {};
-                if (obsolete !== undefined)
-                    fields.obsolete = obsolete;
-                if (favorite !== undefined)
-                    fields.favorite = favorite;
-                if (irrelevant !== undefined)
-                    fields.irrelevant = irrelevant;
-                ok = store.update(entry_id, fields);
-            }
-            if (!content && obsolete !== undefined)
-                changed.push("obsolete");
-            if (!content && favorite !== undefined)
-                changed.push("favorite");
-            if (!content && irrelevant !== undefined)
-                changed.push("irrelevant");
-        }
-        log(`fix_agent_memory [CURATOR]: ${agent_name} ${entry_id} → ${ok ? "updated" : "not found"} (${changed.join(", ")})`);
-        return {
-            content: [{
-                    type: "text",
-                    text: ok
-                        ? `Fixed: ${agent_name}/${entry_id} (${changed.join(", ")})`
-                        : `ERROR: Entry "${entry_id}" not found in ${agent_name}'s memory.`,
-                }],
-            isError: !ok,
-        };
-    }
-    finally {
-        store.close();
-    }
-});
-server.tool("append_agent_memory", "CURATOR ONLY (ceo role). Append new child nodes to an existing entry in any agent's memory. " +
-    "Use exclusively for merging/consolidating entries — e.g. when collapsing two P entries into one, " +
-    "carry over the best content from the entry being deleted into the keeper before deleting.\n\n" +
-    "Content is tab-indented relative to the parent (same as append_memory):\n" +
-    "  0 tabs = direct child of id\n" +
-    "  1 tab  = grandchild, etc.", {
-    agent_name: z.string().describe("Template name of the agent, e.g. 'THOR'"),
-    id: z.string().describe("Root entry ID or parent node ID to append children to, e.g. 'P0004' or 'P0004.2'"),
-    content: z.string().min(1).describe("Tab-indented content to append. 0 tabs = direct child of id."),
-}, async ({ agent_name, id, content }) => {
-    if (!isCurator()) {
-        return {
-            content: [{ type: "text", text: "ERROR: append_agent_memory is only available to the ceo/curator role." }],
-            isError: true,
-        };
-    }
-    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, validateAgentName(agent_name));
-    if (!fs.existsSync(hmemPath)) {
-        return {
-            content: [{ type: "text", text: `No .hmem found for agent "${agent_name}".` }],
-            isError: true,
-        };
-    }
-    const store = new HmemStore(hmemPath, hmemConfig);
-    try {
-        const result = store.appendChildren(id, content);
-        log(`append_agent_memory [CURATOR]: ${agent_name} ${id} + ${result.count} nodes → [${result.ids.join(", ")}]`);
-        if (result.count === 0) {
-            return {
-                content: [{ type: "text", text: "No nodes appended — content was empty or contained no valid lines." }],
-            };
-        }
-        return {
-            content: [{
-                    type: "text",
-                    text: `Appended ${result.count} node${result.count === 1 ? "" : "s"} to ${agent_name}/${id}.\n` +
-                        `New top-level children: ${result.ids.join(", ")}`,
-                }],
-        };
-    }
-    catch (e) {
-        return {
-            content: [{ type: "text", text: `ERROR: ${safeError(e)}` }],
-            isError: true,
-        };
-    }
-    finally {
-        store.close();
-    }
-});
-server.tool("delete_agent_memory", "Delete an entry from an agent's memory. " +
-    "Own entries: always allowed. Other agents: curator/ceo role required. " +
-    "Use sparingly — only for exact duplicates or entries that are factually wrong and cannot be fixed.", {
-    agent_name: z.string().describe("Template name of the agent, e.g. 'THOR'"),
-    entry_id: z.string().describe("Entry ID to delete, e.g. 'E0007'"),
-}, async ({ agent_name, entry_id }) => {
-    validateAgentName(agent_name);
-    const hmemPath = resolveHmemPathLegacy(PROJECT_DIR, agent_name);
-    if (!fs.existsSync(hmemPath)) {
-        return {
-            content: [{ type: "text", text: `No .hmem found for agent "${agent_name}".` }],
-            isError: true,
-        };
-    }
-    const isOwnMemory = hmemPath === HMEM_PATH;
-    // Curator can delete any agent's entries; non-curators can only delete their own
-    if (!isOwnMemory && !isCurator()) {
-        return {
-            content: [{ type: "text", text: "ERROR: delete_agent_memory for other agents is only available to the ceo/curator role. To delete your own entries, use your own agent_name." }],
-            isError: true,
-        };
-    }
-    if (!fs.existsSync(hmemPath)) {
-        return {
-            content: [{ type: "text", text: `No .hmem found for agent "${agent_name}".` }],
-            isError: true,
-        };
-    }
-    const store = new HmemStore(hmemPath, hmemConfig);
-    try {
-        const ok = store.delete(entry_id);
-        log(`delete_agent_memory [${isOwnMemory ? "SELF" : "CURATOR"}]: ${agent_name} ${entry_id} → ${ok ? "deleted" : "not found"}`);
-        return {
-            content: [{
-                    type: "text",
-                    text: ok
-                        ? `Deleted: ${agent_name}/${entry_id}`
-                        : `ERROR: Entry "${entry_id}" not found in ${agent_name}'s memory.`,
-                }],
-            isError: !ok,
-        };
-    }
-    finally {
-        store.close();
-    }
-});
-server.tool("mark_audited", "CURATOR ONLY (ceo role). Mark an agent as audited (updates timestamp in audit_state.json). " +
-    "Call this after finishing each agent in the audit queue.", {
-    agent_name: z.string().describe("Template name of the agent that was audited, e.g. 'THOR'"),
-}, async ({ agent_name }) => {
-    if (!isCurator()) {
-        return {
-            content: [{ type: "text", text: "ERROR: mark_audited is only available to the ceo/curator role." }],
-            isError: true,
-        };
-    }
-    validateAgentName(agent_name);
-    const state = loadAuditState();
-    state[agent_name] = new Date().toISOString();
-    saveAuditState(state);
-    log(`mark_audited [CURATOR]: ${agent_name}`);
-    return {
-        content: [{ type: "text", text: `Marked as audited: ${agent_name} (${state[agent_name].substring(0, 16)})` }],
-    };
 });
 // ---- Output Formatting ----
 /**

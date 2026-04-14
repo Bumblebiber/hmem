@@ -382,7 +382,7 @@ After any `read_memory()` call, scan for:
 - Don't curate during time-critical tasks (the user is waiting for a bug fix, not curation)
 - Don't mark entries irrelevant if you're unsure — ask the user first
 
-For a thorough deep-clean, use the `/hmem-self-curate` skill.
+For a thorough deep-clean, use the `/hmem-curate` skill.
 
 ---
 
