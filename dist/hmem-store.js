@@ -253,6 +253,25 @@ export class HmemStore {
         const rootId = `${prefix}${String(seq).padStart(4, "0")}`;
         const timestamp = new Date().toISOString();
         const { title, level1, nodes } = this.parseTree(content, rootId);
+        // Schema validation: validate parsed section nodes, not raw content.
+        // The parser already separates section titles from body text, so this correctly
+        // ignores body lines that happen to be at L2 depth after a blank line.
+        const schema = this.cfg.schemas?.[prefix];
+        if (schema) {
+            const sectionNames = new Set(schema.sections.map(s => s.name.toLowerCase()));
+            const directChildren = nodes.filter(n => n.depth === 2 && n.parent_id === rootId);
+            const invalid = directChildren.filter(n => {
+                const firstWord = n.title.toLowerCase().split(/\s*[—\-:]/)[0].trim();
+                return ![...sectionNames].some(sec => firstWord.startsWith(sec));
+            });
+            if (invalid.length > 0) {
+                const sectionList = schema.sections.map((s, i) => `.${i + 1} ${s.name}`).join(", ");
+                throw new Error(`${prefix}-entry schema violation.\n` +
+                    `Valid sections: ${sectionList}\n` +
+                    `Invalid L2 nodes: ${invalid.map(n => `"${n.title.substring(0, 50)}"`).join(", ")}\n\n` +
+                    `L2 node names must match defined schema sections.`);
+            }
+        }
         if (!level1) {
             throw new Error("Content must have at least one line (Level 1).");
         }
@@ -398,7 +417,17 @@ export class HmemStore {
                 }
             }
         })();
-        return { id: rootId, timestamp };
+        // Build compact structure summary for agent verification
+        const l2Direct = nodes.filter(n => n.depth === 2 && n.parent_id === rootId);
+        const structLines = l2Direct.map(n => {
+            const childCount = nodes.filter(c => c.parent_id === n.id).length;
+            return childCount > 0 ? `${n.title} [+${childCount}]` : n.title;
+        });
+        const hasBody = level1 !== title && level1.trim().length > 0;
+        if (hasBody)
+            structLines.unshift(`(body: ${level1.substring(0, 60).replace(/\n/g, " ")}${level1.length > 60 ? "…" : ""})`);
+        const structure = structLines.length > 0 ? structLines.join("\n") : undefined;
+        return { id: rootId, timestamp, structure };
     }
     /**
      * Write a linear entry with explicit content at each level (no tree branching).
@@ -2522,6 +2551,14 @@ export class HmemStore {
      */
     readEntry(id) {
         return this.db.prepare("SELECT id, prefix, seq, level_1, links FROM memories WHERE id = ?").get(id) ?? null;
+    }
+    /** Get the display title of any entry or sub-node by ID. Used by update_memory body-only mode. */
+    getTitle(id) {
+        if (id.includes(".")) {
+            return this.readNode(id)?.title ?? null;
+        }
+        const row = this.db.prepare("SELECT title FROM memories WHERE id = ?").get(id);
+        return row?.title ?? null;
     }
     /**
      * Find or create the O-entry for a given project sequence number.

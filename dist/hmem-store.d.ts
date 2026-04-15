@@ -180,6 +180,8 @@ export interface ReadOptions {
 export interface WriteResult {
     id: string;
     timestamp: string;
+    /** Compact tree summary of created L2 nodes (for agent verification). */
+    structure?: string;
 }
 export interface ImportResult {
     inserted: number;
@@ -376,7 +378,7 @@ export declare class HmemStore {
     /** Find and tag untagged checkpoint summary nodes ([CP] prefix) under an O-entry. */
     tagNewCheckpointSummaries(oEntryId: string): string[];
     /** Get tags for a single entry/node. */
-    private fetchTags;
+    fetchTags(entryId: string): string[];
     /** Bulk-fetch tags for multiple IDs at once. */
     private fetchTagsBulk;
     /**
@@ -499,6 +501,8 @@ export declare class HmemStore {
         level_1: string;
         links: string | null;
     } | null;
+    /** Get the display title of any entry or sub-node by ID. Used by update_memory body-only mode. */
+    getTitle(id: string): string | null;
     /**
      * Find or create the O-entry for a given project sequence number.
      * O0048 belongs to P0048, O0000 is the non-project catch-all.

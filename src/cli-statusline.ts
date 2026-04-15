@@ -115,12 +115,16 @@ async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus>
       const marker = sessionId ? readSessionMarker(sessionId) : null;
 
       let projRow: { id: string; title: string } | undefined;
-      if (marker && marker.projectId) {
+      if (marker?.projectId) {
+        // Session marker has an explicit project → use it
         projRow = db.prepare(
           "SELECT id, title FROM memories WHERE id = ? AND prefix='P' AND obsolete!=1 LIMIT 1"
         ).get(marker.projectId) as { id: string; title: string } | undefined;
-      }
-      if (!projRow) {
+      } else if (marker?.deactivated) {
+        // Explicitly deactivated after /clear → show "no project", skip all fallbacks
+        projRow = undefined;
+      } else {
+        // No marker, or marker with null and not explicitly deactivated → fall through to fallbacks
         // Fallback 1: per-process active-project file (written by MCP server on load_project).
         // MCP server is a direct child of Claude Code → writes file keyed by Claude Code PID.
         // Statusline runs via "bash -c" → Claude Code → bash → statusline.
@@ -132,12 +136,12 @@ async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus>
             "SELECT id, title FROM memories WHERE id = ? AND prefix='P' AND obsolete!=1 LIMIT 1"
           ).get(activeFromFile) as { id: string; title: string } | undefined;
         }
-      }
-      if (!projRow) {
-        // Fallback 2: shared DB active flag (legacy — unreliable in multi-session setups)
-        projRow = db.prepare(
-          "SELECT id, title FROM memories WHERE prefix='P' AND active=1 AND obsolete!=1 LIMIT 1"
-        ).get() as { id: string; title: string } | undefined;
+        if (!projRow) {
+          // Fallback 2: shared DB active flag (legacy — unreliable in multi-session setups)
+          projRow = db.prepare(
+            "SELECT id, title FROM memories WHERE prefix='P' AND active=1 AND obsolete!=1 LIMIT 1"
+          ).get() as { id: string; title: string } | undefined;
+        }
       }
 
       let project = "";

@@ -796,6 +796,87 @@ server.tool("search_memory", "Searches the collective memory: agent memories (le
     };
 });
 // ---- Humanlike Memory (.hmem) ----
+/** Resolve a template string with {key} placeholders. */
+function resolveTemplate(template, vars) {
+    return template.replace(/\{([\w.]+)\}/g, (_, key) => vars[key] ?? `{${key}}`);
+}
+/** Execute configured reactions after a write/append/update event.
+ *  Returns notification lines to append to the tool response.
+ *  Runs within the caller's already-open hmemStore — no extra DB connection needed. */
+function executeReactions(event, hmemStore, cfg) {
+    if (!cfg.reactions || cfg.reactions.length === 0)
+        return [];
+    const notifications = [];
+    for (const reaction of cfg.reactions) {
+        if (reaction.on !== event.type)
+            continue;
+        if (reaction.prefix && reaction.prefix !== event.prefix)
+            continue;
+        if ("sectionName" in reaction && reaction.sectionName && reaction.sectionName !== event.sectionTitle)
+            continue;
+        if (reaction.action === "create_entry") {
+            // Title: first line of content; skip if it equals the section header
+            const firstLine = event.content.split("\n")[0].trim();
+            const sectionHeader = event.sectionTitle ?? "";
+            const nodeTitle = firstLine.toLowerCase() === sectionHeader.toLowerCase() || !firstLine
+                ? (() => {
+                    // Use root entry title + sectionName for the L-entry
+                    const rootEntry = hmemStore.readEntry(event.rootId);
+                    const rootTitle = rootEntry ? rootEntry.level_1.split("\n")[0].trim() : event.rootId;
+                    return `${rootTitle} — ${sectionHeader}`;
+                })()
+                : firstLine;
+            // Build entry content: title + schema sections (if schema exists for createPrefix)
+            const schema = cfg.schemas?.[reaction.createPrefix];
+            const sectionLines = schema
+                ? "\n" + schema.sections.map(s => `\t${s.name}`).join("\n")
+                : "";
+            const newContent = nodeTitle + sectionLines;
+            // Tags: inherited from root + prefix-specific defaults
+            const rootTags = reaction.inheritTags ? hmemStore.fetchTags(event.rootId) : [];
+            const extraTags = reaction.createPrefix === "E" ? ["#open"] : [];
+            const allTags = [...new Set([...rootTags, ...extraTags])];
+            const result = hmemStore.write(reaction.createPrefix, newContent, [event.nodeId], undefined, false, allTags);
+            // For append reactions: rewrite the first new child to include the new entry reference
+            if (event.type === "append" && event.newChildIds && event.newChildIds.length > 0) {
+                for (const childId of event.newChildIds) {
+                    const childNode = hmemStore.readNode(childId);
+                    const childTitle = childNode?.title ?? "";
+                    hmemStore.updateNode(childId, `[${result.id}] ${childTitle}`);
+                }
+            }
+            if (reaction.notify) {
+                notifications.push(resolveTemplate(reaction.notify, {
+                    "created.id": result.id,
+                    "node.title": nodeTitle,
+                    "parent.id": event.rootId,
+                    "node.id": event.nodeId,
+                }));
+            }
+        }
+        else if (reaction.action === "notify") {
+            notifications.push(resolveTemplate(reaction.notify, {
+                "parent.id": event.rootId,
+                "node.id": event.nodeId,
+                "section.name": event.sectionTitle ?? "",
+            }));
+        }
+        else if (reaction.action === "check_related") {
+            const entryTags = hmemStore.fetchTags(event.rootId);
+            if (entryTags.length >= 2) {
+                const related = hmemStore.findRelated(event.rootId, entryTags, 10)
+                    .filter(r => r.id.startsWith(reaction.checkPrefix));
+                if (related.length > 0) {
+                    const matchList = related.map(r => `  ${r.id}  ${r.title}`).join("\n");
+                    if (reaction.notify) {
+                        notifications.push(resolveTemplate(reaction.notify, { "matches": matchList }));
+                    }
+                }
+            }
+        }
+    }
+    return notifications;
+}
 const prefixList = formatPrefixList(hmemConfig.prefixes);
 const prefixKeys = Object.keys(hmemConfig.prefixes);
 const REMINDER_HINT = "\nACTION: Scan the entries above. Mark stale/noise as irrelevant, important ones as favorite, wrong ones as obsolete. Do it NOW — don't just note it.\n  update_memory(id=\"X\", irrelevant=true)  — hide noise\n  update_memory(id=\"X\", favorite=true)    — pin important\n  update_memory(id=\"X\", content=\"Wrong — see [✓correctionId]\", obsolete=true)  — correct mistakes";
@@ -806,20 +887,23 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
     "  Level 3: 2 tabs — even more detail\n" +
     "  Level 4: 3 tabs — fine-grained detail\n" +
     "  Level 5: 4 tabs — raw context/data\n" +
-    "Body text (shown on drill-down, hidden in listings) — use a blank line to separate title from body:\n" +
-    "  Title line\\n\\nBody text here.\\nMore body text.\\n\\tChild title\\n\\n\\tChild body text.\n" +
+    "Body text (shown on drill-down, hidden in listings): use the 'body' parameter — or a blank line in 'content':\n" +
+    "  write_memory(title='My Entry', body='Detailed body text.', content='\\tSection\\n\\t\\tDetails')\n" +
+    "  write_memory(content='My Entry\\n\\nBody text.\\n\\tSection\\n\\t\\tDetails')  ← legacy format\n" +
     "The system auto-assigns an ID and timestamp. " +
     `Use prefix to categorize: ${prefixList}.\n\n` +
     "Store types:\n" +
     "  personal (default): Your private memory\n", {
     prefix: z.string().toUpperCase().describe(`Memory category: ${prefixList}`),
-    content: z.string().min(3).describe("The memory content. Use tab indentation for depth levels. Separate title from body with a blank line (like git commits).\n" +
-        "Example:\n" +
-        "Council Dashboard for Althing Inc.\n\n" +
-        "Built a real-time dashboard with React + Vite. ShadcnUI for components, SSE for live updates.\n" +
-        "\tFrontend architecture\n\n" +
-        "\tReact + Vite, ShadcnUI components, SSE for real-time updates\n" +
-        "\t\tAuth was tricky — EventSource can't send custom headers"),
+    title: z.string().optional().describe("Optional: explicit root title. If provided, overrides the first line of 'content'. Use together with 'body'."),
+    body: z.string().optional().describe("Optional: explicit body text for the root entry (shown on drill-down, hidden in listings). " +
+        "Prefer this over blank-line tricks in 'content'. " +
+        "Example: write_memory(prefix='P', title='My Project', body='Full description.', content='\\tSection\\n\\t\\tDetails')"),
+    content: z.string().optional().describe("Memory content with tab-indented sub-nodes. " +
+        "If 'title' is provided: only sub-nodes here (no L1 title needed). " +
+        "Legacy mode (no 'title'): full entry including title + blank-line body.\n" +
+        "Example (title+body mode): content='\\tSection\\n\\t\\tDetails'\n" +
+        "Example (legacy): content='My Entry\\n\\nBody text.\\n\\tSection'"),
     links: jsonArrayString(z.array(z.string()).optional()).describe("Optional: IDs of related memories, e.g. ['P0001', 'L0005']"),
     favorite: z.coerce.boolean().optional().describe("Mark this entry as a favorite — shown with [♥] in bulk reads and always inlined with L2 detail. " +
         "Use for reference info you need to see every session, regardless of category."),
@@ -830,44 +914,42 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
     force: z.coerce.boolean().optional().describe("Force creation of a new root entry even if existing entries share tags. " +
         "Only use when you intentionally want a separate entry, not a child of an existing one."),
-}, async ({ prefix, content, links, favorite, tags, pinned, store: storeName, force }) => {
+}, async ({ prefix, title: titleParam, body: bodyParam, content: rawContent, links, favorite, tags, pinned, store: storeName, force }) => {
     const isFirstTime = !fs.existsSync(HMEM_PATH);
+    // Build effective content from title/body/content params
+    let content;
+    if (titleParam !== undefined) {
+        // New mode: title + optional body + optional sub-nodes
+        const subNodes = rawContent?.trim() ?? "";
+        content = titleParam
+            + (bodyParam ? "\n\n" + bodyParam : "")
+            + (subNodes ? "\n" + subNodes : "");
+    }
+    else if (rawContent !== undefined && rawContent.trim().length >= 3) {
+        // Legacy mode: full content string
+        if (bodyParam) {
+            // Inject body after first line
+            const nl = rawContent.indexOf("\n");
+            const firstLine = nl >= 0 ? rawContent.substring(0, nl) : rawContent;
+            const rest = nl >= 0 ? rawContent.substring(nl + 1) : "";
+            content = firstLine + "\n\n" + bodyParam + (rest.trim() ? "\n" + rest : "");
+        }
+        else {
+            content = rawContent;
+        }
+    }
+    else {
+        return {
+            content: [{ type: "text", text: "ERROR: Either 'title' or 'content' (min 3 chars) must be provided." }],
+            isError: true,
+        };
+    }
     // O-prefix is reserved for flush_context
     if (prefix.toUpperCase() === "O") {
         return {
             content: [{ type: "text", text: "ERROR: O-prefix entries are created via flush_context, not write_memory." }],
             isError: true,
         };
-    }
-    // Schema validation: if a schema is defined for this prefix, validate L2 node names.
-    // This prevents agents from creating off-schema sections in structured entries.
-    const writeSchema = hmemConfig.schemas?.[prefix.toUpperCase()];
-    if (writeSchema) {
-        const sectionNames = writeSchema.sections.map(s => s.name.toLowerCase());
-        const lines = content.split("\n");
-        // L2 candidates: exactly one tab indent AND not a legacy body line ("\t> ...").
-        // Blank-line-separated bodies under an L2 title are safe to ignore here because
-        // they appear AFTER a valid L2 title and fail the schema check only if the user
-        // placed free-form prose right under a valid section — in which case the title
-        // line above already satisfies the schema.
-        const l2Lines = lines
-            .filter(l => /^\t[^\t]/.test(l) && !/^\t>(?: |$)/.test(l))
-            .map(l => l.replace(/^\t/, "").toLowerCase().trim());
-        if (l2Lines.length > 0) {
-            const invalid = l2Lines.filter(l => {
-                const firstWord = l.split(/\s*[—\-:]/)[0].trim();
-                return !sectionNames.some(sec => firstWord.startsWith(sec));
-            });
-            if (invalid.length > 0) {
-                return {
-                    content: [{ type: "text", text: `ERROR: ${prefix.toUpperCase()}-entry schema violation.\n` +
-                                `Valid sections: ${writeSchema.sections.map(s => s.name).join(", ")}\n` +
-                                `Invalid L2 nodes: ${invalid.map(l => `"${l.substring(0, 50)}"`).join(", ")}\n\n` +
-                                `L2 node names must match defined schema sections. Fix and retry.` }],
-                    isError: true,
-                };
-            }
-        }
     }
     try {
         const hmemStore = storeName === "company"
@@ -893,6 +975,13 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
             const result = hmemStore.write(prefix, content, links, undefined, favorite, tags, pinned, force);
             const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
             log(`write_memory [${storeLabel}]: ${result.id} (prefix=${prefix})`);
+            // Reactions (must run before syncPush to include in same sync batch)
+            const reactionNotes = storeName === "personal" && hmemConfig.reactions?.length
+                ? executeReactions({
+                    type: "write", nodeId: result.id, rootId: result.id,
+                    prefix, sectionTitle: null, content,
+                }, hmemStore, hmemConfig)
+                : [];
             if (storeName === "personal")
                 syncPush(HMEM_PATH);
             const firstTimeNote = isFirstTime
@@ -902,23 +991,29 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
             let relatedHint = "";
             if ((prefix === "E" || prefix === "D") && tags && tags.length > 0) {
                 const related = hmemStore.findRelated(result.id, tags, 5);
-                // Filter to E/D entries only for cross-referencing
                 const relevantRelated = related.filter(r => r.id.startsWith("E") || r.id.startsWith("D"));
                 if (relevantRelated.length > 0) {
                     relatedHint = "\n\nSimilar errors/decisions (by tag overlap):\n" +
                         relevantRelated.map(r => `  ${r.id}  ${r.title}`).join("\n");
                 }
             }
-            // For E entries: note the auto-scaffolded structure
+            // E-entry schema note: schema-driven if defined, else static fallback
+            const eSchema = hmemConfig.schemas?.["E"];
             const eNote = prefix === "E"
-                ? `\nSchema: .1 Analysis, .2 Possible fixes, .3 Fixing attempts, .4 Solution, .5 Cause, .6 Key Learnings`
+                ? `\nSchema: ${eSchema ? eSchema.sections.map((s, i) => `.${i + 1} ${s.name}`).join(", ") : ".1 Analysis, .2 Possible Fixes, .3 Fixing Attempts, .4 Solution, .5 Cause, .6 Key Learnings"}`
+                : "";
+            const reactionSection = reactionNotes.length > 0
+                ? "\n\n" + reactionNotes.join("\n\n")
+                : "";
+            const structNote = result.structure
+                ? `\nCreated:\n${result.structure.split("\n").map(l => `  ${l}`).join("\n")}`
                 : "";
             return {
                 content: [{
                         type: "text",
                         text: `Memory saved: ${result.id} (${result.timestamp.substring(0, 19)})\n` +
                             `Store: ${storeLabel} | Category: ${prefix}` +
-                            firstTimeNote + eNote + relatedHint,
+                            firstTimeNote + eNote + structNote + relatedHint + reactionSection,
                     }],
             };
         }
@@ -942,11 +1037,11 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
 });
 server.tool("update_memory", "Update the text of an existing memory entry or sub-node (your own personal memory). " +
     "Only modifies the text at the specified ID — children are preserved unchanged.\n\n" +
-    "Separate title from body with a blank line (like git commits): 'New title\\n\\nBody line 1\\nBody line 2'. Title is shown in listings, body on drill-down.\n\n" +
     "Use cases:\n" +
-    "- Correct outdated wording: update_memory(id='L0003', content='corrected summary')\n" +
-    "- Add title/body split: update_memory(id='L0003', content='Short title\\n\\nDetailed body text')\n" +
-    "- Fix a sub-node: update_memory(id='L0003.2', content='node title\\n\\nnode body')\n" +
+    "- Update title only: update_memory(id='L0003', content='corrected summary')\n" +
+    "- Update body only: update_memory(id='L0003', body='New detailed body text.')  ← title preserved\n" +
+    "- Update title+body: update_memory(id='L0003', content='Short title', body='Detailed body text.')\n" +
+    "- Fix a sub-node: update_memory(id='L0003.2', content='node title', body='node body')\n" +
     "- Mark as obsolete: FIRST write the correction, THEN update with [✓ID] reference:\n" +
     "  1. write_memory(prefix='E', content='Correct fix is...') → E0076\n" +
     "  2. update_memory(id='E0042', content='Wrong — see [✓E0076]', obsolete=true)\n" +
@@ -956,7 +1051,12 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
     "To add new child nodes, use append_memory. " +
     "To replace an entire entry, mark the old root obsolete and write a new one.", {
     id: z.string().describe("ID of the entry or node to update, e.g. 'L0003' or 'L0003.2'"),
-    content: z.string().min(1).describe("New text content for this node (plain text, no indentation)"),
+    content: z.string().optional().describe("New title (and optionally body via blank-line format). Plain text, no indentation. " +
+        "If 'body' is also provided, this becomes the new title and 'body' becomes the new body. " +
+        "Omit to update only body text (preserves existing title)."),
+    body: z.string().optional().describe("New body text for this node (shown on drill-down). " +
+        "If 'content' is also provided: content=new title, body=new body. " +
+        "If only 'body' is provided: existing title is preserved, only body text is updated."),
     links: jsonArrayString(z.array(z.string()).optional()).describe("Optional: update linked entry IDs (root entries only). Replaces existing links."),
     obsolete: z.coerce.boolean().optional().describe("Mark this root entry as no longer valid (root entries only). " +
         "Requires [✓ID] correction reference in content (e.g. 'Wrong — see [✓E0076]')."),
@@ -974,10 +1074,29 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
     hmem_path: z.string().optional().describe("Curator mode: absolute path to an external .hmem file to update. " +
         "Overrides the `store` parameter. Sync is skipped for external files."),
-}, async ({ id, content, links, obsolete, favorite, irrelevant, tags, pinned, active, store: storeName, hmem_path }) => {
+}, async ({ id, content: rawContent, body: bodyParam, links, obsolete, favorite, irrelevant, tags, pinned, active, store: storeName, hmem_path }) => {
     try {
         const { store: hmemStore, label: storeLabelResolved } = resolveStore(storeName, hmem_path);
         const isExternal = !!hmem_path;
+        // Build effective content from body param if provided
+        let content = rawContent;
+        if (bodyParam !== undefined) {
+            if (content !== undefined && content.trim().length > 0) {
+                // content = new title, body = new body
+                content = content.trim() + "\n\n" + bodyParam;
+            }
+            else {
+                // body only: preserve existing title
+                const existingTitle = hmemStore.getTitle(id);
+                if (existingTitle === null) {
+                    return {
+                        content: [{ type: "text", text: `ERROR: Entry "${id}" not found.` }],
+                        isError: true,
+                    };
+                }
+                content = existingTitle + "\n\n" + bodyParam;
+            }
+        }
         try {
             if (hmemStore.corrupted) {
                 return {
@@ -1008,6 +1127,11 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                     irrelevant = true;
                 }
             }
+            // Reactions: read section title BEFORE update (so reaction matching uses original section name)
+            const isL2SubNode = id.includes(".") && id.split(".").length === 2;
+            const priorSectionTitle = isL2SubNode && !isExternal
+                ? (hmemStore.readNode(id)?.title ?? null)
+                : null;
             const ok = hmemStore.updateNode(id, content, links, obsolete, favorite, undefined, irrelevant, tags, pinned, active);
             const storeLabel = storeLabelResolved;
             log(`update_memory [${storeLabel}]: ${id} → ${ok ? "updated" : "not found"}${obsolete ? " (marked obsolete)" : ""}${irrelevant ? " (marked irrelevant)" : ""}${favorite !== undefined ? ` (favorite=${favorite})` : ""}${active !== undefined ? ` (active=${active})` : ""}`);
@@ -1040,6 +1164,14 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                 parts.push("active flag cleared");
             if (tags !== undefined)
                 parts.push(tags.length > 0 ? `tags: ${tags.join(" ")}` : "tags cleared");
+            // Reactions on L2 section updates
+            const reactionNotes = storeName === "personal" && !isExternal && priorSectionTitle && hmemConfig.reactions?.length
+                ? executeReactions({
+                    type: "update", nodeId: id, rootId,
+                    prefix: rootId.match(/^([A-Z])/)?.[1] ?? "",
+                    sectionTitle: priorSectionTitle, content: content ?? "",
+                }, hmemStore, hmemConfig)
+                : [];
             if (storeName === "personal" && !isExternal) {
                 const retry = syncPushWithRetry(HMEM_PATH);
                 if (!retry.resolved) {
@@ -1049,7 +1181,10 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
                     parts.push(`(resolved push conflict after ${retry.attempts} attempts)`);
                 }
             }
-            return { content: [{ type: "text", text: parts.join(" | ") + crossProjectNotice }] };
+            const reactionSection = reactionNotes.length > 0
+                ? "\n\n" + reactionNotes.join("\n\n")
+                : "";
+            return { content: [{ type: "text", text: parts.join(" | ") + crossProjectNotice + reactionSection }] };
         }
         finally {
             hmemStore.close();
@@ -1162,31 +1297,76 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
     "Content uses tab indentation relative to the parent:\n" +
     "  0 tabs = direct child of id\n" +
     "  1 tab  = grandchild, etc.\n" +
-    "Separate title from body with a blank line: 'Node title\\n\\nBody shown on drill-down\\n\\tChild node'\n\n" +
+    "Two modes:\n" +
+    "  Simple (title+body): append_memory(id='L0003', title='New finding', body='Detailed explanation')\n" +
+    "  Complex (full sub-tree): append_memory(id='L0003', content='New finding\\n\\tSub-detail\\n\\t\\tDeep')\n\n" +
     "Examples:\n" +
-    "  append_memory(id='L0003', content='New finding\\n> Detailed explanation\\n\\tSub-detail') " +
-    "→ adds L2 node (with title + body) + L3 child\n" +
-    "  append_memory(id='L0003.2', content='Extra note') " +
-    "→ adds L3 node under the L2 node L0003.2", {
+    "  append_memory(id='P0048.6', title='Crash on startup', body='Steps: open app, click X') → adds L3 node with body\n" +
+    "  append_memory(id='L0003.2', content='Extra note') → adds child node under L0003.2", {
     id: z.string().describe("Root entry ID or parent node ID to append children to, e.g. 'L0003' or 'L0003.2'"),
-    content: z.string().min(1).describe("Tab-indented content to append. 0 tabs = direct child of id.\n" +
-        "Example: 'New point\\n\\tSub-detail'"),
+    title: z.string().optional().describe("Simple mode: title for the new node. Use with 'body' for clean title+body creation."),
+    body: z.string().optional().describe("Simple mode: body text for the new node (shown on drill-down). Use with 'title'."),
+    content: z.string().optional().describe("Complex mode: full tab-indented sub-tree to append. 0 tabs = direct child of id.\n" +
+        "Example: 'New section\\n\\tChild\\n\\t\\tGrandchild'. Omit if using 'title'+'body'."),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
-}, async ({ id, content, store: storeName }) => {
-    // Schema enforcement: if a schema is defined for this prefix, block appends to root
-    // entries. New L2 nodes are not allowed — agents must append to specific sections.
+}, async ({ id, title: titleParam, body: bodyParam, content: rawContent, store: storeName }) => {
+    // Build effective content from title/body or raw content
+    let content;
+    if (titleParam !== undefined) {
+        content = titleParam + (bodyParam ? "\n\n" + bodyParam : "");
+    }
+    else if (rawContent !== undefined && rawContent.trim().length > 0) {
+        content = rawContent;
+    }
+    else {
+        return {
+            content: [{ type: "text", text: "ERROR: Either 'title' or 'content' must be provided." }],
+            isError: true,
+        };
+    }
+    // Schema enforcement: if a schema is defined for this prefix, only allow appending
+    // L2 nodes whose names are defined schema sections. Non-schema nodes are blocked.
+    // Agents may append missing sections (e.g. after a schema upgrade) by passing the
+    // section names as content — all top-level lines must be valid schema section names.
     if (!id.includes(".")) {
         const appendPrefix = id.match(/^([A-Z])/)?.[1];
         if (appendPrefix && hmemConfig.schemas?.[appendPrefix]) {
             const appendSchema = hmemConfig.schemas[appendPrefix];
-            const sections = appendSchema.sections.map((s, i) => `  .${i + 1}  ${s.name}`).join("\n");
-            return {
-                content: [{ type: "text", text: `ERROR: ${id} uses a fixed schema — cannot add new L2 nodes directly.\n` +
-                            `Defined sections:\n${sections}\n\n` +
-                            `Append to a specific section instead, e.g.:\n` +
-                            `  append_memory(id="${id}.1", content="...")  → ${appendSchema.sections[0]?.name ?? "first section"}` }],
-                isError: true,
-            };
+            // Simulate parseRelativeTree body-mode logic to extract depth-0 titles
+            const newSectionTitles = [];
+            const bodyModeAtRelDepth = new Map();
+            let lastRelDepth = -1;
+            for (const rawLine of content.split("\n")) {
+                const text = rawLine.trim();
+                if (!text) {
+                    if (lastRelDepth >= 0)
+                        bodyModeAtRelDepth.set(lastRelDepth, true);
+                    continue;
+                }
+                const tabs = rawLine.match(/^\t*/)?.[0].length ?? 0;
+                if (tabs === 0) {
+                    if (!bodyModeAtRelDepth.get(0)) {
+                        newSectionTitles.push(text);
+                        bodyModeAtRelDepth.delete(0); // reset body mode for new node
+                    }
+                    // body lines do not reset body mode — stays sticky
+                }
+                lastRelDepth = tabs;
+            }
+            const schemaNameSet = new Set(appendSchema.sections.map(s => s.name));
+            const allAreSchemaSection = newSectionTitles.length > 0 &&
+                newSectionTitles.every(t => schemaNameSet.has(t));
+            if (!allAreSchemaSection) {
+                const sectionList = appendSchema.sections.map((s, i) => `  .${i + 1}  ${s.name}`).join("\n");
+                return {
+                    content: [{ type: "text", text: `ERROR: ${id} uses a fixed schema — cannot add new L2 nodes directly.\n` +
+                                `Defined sections:\n${sectionList}\n\n` +
+                                `Append to a specific section instead, e.g.:\n` +
+                                `  append_memory(id="${id}.1", content="...")  → ${appendSchema.sections[0]?.name ?? "first section"}` }],
+                    isError: true,
+                };
+            }
+            // All top-level lines are valid schema sections — allow the append
         }
     }
     try {
@@ -1219,6 +1399,12 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
             if (storeName === "personal") {
                 reserveNextSubIds(HMEM_PATH, id, content, hmemStore);
             }
+            // Read section title BEFORE append for reaction matching (id may be a section node like P0048.6)
+            const appendSectionTitle = id.includes(".")
+                ? (hmemStore.readNode(id)?.title ?? null)
+                : null;
+            const appendRootId = id.includes(".") ? id.split(".")[0] : id;
+            const appendPrefix = appendRootId.match(/^([A-Z])/)?.[1] ?? "";
             const result = hmemStore.appendChildren(id, content);
             const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
             log(`append_memory [${storeLabel}]: ${id} + ${result.count} nodes → [${result.ids.join(", ")}]`);
@@ -1227,6 +1413,14 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
                     content: [{ type: "text", text: "No nodes appended — content was empty or contained no valid lines." }],
                 };
             }
+            // Reactions (runs before sync so all writes land in same push)
+            const reactionNotes = storeName === "personal" && appendSectionTitle && hmemConfig.reactions?.length
+                ? executeReactions({
+                    type: "append", nodeId: id, rootId: appendRootId,
+                    prefix: appendPrefix, sectionTitle: appendSectionTitle,
+                    content, newChildIds: result.ids,
+                }, hmemStore, hmemConfig)
+                : [];
             let conflictNote = "";
             if (storeName === "personal") {
                 const retry = syncPushWithRetry(HMEM_PATH);
@@ -1237,11 +1431,14 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
                     conflictNote = `\n(resolved push conflict after ${retry.attempts} attempts)`;
                 }
             }
+            const reactionSection = reactionNotes.length > 0
+                ? "\n\n" + reactionNotes.join("\n\n")
+                : "";
             return {
                 content: [{
                         type: "text",
                         text: `Appended ${result.count} node${result.count === 1 ? "" : "s"} to ${id}.\n` +
-                            `New top-level children: ${result.ids.join(", ")}` + conflictNote + crossProjectNotice,
+                            `New top-level children: ${result.ids.join(", ")}` + conflictNote + crossProjectNotice + reactionSection,
                     }],
             };
         }
@@ -1560,7 +1757,7 @@ server.tool("read_memory", "Read from your hierarchical long-term memory (.hmem)
                     !e.children.some(c => STANDARD_L2.some(cat => (c.content || c.title || "").toLowerCase().startsWith(cat))));
                 if (oldPEntries.length > 0) {
                     migrationHint = `\n⚠ P-ENTRY MIGRATION: ${oldPEntries.length} project(s) use old format: ${oldPEntries.map(e => e.id).join(", ")}.\n` +
-                        `Standard schema (R0009): Overview → Codebase → Usage → Context → Deployment → Known issues → Protocol → Open tasks.\n` +
+                        `Standard schema (R0009): Overview → Codebase → Usage → Context → Deployment → Bugs → Protocol → Roadmap → Ideas → Next Steps.\n` +
                         `Create new entry with write_memory(prefix="P", force=true), then mark old one obsolete.\n\n`;
                 }
             }
@@ -1882,32 +2079,32 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
             if (e.children) {
                 const pSchema = hmemConfig.schemas?.P;
                 if (pSchema) {
-                    // ── Schema-driven rendering ──
-                    const sectionMap = new Map();
-                    for (const sec of pSchema.sections) {
-                        sectionMap.set(sec.name.toLowerCase(), { loadDepth: sec.loadDepth });
+                    // ── Schema-driven rendering (schema order) ──
+                    const children = e.children.filter(c => !c.irrelevant);
+                    // Index children by lowercase title for O(1) lookup
+                    const childByTitle = new Map();
+                    for (const child of children) {
+                        childByTitle.set((child.title || child.content || "").trim().toLowerCase(), child);
                     }
-                    for (const child of e.children.filter(c => !c.irrelevant)) {
-                        const childTitle = (child.title || child.content || "").trim();
-                        const match = sectionMap.get(childTitle.toLowerCase());
-                        const depth = match ? match.loadDepth : 1; // unmatched → title only
+                    const renderedIds = new Set();
+                    // Render one child node at the given depth
+                    const renderChild = (child, depth) => {
                         if (depth === 0)
-                            continue; // skip entirely
+                            return;
                         const cId = lastSeg(child.id);
+                        const childTitle = (child.title || child.content || "").trim();
                         lines.push(`  ${cId}  ${cleanTitle(childTitle, 60)}`);
                         if (depth === 1) {
-                            // Title only — show child count hint if present
                             const childCount = child.children ? child.children.filter((g) => !g.irrelevant).length : 0;
                             if (childCount > 0)
                                 lines[lines.length - 1] += ` (${childCount} entries)`;
-                            continue;
+                            return;
                         }
                         if (child.children && child.children.length > 0) {
                             const grandchildren = child.children.filter((g) => !g.irrelevant);
                             for (const gc of grandchildren) {
                                 const gcId = lastSeg(gc.id);
                                 if (depth >= 3) {
-                                    // L3 title + body
                                     lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
                                     if (gc.content && gc.content !== gc.title) {
                                         for (const bodyLine of gc.content.split("\n")) {
@@ -1916,10 +2113,8 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                                     }
                                 }
                                 else {
-                                    // depth === 2: L3 title only
                                     lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
                                 }
-                                // depth >= 4: L4 children
                                 if (depth >= 4 && gc.children && gc.children.length > 0) {
                                     for (const l4 of gc.children.filter((l4) => !l4.irrelevant)) {
                                         lines.push(`      ${lastSeg(l4.id)}  ${cleanTitle(l4.title || l4.content || "", 60)}`);
@@ -1933,6 +2128,20 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                         else if (child.child_count && child.child_count > 0) {
                             lines.push(`    [+${child.child_count}]`);
                         }
+                    };
+                    // 1. Schema sections in defined order
+                    for (const sec of pSchema.sections) {
+                        const child = childByTitle.get(sec.name.toLowerCase());
+                        if (!child)
+                            continue; // missing — reconcile will add on next load
+                        renderedIds.add(child.id);
+                        renderChild(child, sec.loadDepth);
+                    }
+                    // 2. Extra children not in schema — always shown, title only
+                    for (const child of children) {
+                        if (renderedIds.has(child.id))
+                            continue;
+                        renderChild(child, 1);
                     }
                 }
                 else {
@@ -2024,17 +2233,6 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                 }
             }
             catch { /* findContext may fail on empty/new entries */ }
-            // Inject R-entries (rules) — always shown at project load
-            const ruleEntries = hmemStore.read({
-                prefix: "R",
-                depth: 1,
-            }).filter(r => !r.obsolete && !r.irrelevant);
-            if (ruleEntries.length > 0) {
-                lines.push("  Rules:");
-                for (const r of ruleEntries) {
-                    lines.push(`    ${r.id}  ${cleanTitle(r.title)}`);
-                }
-            }
             // Inject recent O-entries linked to THIS project
             // Purpose: seamless continuation of the previous session's conversation
             if (hmemConfig.recentOEntries > 0) {
@@ -2050,21 +2248,40 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                     }
                 }
             }
-            // Inject universal conventions (C-entries tagged #universal)
-            try {
-                const conventions = hmemStore.read({
-                    prefix: "C", depth: 2,
-                }).filter(c => !c.obsolete && !c.irrelevant && c.tags?.includes("#universal"));
-                if (conventions.length > 0) {
-                    lines.push("  Conventions (#universal):");
-                    for (const c of conventions) {
-                        lines.push(`    ${c.id}  ${c.title}`);
-                        if (c.level_1 && c.level_1 !== c.title)
-                            lines.push(`      ${c.level_1}`);
+            // Inject global context — configurable via globalLoad, fallback: R (depth 2) + C#universal (depth 2)
+            {
+                const globalItems = hmemConfig.globalLoad ?? [
+                    { prefix: "R", loadDepth: 2 },
+                    { prefix: "C", loadDepth: 2, tagFilter: "#universal" },
+                ];
+                for (const item of globalItems) {
+                    try {
+                        const readDepth = item.loadDepth >= 3 ? 2 : 1;
+                        let entries = hmemStore.read({ prefix: item.prefix, depth: readDepth })
+                            .filter((e) => !e.obsolete && !e.irrelevant);
+                        if (item.tagFilter) {
+                            const tf = item.tagFilter;
+                            entries = entries.filter((e) => e.tags?.includes(tf));
+                        }
+                        if (entries.length === 0)
+                            continue;
+                        const prefixName = hmemConfig.prefixes[item.prefix] || item.prefix;
+                        lines.push(`  ${prefixName}:`);
+                        for (const entry of entries) {
+                            lines.push(`    ${entry.id}  ${cleanTitle(entry.title)}`);
+                            if (item.loadDepth >= 2 && entry.level_1 && entry.level_1 !== entry.title) {
+                                lines.push(`      ${entry.level_1}`);
+                            }
+                            if (item.loadDepth >= 3 && entry.children) {
+                                for (const child of entry.children.filter((c) => !c.irrelevant)) {
+                                    lines.push(`      ${lastSeg(child.id)}  ${cleanTitle(child.title || child.content || "")}`);
+                                }
+                            }
+                        }
                     }
+                    catch { /* global context entries are always optional */ }
                 }
             }
-            catch { /* conventions are optional */ }
             if (reconcileNotice) {
                 lines.push("");
                 lines.push(`  ⚡ ${reconcileNotice}`);
@@ -2097,7 +2314,7 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
     }
 });
 server.tool("create_project", "Create a new project with the standard R0009 schema. Automatically creates:\n" +
-    "1. P-entry with all 9 L2 sections (Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Open tasks, Ideas)\n" +
+    "1. P-entry with all 10 L2 sections (Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Roadmap, Ideas, Next Steps)\n" +
     "2. Matching O-entry for session logging (O00XX ↔ P00XX)\n\n" +
     "Example: create_project({ name: 'Carlo Auftrag', tech: 'Python/SAP', description: 'SAP Freigabe-Automatisierung' })", {
     name: z.string().describe("Project name (short, for L1 title)"),
@@ -2168,8 +2385,9 @@ server.tool("create_project", "Create a new project with the standard R0009 sche
                     sections.push(`\t\t${deployment}`);
                 sections.push(`\tBugs`);
                 sections.push(`\tProtocol`);
-                sections.push(`\tOpen tasks`);
+                sections.push(`\tRoadmap`);
                 sections.push(`\tIdeas`);
+                sections.push(`\tNext Steps`);
             }
             const content = sections.join("\n");
             // Merge tags
@@ -2211,7 +2429,7 @@ server.tool("create_project", "Create a new project with the standard R0009 sche
             log(`create_project: ${pId} + ${oId} created and activated`);
             const sectionNames = schema
                 ? schema.sections.map(s => s.name).join(", ")
-                : "Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Open tasks, Ideas";
+                : "Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Roadmap, Ideas, Next Steps";
             return trackTokens({
                 content: [{
                         type: "text",

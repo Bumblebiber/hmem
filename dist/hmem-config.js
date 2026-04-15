@@ -20,6 +20,7 @@ export const DEFAULT_PREFIXES = {
     O: "Original",
     I: "Infrastructure",
     C: "Convention",
+    A: "Application",
 };
 /**
  * Default descriptions for prefix category headers (X0000 entries).
@@ -56,7 +57,7 @@ export const DEFAULT_CONFIG = {
     contextTokenThreshold: 100_000,
     loadProjectExpand: {
         withBody: [1], // .1 Overview: show L3 title + body
-        withChildren: [6, 8], // .6 Bugs, .8 Open Tasks: list all L3 children as titles
+        withChildren: [6, 8], // .6 Bugs, .8 Roadmap: list all L3 children as titles
     },
     bulkReadV2: {
         topAccessCount: 3,
@@ -93,20 +94,28 @@ export function linearLimits(l1, ln, depth) {
  */
 export function saveHmemConfig(projectDir, config) {
     const configPath = path.join(projectDir, "hmem.config.json");
-    const output = {
-        memory: {
-            maxCharsPerLevel: config.maxCharsPerLevel,
-            maxDepth: config.maxDepth,
-            defaultReadLimit: config.defaultReadLimit,
-            maxTitleChars: config.maxTitleChars,
-            accessCountTopN: config.accessCountTopN,
-            prefixes: config.prefixes,
-            prefixDescriptions: config.prefixDescriptions,
-            bulkReadV2: config.bulkReadV2,
-            recentOEntries: config.recentOEntries,
-            contextTokenThreshold: config.contextTokenThreshold,
-        },
+    const memoryBlock = {
+        maxCharsPerLevel: config.maxCharsPerLevel,
+        maxDepth: config.maxDepth,
+        defaultReadLimit: config.defaultReadLimit,
+        maxTitleChars: config.maxTitleChars,
+        accessCountTopN: config.accessCountTopN,
+        prefixes: config.prefixes,
+        prefixDescriptions: config.prefixDescriptions,
+        bulkReadV2: config.bulkReadV2,
+        recentOEntries: config.recentOEntries,
+        contextTokenThreshold: config.contextTokenThreshold,
     };
+    if (config.schemas && Object.keys(config.schemas).length > 0) {
+        memoryBlock.schemas = config.schemas;
+    }
+    if (config.reactions && config.reactions.length > 0) {
+        memoryBlock.reactions = config.reactions;
+    }
+    if (config.globalLoad && config.globalLoad.length > 0) {
+        memoryBlock.globalLoad = config.globalLoad;
+    }
+    const output = { memory: memoryBlock };
     if (config.sync) {
         output.sync = config.sync;
     }
@@ -124,7 +133,7 @@ export function saveHmemConfig(projectDir, config) {
 }
 /** Known memory config keys — used to detect unified vs flat format. */
 const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
-    "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "bulkReadOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas"]);
+    "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "bulkReadOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas", "reactions", "globalLoad"]);
 /**
  * Load hmem.config.json from projectDir.
  * Unknown keys are ignored. Missing keys fall back to defaults.
@@ -205,6 +214,78 @@ export function loadHmemConfig(projectDir) {
             }
             if (Object.keys(schemas).length > 0)
                 cfg.schemas = schemas;
+        }
+        // Reactions
+        if (Array.isArray(memoryRaw.reactions)) {
+            const reactions = [];
+            for (const r of memoryRaw.reactions) {
+                if (!r || typeof r !== "object")
+                    continue;
+                if (!["append", "update", "write"].includes(r.on))
+                    continue;
+                if (!["create_entry", "notify", "check_related"].includes(r.action))
+                    continue;
+                const prefixOk = !r.prefix || (typeof r.prefix === "string" && /^[A-Z]$/.test(r.prefix));
+                const sectionOk = !r.sectionName || typeof r.sectionName === "string";
+                if (!prefixOk || !sectionOk)
+                    continue;
+                if (r.action === "create_entry") {
+                    if (typeof r.createPrefix !== "string" || !/^[A-Z]$/.test(r.createPrefix))
+                        continue;
+                    const rx = { on: r.on, action: "create_entry", createPrefix: r.createPrefix };
+                    if (r.prefix)
+                        rx.prefix = r.prefix;
+                    if (r.sectionName)
+                        rx.sectionName = r.sectionName;
+                    if (r.inheritTags === true)
+                        rx.inheritTags = true;
+                    if (typeof r.notify === "string")
+                        rx.notify = r.notify;
+                    reactions.push(rx);
+                }
+                else if (r.action === "notify") {
+                    if (typeof r.notify !== "string")
+                        continue;
+                    const rx = { on: r.on, action: "notify", notify: r.notify };
+                    if (r.prefix)
+                        rx.prefix = r.prefix;
+                    if (r.sectionName)
+                        rx.sectionName = r.sectionName;
+                    reactions.push(rx);
+                }
+                else if (r.action === "check_related") {
+                    if (typeof r.checkPrefix !== "string" || !/^[A-Z]$/.test(r.checkPrefix))
+                        continue;
+                    const rx = { on: "write", action: "check_related", checkPrefix: r.checkPrefix };
+                    if (r.prefix)
+                        rx.prefix = r.prefix;
+                    if (typeof r.minTagScore === "number" && r.minTagScore > 0)
+                        rx.minTagScore = r.minTagScore;
+                    if (typeof r.notify === "string")
+                        rx.notify = r.notify;
+                    reactions.push(rx);
+                }
+            }
+            if (reactions.length > 0)
+                cfg.reactions = reactions;
+        }
+        // Global context (globalLoad)
+        if (Array.isArray(memoryRaw.globalLoad)) {
+            const items = [];
+            for (const item of memoryRaw.globalLoad) {
+                if (!item || typeof item !== "object")
+                    continue;
+                if (typeof item.prefix !== "string" || !/^[A-Z]$/.test(item.prefix))
+                    continue;
+                if (typeof item.loadDepth !== "number" || item.loadDepth < 1 || item.loadDepth > 3)
+                    continue;
+                const gi = { prefix: item.prefix, loadDepth: item.loadDepth };
+                if (typeof item.tagFilter === "string" && item.tagFilter)
+                    gi.tagFilter = item.tagFilter;
+                items.push(gi);
+            }
+            if (items.length > 0)
+                cfg.globalLoad = items;
         }
         // Prefixes: merge user-defined with defaults (user can override or add)
         if (memoryRaw.prefixes && typeof memoryRaw.prefixes === "object" && !Array.isArray(memoryRaw.prefixes)) {

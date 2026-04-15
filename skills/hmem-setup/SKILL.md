@@ -73,17 +73,22 @@ Script: `~/.claude/hooks/hmem-log-exchange.sh`
   - **remind mode**: Injects a reminder for the main agent to save knowledge manually
 - Checks transcript file size and writes a warning flag when context exceeds `contextTokenThreshold` (default 100k tokens).
 
-### 3. SessionStart[clear] — context re-injection
+### 3. SessionStart[clear] — context re-injection + deactivation
 
-Script: `~/.claude/hooks/hmem-context-inject.sh`
+Fires only after `/clear` (matcher: `"clear"`). Two hooks run in sequence:
 
-- Fires only after `/clear` (matcher: `"clear"`).
-- Pipes session JSON to `hmem context-inject`, which outputs `additionalContext` containing:
+**a) `hmem context-inject`** — outputs `additionalContext` containing:
   - Last 20 user/assistant messages from the pre-clear transcript
   - Active project briefing (title + overview)
   - Recent O-entries (session logs) linked to the project
   - R-entries (rules)
-- Keeps the agent oriented after a context reset without a full `read_memory()` call.
+  - Keeps the agent oriented after a context reset without a full `read_memory()` call.
+
+**b) `hmem deactivate`** — resets the active project for the new session:
+  - Writes a session marker with `projectId: null, deactivated: true` for the new session_id
+  - Deletes the per-process active-project file (`/tmp/hmem-active-<pid>.txt`)
+  - Clears statusline cache files
+  - Result: statusline shows `no project` after `/clear` until `load_project` is called
 
 ---
 

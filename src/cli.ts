@@ -45,6 +45,12 @@ switch (command) {
     break;
   }
 
+  case "deactivate": {
+    const { deactivate } = await import("./cli-deactivate.js");
+    await deactivate();
+    break;
+  }
+
   case "checkpoint": {
     const { checkpoint } = await import("./cli-checkpoint.js");
     await checkpoint();
@@ -94,6 +100,7 @@ Usage:
   hmem update-skills  Copy/update skill files to detected AI tools
   hmem log-exchange   Log a chat exchange to active O-entry (called by Stop hook)
   hmem context-inject Output compressed context for re-injection after /clear
+  hmem deactivate     Clear active project for current session (called by SessionStart[clear] hook)
   hmem checkpoint     Extract knowledge from recent exchanges via Haiku (background)
   hmem hook-startup   UserPromptSubmit hook — counter, checkpoint reminders (cross-platform)
   hmem statusline     Generate statusline for Claude Code (reads JSON from stdin)

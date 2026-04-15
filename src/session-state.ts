@@ -16,11 +16,14 @@ export interface SessionMarker {
   hmemPath: string;
   updatedAt: string;
   pid: number;
+  /** Written by 'hmem deactivate' after /clear — distinguishes explicit deactivation from default null */
+  deactivated?: boolean;
 }
 
 export interface SessionMarkerInput {
   projectId?: string | null;
   hmemPath?: string;
+  deactivated?: boolean;
 }
 
 function safeHomedir(): string {
@@ -54,6 +57,7 @@ export function writeSessionMarker(sessionId: string, input: SessionMarkerInput)
     hmemPath: input.hmemPath ?? existing.hmemPath ?? "",
     updatedAt: new Date().toISOString(),
     pid: process.pid,
+    ...(input.deactivated !== undefined ? { deactivated: input.deactivated } : {}),
   };
 
   const tmp = `${file}.${process.pid}.tmp`;
@@ -148,15 +152,15 @@ export function readPpidMapping(ppid: number): PpidMapping | null {
  * DB-flag behavior.
  */
 export function currentSessionId(): string | undefined {
-  if (process.env.HMEM_SESSION_ID) return process.env.HMEM_SESSION_ID;
+  // Always read the ppid-bridge file fresh — do NOT cache in process.env.
+  // After /clear or a new Claude Code session, hook-startup rewrites the ppid-bridge
+  // with a new session_id. Caching in env would cause the MCP server (long-running process)
+  // to keep using the old session_id for the entire lifetime of the process.
+  // The ppid-bridge lives in /tmp (tmpfs on Linux) — reads are ~microseconds, no perf concern.
   const ppid = typeof process.ppid === "number" ? process.ppid : 0;
   if (!ppid) return undefined;
   const mapping = readPpidMapping(ppid);
-  if (mapping?.sessionId) {
-    process.env.HMEM_SESSION_ID = mapping.sessionId;
-    return mapping.sessionId;
-  }
-  return undefined;
+  return mapping?.sessionId ?? undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +175,7 @@ export function currentSessionId(): string | undefined {
 // So readers must walk up to the grandparent PID to find the file.
 // ---------------------------------------------------------------------------
 
-function activeProjectFilePath(claudePid: number): string {
+export function activeProjectFilePath(claudePid: number): string {
   return path.join(os.tmpdir(), `hmem-active-${claudePid}.txt`);
 }
 
