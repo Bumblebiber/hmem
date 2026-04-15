@@ -1,8 +1,6 @@
 ---
 name: hmem-setup
-description: Interactive setup guide for hmem. Run this skill to install and configure
-  the hmem MCP server — installs dependencies, configures .mcp.json, deploys skill
-  files, and registers auto-memory hooks for Claude Code, Gemini CLI, or OpenCode.
+description: "Set up and configure the hmem memory system. Run this skill to install hmem, initialize the MCP server, deploy skill files, and register auto-memory hooks for Claude Code, Gemini CLI, or OpenCode. Covers first-time setup ('set up memory', 'initialize hmem', 'first-time setup', 'install hmem'), manual installation, and post-setup verification."
 ---
 
 # hmem Setup

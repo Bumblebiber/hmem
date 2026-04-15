@@ -1,10 +1,6 @@
 ---
 name: hmem-update
-description: >
-  Post-update checklist for hmem-mcp and hmem-sync. Run after npm update or when
-  hmem detects a version change. Covers skill sync, entry migration, schema enforcement,
-  O-entry curation, and smoke tests. Use when the user says "update hmem", "hmem updaten",
-  or when the startup version-check detects a new version.
+description: "Post-update checklist for hmem-mcp and hmem-sync. Run after npm update or when hmem detects a version change. Covers skill sync, entry migration, schema enforcement, O-entry curation, and smoke tests. Use when the user says 'update hmem', 'hmem updaten', or when the startup version-check detects a new version."
 ---
 
 # /hmem-update — Post-Update Checklist

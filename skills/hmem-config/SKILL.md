@@ -1,12 +1,6 @@
 ---
 name: hmem-config
-description: >
-  View and change hmem memory settings, hooks, sync, and checkpoint configuration.
-  Use this skill whenever the user types /hmem-config, asks to change memory settings,
-  adjust parameters, tune bulk-read behavior, configure auto-checkpoints, manage
-  hmem-sync, or troubleshoot memory-related issues. Also trigger when the user asks
-  things like "how often does auto-save fire", "why is my context so large",
-  "change checkpoint to auto", "how many tokens does startup cost", or "set up sync".
+description: "View and change hmem memory settings, hooks, sync, and checkpoint configuration. Use this skill whenever the user types /hmem-config, asks to change memory settings, adjust parameters, tune bulk-read behavior, configure auto-checkpoints, manage hmem-sync, or troubleshoot memory-related issues. Also trigger when the user asks things like 'how often does auto-save fire', 'why is my context so large', 'change checkpoint to auto', 'how many tokens does startup cost', or 'set up sync'."
 ---
 
 # hmem-config — View and Change Settings

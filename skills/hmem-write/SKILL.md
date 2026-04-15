@@ -1,14 +1,13 @@
 ---
 name: hmem-write
-description: How to write long-term memories. Follow these rules whenever you call write_memory.
+description: "Store facts, preferences, decisions, and project context into hmem long-term memory using the write_memory MCP tool. Use when the user says 'remember this', 'save this', 'don't forget', 'store this for later', or invokes /hmem-write. Persists key lessons, error resolutions, architecture decisions, user preferences, and project state across sessions. Use when Claude should record conversation insights, save project context, persist important facts, or store user preferences for future reference."
 ---
 
 # How to use write_memory
 
-When you need to save a lesson, error, decision, or project insight to long-term memory,
-call the MCP tool `write_memory` following these rules.
+Call the MCP tool `write_memory` to save lessons, errors, decisions, or project insights to long-term memory.
 
-If the tool `write_memory` is not available:
+If `write_memory` is not available:
 1. Tell the user: "write_memory tool not found. Please reconnect the MCP server (in Claude Code: `/mcp`, in other tools: restart the tool)."
 2. **NEVER write directly to the .hmem SQLite file via shell commands.** The database has WAL journaling, integrity checks, and tree-structure logic that raw SQL INSERT will bypass — causing corruption or data loss.
 
@@ -53,13 +52,11 @@ SQLite connection failed due to wrong path in .mcp.json
 
 ---
 
-## Hashtags — strongly recommended on every write_memory and append_memory call
+## Hashtags — add to every write_memory and append_memory call
 
-Hashtags connect entries **across all prefixes and hierarchy levels**. They are the only way to find
-all `#hmem`-related entries at once — regardless of whether they are P, E, L, or T.
-Without tags, entries become isolated islands that are hard to discover later.
+Hashtags connect entries **across all prefixes and hierarchy levels**. They are the only cross-prefix discovery mechanism.
 
-**Add tags to every write_memory and append_memory call.** Aim for 3 minimum, 5+ is better:
+**Add 3–5 tags per call (max 10):**
 ```
 write_memory(prefix="E", content="...", tags=["#hmem", "#sqlite", "#bug", "#migration", "#windows"])
 append_memory(id="P0029", content="...", tags=["#hmem", "#sync", "#cli"])
@@ -67,7 +64,6 @@ append_memory(id="P0029", content="...", tags=["#hmem", "#sync", "#cli"])
 
 **Rules:**
 - Lowercase, starts with `#`, only letters/digits/hyphen/underscore: `#hmem-sync`, `#api_key`
-- Max 10 tags per entry. **Aim for 3–5 per entry** — more connections = better discoverability
 - `append_memory` tags are **additive** — they do not replace existing tags
 - `write_memory` tags: if entry has children → land on **first child node**; if leaf (no children) → land on **root**
 - `append_memory` tags are stored **only on the target node** — no upward propagation

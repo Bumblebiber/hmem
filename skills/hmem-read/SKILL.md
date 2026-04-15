@@ -1,18 +1,6 @@
 ---
 name: hmem-read
-description: >
-  Load long-term memory from hmem. Use when:
-  - User types /hmem-read or says "load memory", "check your memory", "what do you remember",
-    "show me the project", "continue where we left off", "was weißt du über..."
-  - Starting work and you have no L1 summaries in context yet
-  - After /compact or context reset, to reload knowledge
-  - Before any significant work to anchor yourself with prior context
-  - User asks about a specific project, error, or topic visible in L1 summaries
-  - User says "pick up where we left off", "what were we working on", "resume",
-    "Woran haben wir gearbeitet", "Was war der letzte Stand"
-  Calls read_memory() or load_project() immediately. Also covers all read_memory query
-  patterns: search, prefix filter, context_for, stale detection, find_related,
-  memory_stats, memory_health.
+description: "Load long-term memory from hmem. Use when: user types /hmem-read or says 'load memory', 'check your memory', 'what do you remember', 'show me the project', 'continue where we left off', 'was weißt du über...'; starting work with no L1 summaries in context; after /compact or context reset to reload knowledge; before significant work to anchor with prior context; user asks about a specific project, error, or topic visible in L1 summaries; user says 'pick up where we left off', 'resume', 'Woran haben wir gearbeitet', 'Was war der letzte Stand'. Calls read_memory() or load_project() immediately. Also covers search, prefix filter, context_for, stale detection, find_related, memory_stats, memory_health."
 ---
 
 # Load Memory — Choose Your Path
