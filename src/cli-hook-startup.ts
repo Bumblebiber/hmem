@@ -23,7 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveEnvDefaults } from "./cli-env.js";
 import { loadHmemConfig } from "./hmem-config.js";
-import { writeSessionMarker, purgeStaleSessionMarkers, readSessionMarker, writePpidMapping } from "./session-state.js";
+import { writeSessionMarker, purgeStaleSessionMarkers, readSessionMarker, writePpidMapping, getParentPid } from "./session-state.js";
 
 export async function hookStartup(): Promise<void> {
   // Read hook JSON from stdin
@@ -77,9 +77,16 @@ export async function hookStartup(): Promise<void> {
       try { purgeStaleSessionMarkers(7); } catch { /* ignore */ }
     }
     // Bridge for MCP server: map Claude Code's PID → our session id
-    // Written on EVERY message — PPID changes when MCP server is reconnected
+    // Written on EVERY message — PPID changes when MCP server is reconnected.
+    // When hooks run via "bash -c" (Claude Code → bash → hook), process.ppid is
+    // the bash PID, not Claude Code's PID. Write bridges for BOTH the direct parent
+    // AND the grandparent so the MCP server (a direct child of Claude Code) finds it.
     if (typeof process.ppid === "number" && process.ppid > 0) {
-      writePpidMapping(process.ppid, sessionId, hmemPath);
+      writePpidMapping(process.ppid, sessionId, hmemPath); // bash PID (or Claude Code if direct)
+      const grandparentPid = getParentPid(process.ppid);
+      if (grandparentPid && grandparentPid > 1) {
+        writePpidMapping(grandparentPid, sessionId, hmemPath); // Claude Code PID
+      }
     }
   }
 

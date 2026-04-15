@@ -161,9 +161,14 @@ export function currentSessionId(): string | undefined {
 
 // ---------------------------------------------------------------------------
 // Per-process active-project file
-// Keyed by Claude Code PID (= process.ppid of MCP server and statusline).
-// Provides session-isolated active-project tracking that doesn't depend on
-// the shared DB active flag or the ppid-bridge session-id lookup.
+// Keyed by Claude Code PID (= process.ppid of MCP server).
+// The MCP server is always a direct child of Claude Code, so process.ppid
+// reliably equals the Claude Code PID.
+//
+// The statusline and hooks run via "bash -c" (one extra shell layer):
+//   Claude Code (PID C) → bash (PID B) → statusline/hook (PID S)
+//   statusline.ppid = B,  statusline.grandparent = C
+// So readers must walk up to the grandparent PID to find the file.
 // ---------------------------------------------------------------------------
 
 function activeProjectFilePath(claudePid: number): string {
@@ -186,4 +191,38 @@ export function readActiveProjectFile(claudePid: number): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Read the PPID of any process from /proc (Linux only).
+ * Returns null on non-Linux or if the file cannot be read.
+ */
+export function getParentPid(pid: number): number | null {
+  try {
+    const status = fs.readFileSync(`/proc/${pid}/status`, "utf8");
+    const match = status.match(/^PPid:\s+(\d+)/m);
+    return match ? parseInt(match[1], 10) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find the active project for the current process, walking up the process
+ * tree to handle the bash-intermediary case:
+ *   Claude Code → bash → this process
+ *   File key = Claude Code PID = grandparent PID of this process
+ */
+export function readActiveProjectForCurrentProcess(): string | null {
+  const ppid = typeof process.ppid === "number" ? process.ppid : 0;
+  if (!ppid) return null;
+  // Try direct PPID first (direct child of Claude Code — rare but possible)
+  const direct = readActiveProjectFile(ppid);
+  if (direct) return direct;
+  // Try grandparent PPID (Claude Code when bash is the intermediary)
+  const grandparent = getParentPid(ppid);
+  if (grandparent && grandparent > 1) {
+    return readActiveProjectFile(grandparent);
+  }
+  return null;
 }

@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveEnvDefaults } from "./cli-env.js";
 import { loadHmemConfig } from "./hmem-config.js";
-import { readActiveProjectFile } from "./session-state.js";
+import { readActiveProjectForCurrentProcess } from "./session-state.js";
 
 interface StatusInput {
   session_id?: string;
@@ -122,10 +122,11 @@ async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus>
       }
       if (!projRow) {
         // Fallback 1: per-process active-project file (written by MCP server on load_project).
-        // Both MCP server and statusline are children of the same Claude Code process,
-        // so process.ppid == Claude Code PID for both — no ppid-bridge lookup needed.
-        const ppid = typeof process.ppid === "number" ? process.ppid : 0;
-        const activeFromFile = ppid ? readActiveProjectFile(ppid) : null;
+        // MCP server is a direct child of Claude Code → writes file keyed by Claude Code PID.
+        // Statusline runs via "bash -c" → Claude Code → bash → statusline.
+        // readActiveProjectForCurrentProcess() checks both PPID and grandparent PPID to
+        // handle the bash-intermediary case transparently.
+        const activeFromFile = readActiveProjectForCurrentProcess();
         if (activeFromFile) {
           projRow = db.prepare(
             "SELECT id, title FROM memories WHERE id = ? AND prefix='P' AND obsolete!=1 LIMIT 1"
