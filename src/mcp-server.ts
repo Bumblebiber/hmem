@@ -84,7 +84,7 @@ const dbMtimeAtStart: string | null = (() => {
 // ---- Security helpers ----
 
 import os from "node:os";
-import { currentSessionId } from "./session-state.js";
+import { currentSessionId, writeActiveProjectFile } from "./session-state.js";
 
 /** Validate that a file path stays within the hmem directory or user's home. */
 function validateFilePath(userPath: string, hmemDir: string): string {
@@ -2079,6 +2079,11 @@ server.tool(
         // doesn't disrupt the agent's current work.
         hmemStore.setActiveProject(id, currentSessionId());
         activeProjectId = id;
+        // Write per-process active-project file keyed by Claude Code PID (= our PPID).
+        // The statusline reads this file — no dependency on the shared DB active flag.
+        if (typeof process.ppid === "number" && process.ppid > 0) {
+          writeActiveProjectFile(process.ppid, id);
+        }
 
         // Auto-reconcile: add missing schema sections to existing entry
         const pSchemaForReconcile = hmemConfig.schemas?.P;

@@ -158,3 +158,32 @@ export function currentSessionId(): string | undefined {
   }
   return undefined;
 }
+
+// ---------------------------------------------------------------------------
+// Per-process active-project file
+// Keyed by Claude Code PID (= process.ppid of MCP server and statusline).
+// Provides session-isolated active-project tracking that doesn't depend on
+// the shared DB active flag or the ppid-bridge session-id lookup.
+// ---------------------------------------------------------------------------
+
+function activeProjectFilePath(claudePid: number): string {
+  return path.join(os.tmpdir(), `hmem-active-${claudePid}.txt`);
+}
+
+export function writeActiveProjectFile(claudePid: number, projectId: string): void {
+  try {
+    const file = activeProjectFilePath(claudePid);
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, projectId);
+    fs.renameSync(tmp, file);
+  } catch { /* ignore — never crash MCP server over statusline file */ }
+}
+
+export function readActiveProjectFile(claudePid: number): string | null {
+  try {
+    const raw = fs.readFileSync(activeProjectFilePath(claudePid), "utf8").trim();
+    return raw || null;
+  } catch {
+    return null;
+  }
+}
