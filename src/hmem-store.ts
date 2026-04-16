@@ -194,6 +194,8 @@ export interface ReadOptions {
 export interface WriteResult {
   id: string;
   timestamp: string;
+  /** Compact tree summary of created L2 nodes (for agent verification). */
+  structure?: string;
 }
 
 export interface ImportResult {
@@ -425,6 +427,28 @@ export class HmemStore {
 
     const { title, level1, nodes } = this.parseTree(content, rootId);
 
+    // Schema validation: validate parsed section nodes, not raw content.
+    // The parser already separates section titles from body text, so this correctly
+    // ignores body lines that happen to be at L2 depth after a blank line.
+    const schema = this.cfg.schemas?.[prefix];
+    if (schema) {
+      const sectionNames = new Set(schema.sections.map(s => s.name.toLowerCase()));
+      const directChildren = nodes.filter(n => n.depth === 2 && n.parent_id === rootId);
+      const invalid = directChildren.filter(n => {
+        const firstWord = n.title.toLowerCase().split(/\s*[—\-:]/)[0].trim();
+        return ![...sectionNames].some(sec => firstWord.startsWith(sec));
+      });
+      if (invalid.length > 0) {
+        const sectionList = schema.sections.map((s, i) => `.${i + 1} ${s.name}`).join(", ");
+        throw new Error(
+          `${prefix}-entry schema violation.\n` +
+          `Valid sections: ${sectionList}\n` +
+          `Invalid L2 nodes: ${invalid.map(n => `"${n.title.substring(0, 50)}"`).join(", ")}\n\n` +
+          `L2 node names must match defined schema sections.`
+        );
+      }
+    }
+
     if (!level1) {
       throw new Error("Content must have at least one line (Level 1).");
     }
@@ -588,7 +612,17 @@ export class HmemStore {
       }
     })();
 
-    return { id: rootId, timestamp };
+    // Build compact structure summary for agent verification
+    const l2Direct = nodes.filter(n => n.depth === 2 && n.parent_id === rootId);
+    const structLines = l2Direct.map(n => {
+      const childCount = nodes.filter(c => c.parent_id === n.id).length;
+      return childCount > 0 ? `${n.title} [+${childCount}]` : n.title;
+    });
+    const hasBody = level1 !== title && level1.trim().length > 0;
+    if (hasBody) structLines.unshift(`(body: ${level1.substring(0, 60).replace(/\n/g, " ")}${level1.length > 60 ? "…" : ""})`);
+    const structure = structLines.length > 0 ? structLines.join("\n") : undefined;
+
+    return { id: rootId, timestamp, structure };
   }
 
   /**
@@ -2456,7 +2490,7 @@ export class HmemStore {
   }
 
   /** Get tags for a single entry/node. */
-  private fetchTags(entryId: string): string[] {
+  fetchTags(entryId: string): string[] {
     return (this.db.prepare("SELECT tag FROM memory_tags WHERE entry_id = ? ORDER BY tag").all(entryId) as any[])
       .map(r => r.tag);
   }
@@ -2992,6 +3026,15 @@ export class HmemStore {
     ).get(id) as { id: string; prefix: string; seq: number; level_1: string; links: string | null } | undefined) ?? null;
   }
 
+  /** Get the display title of any entry or sub-node by ID. Used by update_memory body-only mode. */
+  getTitle(id: string): string | null {
+    if (id.includes(".")) {
+      return this.readNode(id)?.title ?? null;
+    }
+    const row = this.db.prepare("SELECT title FROM memories WHERE id = ?").get(id) as any;
+    return row?.title ?? null;
+  }
+
   /**
    * Find or create the O-entry for a given project sequence number.
    * O0048 belongs to P0048, O0000 is the non-project catch-all.
@@ -3025,7 +3068,7 @@ export class HmemStore {
    */
   resolveSession(oId: string, transcriptPath: string): string {
     const hash = crypto.createHash("md5").update(oId).digest("hex").substring(0, 8);
-    const stateFile = `/tmp/.hmem_session_${hash}.json`;
+    const stateFile = path.join(os.tmpdir(), `.hmem_session_${hash}.json`);
 
     // Check cached state
     let cached: { transcriptPath: string; sessionId: string } | null = null;

@@ -10,6 +10,7 @@ import path from "node:path";
 import os from "node:os";
 import readline from "node:readline";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { saveHmemConfig, DEFAULT_CONFIG } from "./hmem-config.js";
 
 // ---- Tool definitions ----
@@ -263,8 +264,10 @@ function resolveNodePath(): string {
  * Works whether installed globally or locally.
  */
 function resolveMcpServerPath(): string {
-  // This file (cli-init.js) is in dist/ — mcp-server.js is a sibling
-  return path.join(path.dirname(new URL(import.meta.url).pathname), "mcp-server.js");
+  // This file (cli-init.js) is in dist/ — mcp-server.js is a sibling.
+  // fileURLToPath handles the Windows-specific leading "/" in import.meta.url pathnames
+  // (e.g. "/C:/..." → "C:/...") so path.join produces a valid Windows path.
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), "mcp-server.js");
 }
 
 function standardMcpEntry(hmemPath: string): Record<string, unknown> {

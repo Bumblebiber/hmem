@@ -15,20 +15,45 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+// Bug 4: Ensure HMEM env vars are set for all spawned child processes.
+// On Windows, OpenCode may not propagate these from the launch environment.
+if (!process.env.HMEM_PROJECT_DIR) {
+  process.env.HMEM_PROJECT_DIR = join(homedir(), ".hmem");
+}
+if (!process.env.HMEM_PATH) {
+  process.env.HMEM_PATH = join(homedir(), ".hmem", "memory.hmem");
+}
+
+// Bug 3: On Windows, detached + shell spawns a visible console window per call.
+// Use platform-specific spawn options to avoid that.
+const isWindows = process.platform === "win32";
 
 function spawnHmem(args, stdinJson) {
   try {
-    const child = spawn("hmem", args, {
-      detached: true,
-      stdio: ["pipe", "ignore", "ignore"],
-      env: process.env,
-    });
+    // Bug 2: On Windows, npm global installs expose "hmem.ps1" / "hmem.cmd" wrappers
+    // that Node's spawn cannot execute without shell: true.
+    const options = isWindows
+      ? {
+          stdio: ["pipe", "ignore", "ignore"],
+          env: process.env,
+          shell: true,
+          windowsHide: true,
+        }
+      : {
+          detached: true,
+          stdio: ["pipe", "ignore", "ignore"],
+          env: process.env,
+        };
+    const child = spawn("hmem", args, options);
     if (stdinJson) {
       child.stdin.end(stdinJson);
     } else {
       child.stdin.end();
     }
-    child.unref();
+    if (!isWindows) child.unref();
   } catch {
     // hmem not installed or not on PATH — silently no-op
   }
@@ -93,6 +118,8 @@ export default {
             encoding: "utf8",
             timeout: 5000,
             env: process.env,
+            // Bug 2+3: same shell/windowsHide treatment for spawnSync on Windows
+            ...(isWindows ? { shell: true, windowsHide: true } : {}),
           });
           const text = (result.stdout || "").trim();
           if (text) output.context.push(text);
