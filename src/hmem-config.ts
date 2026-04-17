@@ -117,6 +117,12 @@ export interface HmemConfig {
   };
   /** Per-prefix entry schemas. Keys are prefix letters ("P", "E", etc.). */
   schemas?: Record<string, EntrySchema>;
+  /**
+   * Global context injected into every load_project response.
+   * Each item specifies a prefix and how deep to render its entries.
+   * Default (when not set): R at depth 2 + C#universal at depth 2.
+   */
+  globalLoad?: GlobalLoadItem[];
   /** Sync configuration — single server or array for multi-server redundancy. */
   sync?: SyncConfigBlock | SyncConfigBlock[];
 }
@@ -130,6 +136,17 @@ export interface SchemaSection {
 export interface EntrySchema {
   sections: SchemaSection[];
   createLinkedO?: boolean;
+}
+
+/**
+ * One item in the globalLoad list — a prefix to inject into every load_project response.
+ * loadDepth: 1=title only, 2=title+body, 3=title+body+children
+ * tagFilter: only inject entries that carry this tag (e.g. "#universal")
+ */
+export interface GlobalLoadItem {
+  prefix: string;       // Single uppercase letter, e.g. "R", "I", "C"
+  loadDepth: number;    // 1–3
+  tagFilter?: string;   // e.g. "#universal"
 }
 
 export interface SyncConfigBlock {
@@ -244,20 +261,25 @@ export function linearLimits(l1: number, ln: number, depth: number): number[] {
 export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
   const configPath = path.join(projectDir, "hmem.config.json");
 
-  const output: Record<string, unknown> = {
-    memory: {
-      maxCharsPerLevel: config.maxCharsPerLevel,
-      maxDepth: config.maxDepth,
-      defaultReadLimit: config.defaultReadLimit,
-      maxTitleChars: config.maxTitleChars,
-      accessCountTopN: config.accessCountTopN,
-      prefixes: config.prefixes,
-      prefixDescriptions: config.prefixDescriptions,
-      bulkReadV2: config.bulkReadV2,
-      recentOEntries: config.recentOEntries,
-      contextTokenThreshold: config.contextTokenThreshold,
-    },
+  const memoryBlock: Record<string, unknown> = {
+    maxCharsPerLevel: config.maxCharsPerLevel,
+    maxDepth: config.maxDepth,
+    defaultReadLimit: config.defaultReadLimit,
+    maxTitleChars: config.maxTitleChars,
+    accessCountTopN: config.accessCountTopN,
+    prefixes: config.prefixes,
+    prefixDescriptions: config.prefixDescriptions,
+    bulkReadV2: config.bulkReadV2,
+    recentOEntries: config.recentOEntries,
+    contextTokenThreshold: config.contextTokenThreshold,
   };
+  if (config.schemas && Object.keys(config.schemas).length > 0) {
+    memoryBlock.schemas = config.schemas;
+  }
+  if (config.globalLoad && config.globalLoad.length > 0) {
+    memoryBlock.globalLoad = config.globalLoad;
+  }
+  const output: Record<string, unknown> = { memory: memoryBlock };
 
   if (config.sync) {
     output.sync = config.sync;
@@ -276,7 +298,7 @@ export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
 
 /** Known memory config keys — used to detect unified vs flat format. */
 const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
-  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "bulkReadOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas"]);
+  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "bulkReadOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas", "globalLoad"]);
 
 /**
  * Load hmem.config.json from projectDir.
@@ -347,6 +369,20 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
         };
       }
       if (Object.keys(schemas).length > 0) cfg.schemas = schemas;
+    }
+
+    // Global context (globalLoad) — prefixes injected into every load_project response
+    if (Array.isArray(memoryRaw.globalLoad)) {
+      const items: GlobalLoadItem[] = [];
+      for (const item of memoryRaw.globalLoad) {
+        if (!item || typeof item !== "object") continue;
+        if (typeof item.prefix !== "string" || !/^[A-Z]$/.test(item.prefix)) continue;
+        if (typeof item.loadDepth !== "number" || item.loadDepth < 1 || item.loadDepth > 3) continue;
+        const gi: GlobalLoadItem = { prefix: item.prefix, loadDepth: item.loadDepth };
+        if (typeof item.tagFilter === "string" && item.tagFilter) gi.tagFilter = item.tagFilter;
+        items.push(gi);
+      }
+      if (items.length > 0) cfg.globalLoad = items;
     }
 
     // Prefixes: merge user-defined with defaults (user can override or add)

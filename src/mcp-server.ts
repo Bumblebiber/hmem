@@ -2317,19 +2317,40 @@ server.tool(
           }
         }
 
-        // Inject universal conventions (C-entries tagged #universal)
-        try {
-          const conventions = hmemStore.read({
-            prefix: "C", depth: 2,
-          }).filter(c => !c.obsolete && !c.irrelevant && c.tags?.includes("#universal"));
-          if (conventions.length > 0) {
-            lines.push("  Conventions (#universal):");
-            for (const c of conventions) {
-              lines.push(`    ${c.id}  ${c.title}`);
-              if (c.level_1 && c.level_1 !== c.title) lines.push(`      ${c.level_1}`);
-            }
+        // Inject global context — configurable via hmem.config.json `globalLoad`.
+        // Default (when not set): R (depth 2) + C#universal (depth 2).
+        {
+          const globalItems = hmemConfig.globalLoad ?? [
+            { prefix: "R", loadDepth: 2 },
+            { prefix: "C", loadDepth: 2, tagFilter: "#universal" },
+          ];
+          for (const item of globalItems) {
+            try {
+              const readDepth = item.loadDepth >= 3 ? 2 : 1;
+              let entries = hmemStore.read({ prefix: item.prefix, depth: readDepth })
+                .filter((e: MemoryEntry) => !e.obsolete && !e.irrelevant);
+              if (item.tagFilter) {
+                const tf = item.tagFilter;
+                entries = entries.filter((e: MemoryEntry) => e.tags?.includes(tf));
+              }
+              if (entries.length === 0) continue;
+              const prefixName = hmemConfig.prefixes[item.prefix] || item.prefix;
+              const heading = item.tagFilter ? `${prefixName} (${item.tagFilter}):` : `${prefixName}:`;
+              lines.push(`  ${heading}`);
+              for (const entry of entries) {
+                lines.push(`    ${entry.id}  ${cleanTitle(entry.title)}`);
+                if (item.loadDepth >= 2 && entry.level_1 && entry.level_1 !== entry.title) {
+                  lines.push(`      ${entry.level_1}`);
+                }
+                if (item.loadDepth >= 3 && entry.children) {
+                  for (const child of (entry.children as MemoryNode[]).filter(c => !c.irrelevant)) {
+                    lines.push(`      ${lastSeg(child.id)}  ${cleanTitle(child.title || child.content || "")}`);
+                  }
+                }
+              }
+            } catch { /* global context entries are always optional */ }
           }
-        } catch { /* conventions are optional */ }
+        }
 
         if (reconcileNotice) {
           lines.push("");
