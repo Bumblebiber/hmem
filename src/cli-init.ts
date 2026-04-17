@@ -816,7 +816,7 @@ export async function runInit(args: string[] = []): Promise<void> {
  * Overwrites existing skills with the version from the npm package.
  */
 export function updateSkills(): void {
-  const bundledSkillsDir = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "skills");
+  const bundledSkillsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "skills");
   if (!fs.existsSync(bundledSkillsDir)) {
     console.error("Error: bundled skills directory not found at", bundledSkillsDir);
     process.exit(1);

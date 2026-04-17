@@ -34,10 +34,13 @@ export async function contextInject(): Promise<void> {
     return;
   }
 
-  // Read hook input from stdin (required by Claude Code hook protocol)
-  try {
-    fs.readFileSync(0, "utf-8");
-  } catch { /* no stdin — OK */ }
+  // Read hook input from stdin (required by Claude Code hook protocol).
+  // Skip when invoked from a TTY — sync-reading a TTY fd hangs until EOF.
+  if (!process.stdin.isTTY) {
+    try {
+      fs.readFileSync(0, "utf-8");
+    } catch { /* no stdin — OK */ }
+  }
 
   const hmemPath = process.env.HMEM_PATH!;
   const config = loadHmemConfig(projectDir);

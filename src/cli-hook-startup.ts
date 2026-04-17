@@ -26,7 +26,9 @@ import { loadHmemConfig } from "./hmem-config.js";
 import { writeSessionMarker, purgeStaleSessionMarkers, readSessionMarker, writePpidMapping, getParentPid } from "./session-state.js";
 
 export async function hookStartup(): Promise<void> {
-  // Read hook JSON from stdin
+  // Read hook JSON from stdin. When invoked from a TTY (manual run),
+  // sync-reading fd 0 blocks forever — bail out.
+  if (process.stdin.isTTY) process.exit(0);
   let input: any;
   try {
     const data = fs.readFileSync(0, "utf8");
