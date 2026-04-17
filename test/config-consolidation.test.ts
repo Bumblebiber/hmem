@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFileSync, mkdirSync, rmSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { platform } from "node:os";
 import { loadHmemConfig, saveHmemConfig, DEFAULT_CONFIG, getSyncServers } from "../src/hmem-config.js";
 
 const TMP = join(import.meta.dirname ?? __dirname, ".tmp-config-test");
@@ -86,7 +87,7 @@ describe("saveHmemConfig", () => {
     expect(srv.token).toBe("secret_token");
   });
 
-  it("saves config with chmod 600 when token present", () => {
+  it.skipIf(platform() === "win32")("saves config with chmod 600 when token present", () => {
     const cfg = loadHmemConfig(TMP);
     cfg.sync = { serverUrl: "x", userId: "y", salt: "z", token: "secret" };
     saveHmemConfig(TMP, cfg);

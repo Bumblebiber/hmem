@@ -14,11 +14,13 @@ afterEach(() => {
 
 describe("resolveHmemPath", () => {
   it("HMEM_PATH wins over everything", () => {
-    process.env.HMEM_PATH = "/custom/path/my.hmem";
+    // Use a platform-native absolute path so the assertion holds on Windows too.
+    const custom = resolve(TMP, "..", "custom-hmem-target", "my.hmem");
+    process.env.HMEM_PATH = custom;
     // Even with a .hmem file in CWD, HMEM_PATH takes priority
     writeFileSync(join(TMP, "local.hmem"), "");
     const result = resolveHmemPath(TMP);
-    expect(result).toBe("/custom/path/my.hmem");
+    expect(result).toBe(custom);
   });
 
   it("HMEM_PATH expands ~ to homedir", () => {
