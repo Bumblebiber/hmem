@@ -2587,7 +2587,7 @@ export class HmemStore {
      */
     resolveSession(oId, transcriptPath) {
         const hash = crypto.createHash("md5").update(oId).digest("hex").substring(0, 8);
-        const stateFile = `/tmp/.hmem_session_${hash}.json`;
+        const stateFile = path.join(os.tmpdir(), `.hmem_session_${hash}.json`);
         // Check cached state
         let cached = null;
         try {

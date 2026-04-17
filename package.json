@@ -44,6 +44,9 @@
     "build": "tsc",
     "start": "node dist/mcp-server.js",
     "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.test.json",
     "prepublishOnly": "npm run build",
     "postinstall": "node scripts/use-prebuild.cjs && node -e \"try{require('child_process').execSync('node dist/cli.js update-skills',{stdio:'ignore'})}catch(e){}\""
   },

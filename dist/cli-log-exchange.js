@@ -108,7 +108,10 @@ function extractTitle(text) {
     return (lastSpace > 40 ? firstLine.substring(0, lastSpace) : firstLine.substring(0, 80));
 }
 export async function logExchange() {
-    // Read hook JSON from stdin synchronously (hook pipes JSON in one shot)
+    // Read hook JSON from stdin synchronously (hook pipes JSON in one shot).
+    // When invoked from a TTY (manual run), sync-reading fd 0 blocks forever — bail out.
+    if (process.stdin.isTTY)
+        process.exit(0);
     let input;
     try {
         const data = fs.readFileSync(0, "utf8"); // fd 0 = stdin

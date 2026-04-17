@@ -113,8 +113,6 @@ export interface HmemConfig {
     };
     /** Per-prefix entry schemas. Keys are prefix letters ("P", "E", etc.). */
     schemas?: Record<string, EntrySchema>;
-    /** Configurable reactions — fire after write/append/update operations. */
-    reactions?: Reaction[];
     /**
      * Global context injected into every load_project response.
      * Each item specifies a prefix and how deep to render its entries.
@@ -133,37 +131,6 @@ export interface EntrySchema {
     sections: SchemaSection[];
     createLinkedO?: boolean;
 }
-/**
- * Configurable reactions — fire after write/append/update operations.
- * Defined in hmem.config.json under memory.reactions[].
- *
- * Templates support: {created.id}, {node.title}, {parent.id}, {node.id}, {matches}
- */
-export interface ReactionCreateEntry {
-    on: "append" | "update";
-    prefix?: string;
-    sectionName?: string;
-    action: "create_entry";
-    createPrefix: string;
-    inheritTags?: boolean;
-    notify?: string;
-}
-export interface ReactionNotify {
-    on: "append" | "update";
-    prefix?: string;
-    sectionName?: string;
-    action: "notify";
-    notify: string;
-}
-export interface ReactionCheckRelated {
-    on: "write";
-    prefix?: string;
-    action: "check_related";
-    checkPrefix: string;
-    minTagScore?: number;
-    notify?: string;
-}
-export type Reaction = ReactionCreateEntry | ReactionNotify | ReactionCheckRelated;
 /**
  * One item in the globalLoad list — a prefix to inject into every load_project response.
  * loadDepth: 1=title only, 2=title+body, 3=title+body+children

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { writeFileSync, mkdirSync, rmSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { loadHmemConfig, saveHmemConfig, DEFAULT_CONFIG } from "../src/hmem-config.js";
+import { loadHmemConfig, saveHmemConfig, DEFAULT_CONFIG, getSyncServers } from "../src/hmem-config.js";
 
 const TMP = join(import.meta.dirname ?? __dirname, ".tmp-config-test");
 
@@ -39,9 +39,10 @@ describe("loadHmemConfig", () => {
     const cfg = loadHmemConfig(TMP);
     expect(cfg.maxCharsPerLevel[0]).toBe(400);
     expect(cfg.sync).toBeDefined();
-    expect(cfg.sync!.serverUrl).toBe("https://example.com");
-    expect(cfg.sync!.token).toBe("tok_secret");
-    expect(cfg.sync!.lastPullAt).toBe("2026-01-01T00:00:00Z");
+    const srv = getSyncServers(cfg)[0];
+    expect(srv.serverUrl).toBe("https://example.com");
+    expect(srv.token).toBe("tok_secret");
+    expect(srv.lastPullAt).toBe("2026-01-01T00:00:00Z");
   });
 
   it("loads unified format without sync section", () => {
@@ -58,7 +59,7 @@ describe("loadHmemConfig", () => {
     };
     writeFileSync(join(TMP, "hmem.config.json"), JSON.stringify(config));
     const cfg = loadHmemConfig(TMP);
-    expect(cfg.sync!.syncSecrets).toBe(false);
+    expect(getSyncServers(cfg)[0].syncSecrets).toBe(false);
   });
 });
 
@@ -80,8 +81,9 @@ describe("saveHmemConfig", () => {
     const reloaded = loadHmemConfig(TMP);
     expect(reloaded.maxCharsPerLevel[0]).toBe(350);
     expect(reloaded.maxDepth).toBe(cfg.maxDepth);
-    expect(reloaded.sync!.serverUrl).toBe("https://test.com");
-    expect(reloaded.sync!.token).toBe("secret_token");
+    const srv = getSyncServers(reloaded)[0];
+    expect(srv.serverUrl).toBe("https://test.com");
+    expect(srv.token).toBe("secret_token");
   });
 
   it("saves config with chmod 600 when token present", () => {
