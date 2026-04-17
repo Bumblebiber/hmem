@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.6.0 — 2026-04-17
+
+### Added
+- **Configurable `globalLoad` injections for `load_project`** — replaces the hardcoded `R + C#universal` block with a per-item list in `hmem.config.json` (`memory.globalLoad`). Each item picks `prefix`, `loadDepth` (1–3) and an optional `tagFilter`. Falls back to the old defaults when unset.
+- **CI matrix** — GitHub Actions now runs `typecheck → build → test` on Ubuntu / Windows / macOS × Node 20 / 22.
+- **E2E MCP smoke test** — spawns `dist/mcp-server.js` and exercises the wire protocol via a real stdio client.
+
+### Fixed
+- **Version drift** — MCP handshake and upgrade-check both read from `package.json` now (were `"2.2.0"` and `"2.5.3"` respectively).
+- **Hook CLIs hang on TTY** — `hmem log-exchange`, `startup-hook` and `context-inject` bail out cleanly when stdin is a terminal instead of a pipe.
+- **`updateSkills()` on Windows** — resolved bundle path via `new URL().pathname` which produced a bogus leading `/` on Windows; now uses `fileURLToPath()`.
+
 ## 6.5.3 — 2026-04-16
 
 ### Fixed
