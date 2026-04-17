@@ -786,7 +786,7 @@ function formatRecentOEntries(
 // ---- Server ----
 const server = new McpServer({
   name: "hmem",
-  version: "2.2.0",
+  version: PKG_VERSION,
 });
 
 // ---- Tool: search_memory ----
@@ -3186,7 +3186,6 @@ function renderChildrenExpanded(lines: string[], children: MemoryNode[], curator
 
 // ---- Update check ----
 
-const CURRENT_VERSION = "2.5.3";
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 1 day
 const updateCheckFile = path.join(path.dirname(PROJECT_DIR), ".hmem", ".update-check.json");
 
@@ -3219,12 +3218,12 @@ function checkForUpdates(): void {
         fs.writeFileSync(updateCheckFile, JSON.stringify(state, null, 2), "utf8");
       } catch {}
       // Warn if outdated
-      if (latest !== CURRENT_VERSION) {
-        const [ci, cj, ck] = CURRENT_VERSION.split(".").map(Number);
+      if (latest !== PKG_VERSION) {
+        const [ci, cj, ck] = PKG_VERSION.split(".").map(Number);
         const [li, lj, lk] = latest.split(".").map(Number);
         const isNewer = li > ci || (li === ci && lj > cj) || (li === ci && lj === cj && lk > ck);
         if (isNewer) {
-          log(`⚠ hmem-mcp update available: ${CURRENT_VERSION} → ${latest}. Run: npm install -g hmem-mcp@latest`);
+          log(`⚠ hmem-mcp update available: ${PKG_VERSION} → ${latest}. Run: npm install -g hmem-mcp@latest`);
         }
       }
     });

@@ -1,5 +1,61 @@
 # Changelog
 
+## 6.5.3 — 2026-04-16
+
+### Fixed
+- **Windows compatibility** for OpenCode plugin and `hmem init` — path handling and postinstall edge cases on Windows runners.
+
+## 6.5.2 — 2026-04-15
+
+### Fixed
+- **Statusline shows wrong project after `/clear` or new session** — per-process active-project file resolution missed session boundary changes in some edge cases.
+
+## 6.4.0 — 2026-04-15
+
+### Fixed
+- **Bash-intermediary layer in statusline and PPID bridge** — when the shell wrapping `claude` adds an intermediate bash process, the PPID chain was off by one; now walks the process tree.
+- **Per-process active-project file** for session-isolated statusline — replaces the previous global marker file.
+
+## 6.3.3 — 2026-04-14
+
+### Docs
+- Note in `hmem-update` skill about stale-skill pruning behavior introduced in 6.3.2.
+
+## 6.3.2 — 2026-04-14
+
+### Changed
+- **Token-efficiency cleanup** — MCP tool count 29 → 21 (-824 lines). Removed dead code for single-agent setups:
+  - Agent-memory subsystem: `read_agent_memory`, `fix_agent_memory`, `append_agent_memory`, `delete_agent_memory`, `get_audit_queue`, `mark_audited`.
+  - `route_task` (deprecated), `reorder_sessions` (covered by `move_nodes`).
+- **`hmem_path` param** added to 4 core tools for foreign-file curation: `read_memory`, `update_memory`, `find_related`, `memory_health`. Sync and session cache skipped in external mode.
+- **Unified `hmem-curate`** skill (merged `hmem-self-curate`) — one workflow covers self-curation and foreign-file curation.
+- **`updateSkills` prunes stale `hmem-*` skills** that are no longer bundled.
+
+### Added
+- **OpenCode plugin** support (#19).
+- **`claude-mcp` registry detection** in `hmem init` (#18).
+
+### Fixed
+- GitHub issues #11, #12, #14, #15, #16, #20, #21, #23.
+
+## 6.3.1 — 2026-04-10
+
+### Fixed
+- **Refresh PPID bridge on every message**, not just the first — stale bridge files no longer mislead the MCP server.
+- **Intelligent exchange filtering** in `load_project` — previous/current O-entry exchanges are compressed and filtered by relevance before injection.
+- **Compress exchange text** in `load_project` output to keep the briefing budget.
+
+## 6.3.0 — 2026-04-10
+
+### Added
+- **Configurable per-prefix entry schemas** via `hmem.config.json` → `memory.schemas.*`. Each schema defines section order, per-section `loadDepth`, and optional `defaultChildren`.
+- **Schema-driven `create_project` handler** — new P-entries use the schema from config.
+- **Per-section `loadDepth`** in `load_project` rendering — each section controls how deep its children expand.
+- **Auto-reconcile missing schema sections** on `load_project` — fills gaps without user action.
+- **`hmem-wipe` marks completed Next Steps as irrelevant** — cleaner pre-`/clear` hygiene.
+
+---
+
 ## 6.2.0 — 2026-04-09
 
 ### Fixed
