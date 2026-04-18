@@ -189,9 +189,12 @@ read_memory(time_around="P0001", period="+2h")    # only after P0001
 ## Search
 
 ```
-search_memory(query="Node.js startup crash")
+read_memory(search="Node.js startup crash")
+read_memory(search="auth token")
 search_memory(query="auth token", scope="memories")
 ```
+
+**Sub-node attribution (v6.6.1+):** FTS hits inside sub-nodes are now surfaced explicitly. If the match is inside `P0048.8.4`, the output shows the root entry plus a `↳ matched in N sub-nodes:` block with compact IDs and an 80-char preview. Tag-only or root-level matches keep the previous one-line format (no `↳` block).
 
 ---
 
