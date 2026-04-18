@@ -126,6 +126,10 @@ export interface SchemaSection {
     name: string;
     loadDepth: number;
     defaultChildren?: string[];
+    /** Short convention describing what belongs in this section and how to structure it.
+     *  Consumed by the checkpoint agent (Task #4 routing) and can be shown as placeholder
+     *  body in empty sections. Kept to ~100 chars; longer descriptions belong in prose docs. */
+    description?: string;
 }
 export interface EntrySchema {
     sections: SchemaSection[];

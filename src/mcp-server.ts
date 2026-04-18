@@ -103,6 +103,16 @@ function safeError(e: unknown): string {
   return msg.replace(/\/[^\s:)]+/g, "[path]").substring(0, 300);
 }
 
+/** One-line active-project anchor for write/append/update responses.
+ * After context compression the conversation history is gone; this line
+ * re-anchors the agent to the current project on every write (issue #27). */
+function activeProjectLine(store: HmemStore): string {
+  const current = store.getActiveProject(currentSessionId());
+  if (!current) return "Active project: none (call load_project to set)";
+  const shortTitle = current.title.split("|")[0].trim();
+  return `Active project: ${current.id} ${shortTitle}`;
+}
+
 // ---- hmem-sync integration ----
 
 let lastPullAt = 0;
@@ -1003,12 +1013,13 @@ server.tool(
           ? `\nSchema: .1 Analysis, .2 Possible fixes, .3 Fixing attempts, .4 Solution, .5 Cause, .6 Key Learnings`
           : "";
 
+        const activeLine = storeName === "personal" ? `\n${activeProjectLine(hmemStore)}` : "";
         return {
           content: [{
             type: "text" as const,
             text: `Memory saved: ${result.id} (${result.timestamp.substring(0, 19)})\n` +
               `Store: ${storeLabel} | Category: ${prefix}` +
-              firstTimeNote + eNote + relatedHint,
+              firstTimeNote + eNote + relatedHint + activeLine,
           }],
         };
       } finally {
@@ -1151,7 +1162,8 @@ server.tool(
             parts.push(`(resolved push conflict after ${retry.attempts} attempts)`);
           }
         }
-        return { content: [{ type: "text" as const, text: parts.join(" | ") + crossProjectNotice }] };
+        const activeLine = storeName === "personal" && !isExternal ? `\n${activeProjectLine(hmemStore)}` : "";
+        return { content: [{ type: "text" as const, text: parts.join(" | ") + activeLine + crossProjectNotice }] };
       } finally {
         hmemStore.close();
       }
@@ -1376,11 +1388,12 @@ server.tool(
             conflictNote = `\n(resolved push conflict after ${retry.attempts} attempts)`;
           }
         }
+        const activeLine = storeName === "personal" ? `\n${activeProjectLine(hmemStore)}` : "";
         return {
           content: [{
             type: "text" as const,
             text: `Appended ${result.count} node${result.count === 1 ? "" : "s"} to ${id}.\n` +
-              `New top-level children: ${result.ids.join(", ")}` + conflictNote + crossProjectNotice,
+              `New top-level children: ${result.ids.join(", ")}` + conflictNote + activeLine + crossProjectNotice,
           }],
         };
       } finally {

@@ -70,6 +70,32 @@ export const DEFAULT_CONFIG = {
         accessMin: 3,
         accessMax: 8,
     },
+    schemas: {
+        P: {
+            sections: [
+                { name: "Overview", loadDepth: 2, description: "Current state / Goals / Architecture / Environment as L3 (≤4 lines each). L1 body: Name | Status | Tech | Repo" },
+                { name: "Codebase", loadDepth: 1, description: "Entry point, Core modules, Helpers, Config, Tests. L3 = module group, L4 = signature + purpose" },
+                { name: "Usage", loadDepth: 1, description: "Installation, CLI/API, common workflows. No code — commands only" },
+                { name: "Context", loadDepth: 1, description: "Initiator, audience, business context, dependencies as L3" },
+                { name: "Deployment", loadDepth: 1, description: "Only if relevant. Server, build, CI/CD, release process" },
+                { name: "Bugs", loadDepth: 1, description: "Open first, fixed marked [✓] or moved to .Protocol. L3 = bug title or pointer → E-entry. If an E-entry already covers it, use the pointer and skip the inline copy" },
+                { name: "Protocol", loadDepth: 0, description: "Chronological. One-liner + pointer to O-entries. No copy-paste snapshots", defaultChildren: ["Tests", "Code Style", "Commits"] },
+                { name: "Roadmap", loadDepth: 2, description: "5–8 milestones as L3, main tasks as L4, subtasks as L5. Non-project-specific work → T-entry" },
+                { name: "Ideas", loadDepth: 1, description: "Brainstorming. L3 = one-liner, L4 = details. Concrete ideas → promote to .Roadmap" },
+            ],
+        },
+        E: {
+            sections: [
+                { name: "Reproduction", loadDepth: 1, description: "Exact steps to trigger. Environment + minimal repro" },
+                { name: "Analysis", loadDepth: 1, description: "Root cause investigation. What was checked, what was found" },
+                { name: "Possible Fixes", loadDepth: 1, description: "Candidate approaches with tradeoffs" },
+                { name: "Fixing Attempts", loadDepth: 1, description: "What was tried, what worked, what didn't" },
+                { name: "Solution", loadDepth: 1, description: "The fix that shipped. Commit hash + one-line summary" },
+                { name: "Cause", loadDepth: 1, description: "Why the bug existed — the underlying mistake or gap" },
+                { name: "Key Learnings", loadDepth: 1, description: "Generalizable insight for future work. Tag #open / #solved" },
+            ],
+        },
+    },
 };
 /**
  * Format prefix map as "P=Project, L=Lesson, ..." for tool descriptions.
@@ -200,6 +226,9 @@ export function loadHmemConfig(projectDir) {
                     const section = { name: sec.name, loadDepth: sec.loadDepth };
                     if (Array.isArray(sec.defaultChildren) && sec.defaultChildren.every((c) => typeof c === "string")) {
                         section.defaultChildren = sec.defaultChildren;
+                    }
+                    if (typeof sec.description === "string" && sec.description.trim()) {
+                        section.description = sec.description.trim();
                     }
                     validSections.push(section);
                 }
