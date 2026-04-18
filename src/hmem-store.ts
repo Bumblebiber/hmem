@@ -112,6 +112,8 @@ export interface MemoryEntry {
   relatedEntries?: { id: string; title: string; created_at: string; tags: string[] }[];
   /** True if the entry is pinned (super-favorite). Pinned entries show full L2 content in bulk reads. */
   pinned?: boolean;
+  /** FTS search: sub-nodes of this entry that matched the query. Empty/absent for root-only or tag-only matches. */
+  matchedNodes?: { id: string; title: string; preview: string }[];
 }
 
 export interface MemoryNode {
@@ -851,11 +853,22 @@ export class HmemStore {
 
       // FTS5 phrase match — all words must appear in the text
       const ftsMatch = `"${searchTerm}"`;
-      const ftsRootIds = new Set(
-        (this.db.prepare(
-          "SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)"
-        ).all(ftsMatch) as any[]).map(r => r.root_id)
-      );
+      const ftsRows = this.db.prepare(
+        "SELECT rm.root_id, rm.node_id FROM hmem_fts_rowid_map rm " +
+        "JOIN hmem_fts fts ON fts.rowid = rm.fts_rowid " +
+        "WHERE hmem_fts MATCH ?"
+      ).all(ftsMatch) as { root_id: string; node_id: string | null }[];
+
+      const ftsRootIds = new Set<string>();
+      const matchedNodesByRoot = new Map<string, string[]>();
+      for (const r of ftsRows) {
+        ftsRootIds.add(r.root_id);
+        if (r.node_id) {
+          const arr = matchedNodesByRoot.get(r.root_id) ?? [];
+          arr.push(r.node_id);
+          matchedNodesByRoot.set(r.root_id, arr);
+        }
+      }
 
       // Also search tags (e.g. search="#hmem" matches tag "#hmem")
       const tagPattern = `%${opts.search}%`;
@@ -880,8 +893,40 @@ export class HmemStore {
         `SELECT * FROM memories ${where} ORDER BY created_at DESC${limitClause}`
       ).all(...ftsParams) as any[];
 
+      // Batch-fetch matched sub-nodes across all roots (skip irrelevant)
+      const allMatchedNodeIds = [...new Set(
+        [...matchedNodesByRoot.values()].flat()
+      )];
+      const nodeInfo = new Map<string, { root_id: string; title: string; content: string }>();
+      if (allMatchedNodeIds.length > 0) {
+        const nodePlaceholders = allMatchedNodeIds.map(() => "?").join(", ");
+        const nodeRows = this.db.prepare(
+          `SELECT id, root_id, title, content FROM memory_nodes ` +
+          `WHERE id IN (${nodePlaceholders}) AND (irrelevant IS NULL OR irrelevant = 0)`
+        ).all(...allMatchedNodeIds) as any[];
+        for (const n of nodeRows) {
+          nodeInfo.set(n.id, { root_id: n.root_id, title: n.title ?? "", content: n.content ?? "" });
+        }
+      }
+
       for (const row of rows) this.bumpAccess(row.id);
-      return rows.map(r => this.rowToEntry(r));
+      return rows.map(r => {
+        const entry = this.rowToEntry(r);
+        const matchedIds = matchedNodesByRoot.get(r.id);
+        if (matchedIds && matchedIds.length > 0) {
+          const matched = matchedIds
+            .map(nid => {
+              const info = nodeInfo.get(nid);
+              if (!info) return null; // filtered (irrelevant) or missing
+              const text = (info.title || info.content).replace(/\s+/g, " ").trim();
+              const preview = text.length > 80 ? text.substring(0, 80) + "…" : text;
+              return { id: nid, title: info.title || info.content.substring(0, 50), preview };
+            })
+            .filter((x): x is { id: string; title: string; preview: string } => x !== null);
+          if (matched.length > 0) entry.matchedNodes = matched;
+        }
+        return entry;
+      });
     }
 
     // Build filtered bulk query (exclude headers: seq > 0)

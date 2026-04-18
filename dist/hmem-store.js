@@ -636,7 +636,19 @@ export class HmemStore {
                 return [];
             // FTS5 phrase match — all words must appear in the text
             const ftsMatch = `"${searchTerm}"`;
-            const ftsRootIds = new Set(this.db.prepare("SELECT DISTINCT root_id FROM hmem_fts_rowid_map WHERE fts_rowid IN (SELECT rowid FROM hmem_fts WHERE hmem_fts MATCH ?)").all(ftsMatch).map(r => r.root_id));
+            const ftsRows = this.db.prepare("SELECT rm.root_id, rm.node_id FROM hmem_fts_rowid_map rm " +
+                "JOIN hmem_fts fts ON fts.rowid = rm.fts_rowid " +
+                "WHERE hmem_fts MATCH ?").all(ftsMatch);
+            const ftsRootIds = new Set();
+            const matchedNodesByRoot = new Map();
+            for (const r of ftsRows) {
+                ftsRootIds.add(r.root_id);
+                if (r.node_id) {
+                    const arr = matchedNodesByRoot.get(r.root_id) ?? [];
+                    arr.push(r.node_id);
+                    matchedNodesByRoot.set(r.root_id, arr);
+                }
+            }
             // Also search tags (e.g. search="#hmem" matches tag "#hmem")
             const tagPattern = `%${opts.search}%`;
             const tagRows = this.db.prepare("SELECT entry_id FROM memory_tags WHERE tag LIKE ?").all(tagPattern);
@@ -654,9 +666,38 @@ export class HmemStore {
             if (limit !== undefined)
                 ftsParams.push(limit);
             const rows = this.db.prepare(`SELECT * FROM memories ${where} ORDER BY created_at DESC${limitClause}`).all(...ftsParams);
+            // Batch-fetch matched sub-nodes across all roots (skip irrelevant)
+            const allMatchedNodeIds = [...new Set([...matchedNodesByRoot.values()].flat())];
+            const nodeInfo = new Map();
+            if (allMatchedNodeIds.length > 0) {
+                const nodePlaceholders = allMatchedNodeIds.map(() => "?").join(", ");
+                const nodeRows = this.db.prepare(`SELECT id, root_id, title, content FROM memory_nodes ` +
+                    `WHERE id IN (${nodePlaceholders}) AND (irrelevant IS NULL OR irrelevant = 0)`).all(...allMatchedNodeIds);
+                for (const n of nodeRows) {
+                    nodeInfo.set(n.id, { root_id: n.root_id, title: n.title ?? "", content: n.content ?? "" });
+                }
+            }
             for (const row of rows)
                 this.bumpAccess(row.id);
-            return rows.map(r => this.rowToEntry(r));
+            return rows.map(r => {
+                const entry = this.rowToEntry(r);
+                const matchedIds = matchedNodesByRoot.get(r.id);
+                if (matchedIds && matchedIds.length > 0) {
+                    const matched = matchedIds
+                        .map(nid => {
+                        const info = nodeInfo.get(nid);
+                        if (!info)
+                            return null; // filtered (irrelevant) or missing
+                        const text = (info.title || info.content).replace(/\s+/g, " ").trim();
+                        const preview = text.length > 80 ? text.substring(0, 80) + "…" : text;
+                        return { id: nid, title: info.title || info.content.substring(0, 50), preview };
+                    })
+                        .filter((x) => x !== null);
+                    if (matched.length > 0)
+                        entry.matchedNodes = matched;
+                }
+                return entry;
+            });
         }
         // Build filtered bulk query (exclude headers: seq > 0)
         const conditions = ["seq > 0"];

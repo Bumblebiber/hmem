@@ -101,6 +101,12 @@ export interface MemoryEntry {
     }[];
     /** True if the entry is pinned (super-favorite). Pinned entries show full L2 content in bulk reads. */
     pinned?: boolean;
+    /** FTS search: sub-nodes of this entry that matched the query. Empty/absent for root-only or tag-only matches. */
+    matchedNodes?: {
+        id: string;
+        title: string;
+        preview: string;
+    }[];
 }
 export interface MemoryNode {
     id: string;

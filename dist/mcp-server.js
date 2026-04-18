@@ -2700,6 +2700,16 @@ function renderEntryFormatted(lines, e, curator, expand = false) {
             }
         }
     }
+    // Search-matched sub-nodes (from FTS). Shown before children so the user
+    // sees WHERE in the entry the query hit, not just the root title.
+    if (e.matchedNodes && e.matchedNodes.length > 0) {
+        const matchRootId = e.id.includes(".") ? e.id.split(".")[0] : e.id;
+        lines.push(`  ↳ matched in ${e.matchedNodes.length} sub-node${e.matchedNodes.length === 1 ? "" : "s"}:`);
+        for (const m of e.matchedNodes) {
+            const compactId = m.id.replace(matchRootId, "");
+            lines.push(`    ${compactId}  ${m.preview}`);
+        }
+    }
     // Children — filter out irrelevant nodes
     // Root ID for compact child rendering (e.g. P0048.1 → .1)
     const rootId = e.id.includes(".") ? e.id.split(".")[0] : e.id;
