@@ -1,6 +1,6 @@
 {
   "name": "hmem-mcp",
-  "version": "6.6.1",
+  "version": "6.6.2",
   "description": "Humanlike memory for AI agents — MCP server with 5-level lazy-loaded SQLite memory",
   "author": "Bumblebiber",
   "license": "MIT",

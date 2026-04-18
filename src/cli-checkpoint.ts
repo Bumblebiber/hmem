@@ -145,6 +145,16 @@ export async function checkpoint(): Promise<void> {
       `  ${ex.nodeId}: "${ex.title}"`
     ).join("\n");
 
+    // Build P-entry section routing table from config (falls back to names-only if no descriptions)
+    const pSchema = config.schemas?.P?.sections ?? [];
+    const sectionRouting = pSchema.length > 0
+      ? pSchema.map((s, i) => {
+          const idx = i + 1;
+          const desc = s.description ? ` — ${s.description}` : "";
+          return `  .${idx} ${s.name}${desc}`;
+        }).join("\n")
+      : "  (no schema configured — use standard L2 structure: Overview / Codebase / Usage / Context / Deployment / Bugs / Protocol / Roadmap / Ideas)";
+
     const prompt = `You are a checkpoint agent for "${projectName}" (${projectId}).
 Process batch ${batchId} with ${batchExchanges.length} exchanges.
 
@@ -189,12 +199,22 @@ Quality gate — SKIP unless the entry passes ALL checks:
 - When in doubt, skip. Writing nothing is better than writing noise.
 
 ### 4. Update project P-entry (only if meaningful changes happened)
-read_memory(id="${projectId}") first. Only update if this batch contains significant changes:
-- Bugs (.6): new bug discovered or existing bug fixed
-- Open Tasks (.8): task completed (prefix with "✓ DONE:") or new task identified
-- Overview (.1): only if architecture or core behavior changed
-- Do NOT update Protocol (.7) — session summaries already cover this.
-- Do NOT update if this batch was just discussion/planning with no concrete outcome.
+read_memory(id="${projectId}") first to see the current structure. Only touch the P if this batch contains concrete outcomes.
+
+P-entry section conventions:
+${sectionRouting}
+
+Routing rules — follow strictly:
+- **Append, don't fragment.** The sections above already exist as L2 nodes (e.g. ${projectId}.6 for Bugs, ${projectId}.8 for Roadmap). Add new items as L3 children of the existing L2, never as new L2 siblings.
+  - Correct: append_memory(id="${projectId}.6", content="Bug title\\n> Details")
+  - Wrong: write_memory or append_memory(id="${projectId}") creating a second "Bugs" section
+- **.6 Bugs ↔ E-entries.** If Task #3 already wrote an E-entry for the bug, add only a pointer line in .6 ("→ E00XX Title"), not the full description. Avoid duplication.
+- **.8 Roadmap completion.** Task done → prefix the L3 title with "✓ DONE:". Don't delete — keep the audit trail.
+- **.1 Overview.** Only touch if architecture or core behavior changed this batch. Cosmetic updates don't belong here.
+- **.7 Protocol.** Do NOT append — the session summary already covers this batch.
+- **No outcome, no update.** If the batch was only discussion/planning with nothing concrete shipped, skip Task #4 entirely.
+
+Max 1-2 P-entry changes per batch. When in doubt, skip — false additions are harder to clean up than missing ones.
 
 ### 5. Tag exchanges
 For each exchange, consider adding ONE tag if applicable:
