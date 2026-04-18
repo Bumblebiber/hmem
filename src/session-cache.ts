@@ -23,9 +23,23 @@ export class SessionCache {
   private bulkReads = 0;
   private _totalTokensDelivered = 0;
   private _thresholdReached = false;
+  private _boundSessionId: string | undefined;
   private ttlHidden = 5 * 60 * 1000;      // 5 min — completely hidden
   private ttlNormal = 30 * 60 * 1000;     // 30 min — title-only → expired
   private ttlPromoted = 15 * 60 * 1000;   // 15 min — promoted title-only → expired
+
+  /**
+   * Bind cache to a session id. If the id changes (e.g. after /clear while the
+   * MCP server process persists), the cache auto-resets so a fresh agent gets
+   * a full briefing. Safe to call on every cache access.
+   */
+  bindSession(sessionId: string | undefined): void {
+    if (!sessionId) return;
+    if (this._boundSessionId && sessionId !== this._boundSessionId) {
+      this.reset();
+    }
+    this._boundSessionId = sessionId;
+  }
 
   /** Entries past hidden phase but within main TTL — shown as title-only. */
   getCachedIds(): Set<string> {

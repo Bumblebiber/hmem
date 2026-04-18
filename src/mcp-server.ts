@@ -1591,6 +1591,8 @@ server.tool(
         // Explicit filters (after, before, prefix, stale_days, tag) bypass V2 selection + cache
         const isBulkListing = !id && !search && !time_around && !after && !before && !prefix && !stale_days && !tag;
         const useCache = isBulkListing && storeName === "personal" && !show_all && !isExternal;
+        // Auto-invalidate if session changed (e.g. after /clear while MCP server persists)
+        sessionCache.bindSession(currentSessionId());
         const cachedIds = useCache ? sessionCache.getCachedIds() : undefined;
         const hiddenIds = useCache ? sessionCache.getHiddenIds() : undefined;
         const slotFraction = useCache ? sessionCache.getSlotFraction() : undefined;
@@ -2128,6 +2130,8 @@ server.tool(
         }
 
         // Cache check: if project was already loaded recently, return short confirmation
+        // bindSession auto-resets cache on session change (after /clear)
+        sessionCache.bindSession(currentSessionId());
         const hiddenIds = sessionCache.getHiddenIds();
         if (hiddenIds.has(id)) {
           log(`load_project: ${id} already cached (< 5 min), returning short response`);
