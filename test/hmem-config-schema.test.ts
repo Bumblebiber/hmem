@@ -42,10 +42,15 @@ describe("schema parsing", () => {
     expect(cfg.schemas!.P.createLinkedO).toBe(true);
   });
 
-  it("returns undefined schemas when key is missing", () => {
+  it("falls back to default schemas when key is missing", () => {
     writeConfig({ memory: { checkpointInterval: 10 } });
     const cfg = loadHmemConfig(tmpDir);
-    expect(cfg.schemas).toBeUndefined();
+    expect(cfg.schemas).toBeDefined();
+    expect(cfg.schemas!.P.sections.map(s => s.name)).toEqual([
+      "Overview", "Codebase", "Usage", "Context", "Deployment",
+      "Bugs", "Protocol", "Roadmap", "Ideas",
+    ]);
+    expect(cfg.schemas!.E.sections.length).toBeGreaterThan(0);
   });
 
   it("skips sections with invalid loadDepth", () => {
