@@ -1,5 +1,20 @@
 # Changelog
 
+## 6.6.3 — 2026-04-18
+
+### Added
+- **Active-project footer on writes** — `write_memory`, `append_memory` and `update_memory` now append `Active project: P00XX …` to their response so the agent can re-anchor after context compression (GH #27).
+
+## 6.6.2 — 2026-04-18
+
+### Added
+- **Default P/E section conventions** in built-in schemas — `sections[].description` now ships with guidance for checkpoint subagents, reducing wrong-node placement.
+
+## 6.6.1 — 2026-04-18
+
+### Added
+- **Sub-node attribution in FTS search** — `read_memory` search results now surface which child node matched, not just the root.
+
 ## 6.6.0 — 2026-04-17
 
 ### Added
