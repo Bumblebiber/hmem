@@ -1,5 +1,10 @@
 # Changelog
 
+## 6.6.4 — 2026-04-23
+
+### Added
+- **`hmem delete <id>` CLI command** — removes a memory entry by ID with confirmation prompt.
+
 ## 6.6.3 — 2026-04-18
 
 ### Added
