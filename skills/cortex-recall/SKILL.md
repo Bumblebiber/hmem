@@ -45,6 +45,7 @@ none
 [/RECALL RESULTS]
 
 Max 10 results. Most relevant first. IDs exact (e.g., L0042, O0056.3.2, P0048.6).
+Nothing before [RECALL RESULTS]. Nothing after [/RECALL RESULTS]. No commentary, no explanation.
 ---
 
 ## STEP 3: Use results
