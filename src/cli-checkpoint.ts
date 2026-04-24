@@ -151,9 +151,18 @@ export async function checkpoint(): Promise<void> {
       ? pSchema.map((s, i) => {
           const idx = i + 1;
           const desc = s.description ? ` — ${s.description}` : "";
-          return `  .${idx} ${s.name}${desc}`;
+          const policy = s.checkpointPolicy === "readonly" ? " [READONLY — do not write]"
+            : s.checkpointPolicy === "pointer" ? " [POINTER ONLY — e.g. → E00XX Title]"
+            : "";
+          return `  .${idx} ${s.name}${desc}${policy}`;
         }).join("\n")
-      : "  (no schema configured — use standard L2 structure: Overview / Codebase / Usage / Context / Deployment / Bugs / Protocol / Roadmap / Ideas)";
+      : "  (no schema configured — use standard L2 structure)";
+
+    const readonlySections = pSchema
+      .map((s, i) => ({ ...s, idx: i + 1 }))
+      .filter(s => s.checkpointPolicy === "readonly")
+      .map(s => `${projectId}.${s.idx} (${s.name})`)
+      .join(", ");
 
     const prompt = `You are a checkpoint agent for "${projectName}" (${projectId}).
 Process batch ${batchId} with ${batchExchanges.length} exchanges.
@@ -198,23 +207,31 @@ Quality gate — SKIP unless the entry passes ALL checks:
 - NEVER write test entries, placeholder entries, or "delete me" entries.
 - When in doubt, skip. Writing nothing is better than writing noise.
 
-### 4. Update project P-entry (only if meaningful changes happened)
-read_memory(id="${projectId}") first to see the current structure. Only touch the P if this batch contains concrete outcomes.
+### 4. Update project P-entry
+DEFAULT: do NOT update the P-entry. Skip this task unless the batch contains a concrete, specific outcome that shipped, was fixed, or was definitively decided.
 
-P-entry section conventions:
+Discussion, planning, brainstorming, and "made progress" batches → skip entirely.
+
+${readonlySections ? `PROTECTED — never write to: ${readonlySections}` : ""}
+
+P-entry section policies:
 ${sectionRouting}
 
-Routing rules — follow strictly:
-- **Append, don't fragment.** The sections above already exist as L2 nodes (e.g. ${projectId}.6 for Bugs, ${projectId}.8 for Roadmap). Add new items as L3 children of the existing L2, never as new L2 siblings.
-  - Correct: append_memory(id="${projectId}.6", content="Bug title\\n> Details")
-  - Wrong: write_memory or append_memory(id="${projectId}") creating a second "Bugs" section
-- **.6 Bugs ↔ E-entries.** If Task #3 already wrote an E-entry for the bug, add only a pointer line in .6 ("→ E00XX Title"), not the full description. Avoid duplication.
-- **.8 Roadmap completion.** Task done → prefix the L3 title with "✓ DONE:". Don't delete — keep the audit trail.
-- **.1 Overview.** Only touch if architecture or core behavior changed this batch. Cosmetic updates don't belong here.
-- **.7 Protocol.** Do NOT append — the session summary already covers this batch.
-- **No outcome, no update.** If the batch was only discussion/planning with nothing concrete shipped, skip Task #4 entirely.
+When you do update, follow these rules strictly:
 
-Max 1-2 P-entry changes per batch. When in doubt, skip — false additions are harder to clean up than missing ones.
+**Body before children.** Before creating a child node, ask: does this content fit in 3 lines of the parent's body? If yes, put it in the body — do not create a child. Create a child node ONLY when the content is complete, self-contained, and too long for the parent body.
+
+**One topic = one node.** If you'd create 3-4 child nodes about the same topic, write them as body text of a single node instead. Never fragment a single decision or feature into multiple small children.
+
+**Append, don't fragment.** Add new items as L3 children of existing L2 sections — never create new L2 siblings.
+  - Correct: append_memory(id="${projectId}.6", content="Bug title\\n> Details")
+  - Wrong: write_memory or append_memory(id="${projectId}") creating a second section
+
+**.6 Bugs ↔ E-entries.** If Task #3 already wrote an E-entry, add only a pointer in .6: "→ E00XX Title". No duplication.
+
+**.8 Roadmap completion.** Task done → prefix title with "✓ DONE:". Don't delete.
+
+Max 1 P-entry change per batch. When uncertain, skip — false additions are harder to fix than missing ones.
 
 ### 5. Tag exchanges
 For each exchange, consider adding ONE tag if applicable:
