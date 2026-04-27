@@ -49,3 +49,4 @@ These thoughts mean STOP — dispatch instead:
 2. **Memory = Tools.** Write insights via `write_memory`. Never rely on conversation history alone.
 3. **Skills override instinct.** If a skill exists for the task, use it — even if you think you remember how it works.
 4. **New project = `hmem-new-project`.** Never create P-entries manually — the skill handles schema, sections, and O-entry linking.
+5. **Code navigation = Codebase node first.** Before editing or tracing any function: check `read_memory(id="P00XX.2")` for documented signatures. If not found, dispatch an Explore agent — never explore the filesystem directly in main context. Update the Codebase node with what you find.

@@ -850,21 +850,29 @@ server.tool(
       };
     }
     // Schema enforcement: if a schema is defined for this prefix, block appends to root
-    // entries. New L2 nodes are not allowed — agents must append to specific sections.
+    // entries unless the content starts with a valid schema section name. This allows
+    // adding newly-configured sections (e.g. "Rules") to existing entries (reconcile).
     if (!id.includes(".")) {
       const appendPrefix = id.match(/^([A-Z])/)?.[1];
       if (appendPrefix && hmemConfig.schemas?.[appendPrefix]) {
         const appendSchema = hmemConfig.schemas[appendPrefix];
-        const sections = appendSchema.sections.map((s, i) => `  .${i + 1}  ${s.name}`).join("\n");
-        return {
-          content: [{ type: "text" as const, text:
-            `ERROR: ${id} uses a fixed schema — cannot add new L2 nodes directly.\n` +
-            `Defined sections:\n${sections}\n\n` +
-            `Append to a specific section instead, e.g.:\n` +
-            `  append_memory(id="${id}.1", content="...")  → ${appendSchema.sections[0]?.name ?? "first section"}`
-          }],
-          isError: true,
-        };
+        const firstLine = content.split("\n")[0].trim();
+        const isValidSection = appendSchema.sections.some(
+          (s) => s.name.toLowerCase() === firstLine.toLowerCase()
+        );
+        if (!isValidSection) {
+          const sections = appendSchema.sections.map((s, i) => `  .${i + 1}  ${s.name}`).join("\n");
+          return {
+            content: [{ type: "text" as const, text:
+              `ERROR: ${id} uses a fixed schema — cannot add new L2 nodes directly.\n` +
+              `Defined sections:\n${sections}\n\n` +
+              `Append to a specific section instead, e.g.:\n` +
+              `  append_memory(id="${id}.1", content="...")  → ${appendSchema.sections[0]?.name ?? "first section"}`
+            }],
+            isError: true,
+          };
+        }
+        // Valid schema section name — allow append to add a missing section to existing entry
       }
     }
     try {

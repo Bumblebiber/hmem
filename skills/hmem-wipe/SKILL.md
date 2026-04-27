@@ -1,11 +1,12 @@
 ---
 name: hmem-wipe
 description: >
-  Prepare for /clear by optionally saving high-value knowledge. Use when:
-  - User types /wipe
-  - Context threshold warning appears (100k tokens)
-  - User says "context aufräumen", "clear machen", "wipe"
-  Handles pre-clear cleanup, then instructs user to /clear for automatic context restoration.
+  Prepare for conversation context clear (/clear): save high-value knowledge, update project
+  Next Steps, then instruct user to type /clear for automatic context restoration.
+  Invoke when the user wants to clear the conversation window — not when deleting data/entries.
+  Triggers: "/wipe", "clear context", "wipe context", "context is full/too big/getting large",
+  "prepare for /clear", "start fresh", "context cleanup", approaching token limit.
+  Do NOT invoke for: deleting hmem entries, clearing terminal output, cleaning up nodes/duplicates.
 ---
 
 # Wipe — Prepare & Clear Context

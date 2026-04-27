@@ -276,6 +276,20 @@ If you have a Claude Max subscription, the statusline automatically shows 5-hour
 ```
 Colors: green (<50%), yellow (50–79%), red (≥80%). No config needed — data comes from Claude Code automatically. Only visible if Claude Code passes the data (Claude Max subscribers only).
 
+## Step 2g: v7.0.2 — Schema-Section Reconcile for `append_memory`
+
+**Only needed when upgrading from < v7.0.2**
+
+`append_memory` to a schema-enforced root entry (e.g. `append_memory(id="I0002", ...)`) is now
+allowed if the content's first line matches a defined schema section name. Previously this was
+always blocked ("uses a fixed schema — cannot add new L2 nodes directly").
+
+**Use case:** Adding a section that was added to `hmem.config.json` after the entry was created
+(e.g., adding the new `Rules` section to existing I-entries). No manual migration needed —
+just run the reconcile step from Step 4c.
+
+No schema changes, no DB migrations.
+
 ---
 
 ## Step 3: Entry Migration
@@ -418,6 +432,37 @@ To add a rule to a P-entry:
 append_memory(id="P00XX.YY", content="Rule text here (→ was R00ZZ)")
 ```
 where `P00XX.YY` is the Rules section node ID (found via `load_project`).
+
+---
+
+## Step 4c: I-Entry Rules Node Reconciliation
+
+I-entries (Infrastructure/Devices) have a `Rules` section in the schema for device-specific
+agent directives. When this section is added to `hmem.config.json`, existing I-entries do NOT
+get it automatically — unlike P-entries (which reconcile on `load_project`), I-entries have
+no auto-reconcile trigger.
+
+**Check which I-entries are missing Rules:**
+```
+read_memory(prefix="I", depth=2)
+```
+Look for entries that don't show a `Rules` L2 node.
+
+**Add the missing Rules node** (requires hmem-mcp ≥ v7.0.2 which allows schema-section
+appends to existing root entries):
+```
+append_memory(id="I00XX", content="Rules\n\tDevice-specific directives here")
+```
+
+Fill in relevant directives per device — examples:
+- **Server:** sudo access, package manager quirks, which user Claude runs as
+- **Dev machine:** OS-specific conventions (apt vs dnf), primary project
+- **Mobile/laptop:** availability constraints, work vs personal restrictions
+- **Services (npm, rmapi):** access method, credentials location, rate limits
+
+**Note:** If `append_memory` returns "uses a fixed schema — cannot add new L2 nodes directly"
+even with "Rules" as the first line, the running MCP server is older than v7.0.2. Update
+first (`npm update -g hmem-mcp`), then restart Claude Code, then add the Rules nodes.
 
 ---
 

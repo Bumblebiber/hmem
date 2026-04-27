@@ -1,6 +1,17 @@
 ---
 name: hmem-write
-description: "Store facts, preferences, decisions, and project context into hmem long-term memory using the write_memory MCP tool. Use when the user says 'remember this', 'save this', 'don't forget', 'store this for later', or invokes /hmem-write. Persists key lessons, error resolutions, architecture decisions, user preferences, and project state across sessions. Use when Claude should record conversation insights, save project context, persist important facts, or store user preferences for future reference."
+description: >
+  Complete protocol for writing to hmem long-term memory. Covers tree navigation
+  (find correct insertion point before writing), prefix selection (L/E/D/P/N/R/I/H/...),
+  hashtag assignment, title/body formatting, deduplication, and append-vs-write decisions.
+  Do NOT call write_memory or append_memory directly without this skill — skipping the
+  protocol creates duplicates and misplaced entries.
+
+  Invoke whenever you are about to persist anything: lessons learned, bug fixes,
+  architecture decisions, project state, user preferences, E-entries, N-entries, or
+  P-entry updates. Also invoke when the user says "remember this", "save this",
+  "don't forget", "store this", "write that down", "add to memory", "create an E-entry",
+  "log this", or invokes /hmem-write.
 ---
 
 # How to use write_memory
@@ -133,8 +144,10 @@ The MCP server enforces schemas for any prefix that has a `schemas` entry in `hm
 For those prefixes, two rules apply:
 
 1. **`write_memory`**: L2 node names must match the defined section names (error otherwise).
-2. **`append_memory` to root entry (e.g. `P0029`, no dot)**: **blocked** — you cannot add new L2 sections.
-   You must append to a specific section: `append_memory(id="P0029.N", content="...")`.
+2. **`append_memory` to root entry (e.g. `P0029`, no dot)**: blocked for arbitrary content — you cannot
+   add new L2 sections outside the schema. **Exception:** if the first line of content is a valid schema
+   section name (e.g. `"Rules"`), the append is allowed — useful for adding a missing section to an
+   existing entry. Otherwise append to a specific section: `append_memory(id="P0029.N", content="...")`.
 
 By default, `P` has a schema. If `L`, `D`, or other prefixes are configured with schemas, the same rules apply.
 
@@ -345,7 +358,7 @@ read_memory(id="P0029")   # shows root + all L2 titles
 Do any L2 titles match the sub-topic?
 
 - **No match (and no schema)** → `append_memory(id="P0029", content="...")` adds a new L2
-- **No match (schema-constrained entry like P)** → find the closest existing section and append there (L2 additions are blocked)
+- **No match (schema-constrained entry like P)** → find the closest existing section and append there (arbitrary L2 additions are blocked; only valid schema section names are allowed at root)
 - **Match found (e.g. .15)** → continue to Step 3
 
 **Step 3 — Drill into that L2**
@@ -429,10 +442,12 @@ Appends new child nodes under an existing root or node. Existing children are pr
 Content indentation is **relative to the parent** — 0 tabs = direct child of `id`.
 Body works the same as in `write_memory` — blank line separates title from body.
 
-> **Schema enforcement:** For entries with a defined schema (e.g., all P-entries), appending
-> to the root (e.g., `id="P0029"`) is **blocked** — that would create a new L2 section outside
-> the schema. You must target a specific section: `append_memory(id="P0029.3", content="...")`.
-> For entries without a schema (L, D, E, etc. by default), root appends are allowed.
+> **Schema enforcement:** For entries with a defined schema (e.g., P, I), appending to the root
+> (e.g., `id="P0029"`) is **blocked** unless the content's first line matches a defined section
+> name. Use case: adding a missing section (e.g. `"Rules"`) to an entry created before that
+> section existed. For arbitrary new content, target a specific section:
+> `append_memory(id="P0029.3", content="...")`.
+> For entries without a schema (L, D, E, etc. by default), root appends are always allowed.
 
 ```
 append_memory(
