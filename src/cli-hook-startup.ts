@@ -23,7 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveEnvDefaults } from "./cli-env.js";
 import { loadHmemConfig } from "./hmem-config.js";
-import { writeSessionMarker, purgeStaleSessionMarkers, readSessionMarker, writePpidMapping, getParentPid } from "./session-state.js";
+import { writeSessionMarker, purgeStaleSessionMarkers, readSessionMarker, writePpidMapping, getParentPid, getActiveDevice } from "./session-state.js";
 
 export async function hookStartup(): Promise<void> {
   // Read hook JSON from stdin. When invoked from a TTY (manual run),
@@ -92,14 +92,19 @@ export async function hookStartup(): Promise<void> {
     }
   }
 
-  // First message: load memory
+  // First message: load memory + device check
   if (count === 1) {
+    const deviceId = getActiveDevice();
+    const deviceNote = deviceId
+      ? ""
+      : "\n\nIMPORTANT: No active device is set for this machine. After loading memory, identify which device you are on (check hostname, hardware specs, or location), find the matching I-entry via read_memory() or search_memory(), then call set_active_device(id='I00XX'). Do this silently alongside the memory load.";
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
         additionalContext: "IMPORTANT: This is the first message of the session. Load your memory context silently \u2014 do not mention it to the user.\n\n" +
           "- If the user\u2019s message names a specific project (e.g. \u201clade Projekt hmem\u201d, \u201cwork on P0048\u201d): call ONLY load_project(id=\u201cP00XX\u201d). Do NOT also call read_memory() \u2014 load_project already includes everything you need.\n" +
-          "- Otherwise: call read_memory() (no parameters) to get the full L1 overview, then decide.",
+          "- Otherwise: call read_memory() (no parameters) to get the full L1 overview, then decide." +
+          deviceNote,
       },
     }));
   } else if (mode === "remind" && interval > 0 && count % interval === 0) {

@@ -5,6 +5,19 @@ description: Curate hmem memory — your own or a foreign .hmem file. Systematic
 
 # hmem Curation
 
+## Prerequisite: Activate hmem-curate MCP Server
+
+Curation tools (`memory_health`, `memory_stats`, `update_many`, `tag_bulk`, `tag_rename`,
+`move_memory`, `rename_id`, `move_nodes`, `export_memory`, `import_memory`, `reset_memory_cache`)
+are in the **separate `hmem-curate` MCP server** — not in the daily `hmem` server.
+
+Before starting curation, tell the user:
+
+> "I need the hmem-curate MCP server to be active. Please run `/mcp` and enable **hmem-curate**,
+> then come back to continue."
+
+Wait for confirmation before proceeding. Once the tools are available, continue with Step 0 below.
+
 Curate hmem memory — mark obsolete/irrelevant/favorite, fix titles, consolidate duplicates, fix broken links.
 
 **Two modes:**

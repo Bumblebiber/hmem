@@ -1,6 +1,6 @@
 {
   "name": "hmem-mcp",
-  "version": "6.6.4",
+  "version": "7.0.0",
   "description": "Humanlike memory for AI agents — MCP server with 5-level lazy-loaded SQLite memory",
   "author": "Bumblebiber",
   "license": "MIT",
@@ -20,7 +20,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "hmem": "dist/cli.js"
+    "hmem": "dist/cli.js",
+    "hmem-curate": "dist/mcp-curate-server.js"
   },
   "exports": {
     ".": {

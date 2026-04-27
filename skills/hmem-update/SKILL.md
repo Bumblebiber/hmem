@@ -132,8 +132,9 @@ Since v5.1.8, `load_project` supports configurable section expansion:
 
 Check if the user has customized this in `hmem.config.json`. If not, inform them about the option:
 ```json
-{ "memory": { "loadProjectExpand": { "withBody": [1], "withChildren": [6, 8] } } }
+{ "memory": { "loadProjectExpand": { "withBody": [1], "withChildren": [6, 8, 10, 16] } } }
 ```
+Section 16 = Rules — include it so project-specific agent directives are visible on every `load_project`.
 
 ---
 
@@ -191,6 +192,92 @@ v6.0.0 replaced `HMEM_PROJECT_DIR` + `HMEM_AGENT_ID` with a single `HMEM_PATH` e
 
 ---
 
+## Step 2e: v7.0.0 — Two-Server Split
+
+**Only needed when upgrading from < v7.0.0**
+
+v7.0.0 moves 11 curation/maintenance tools into a separate `hmem-curate` binary.
+The daily server now only exposes the 11 daily-use tools — less context noise, no accidental curation.
+
+Tools that moved to `hmem-curate`: `update_many`, `reset_memory_cache`, `export_memory`, `import_memory`,
+`memory_stats`, `memory_health`, `tag_bulk`, `tag_rename`, `move_memory`, `rename_id`, `move_nodes`
+
+**1. Add hmem-curate to MCP config**
+
+Open `~/.mcp.json` (or wherever hmem is configured) and add a second entry:
+
+```json
+"hmem-curate": {
+  "command": "hmem-curate",
+  "env": {
+    "HMEM_PATH": "/path/to/your/file.hmem",
+    "HMEM_SYNC_PASSPHRASE": "..."
+  }
+}
+```
+
+Leave it **disabled by default** — only activate via `/mcp` when running `/hmem-curate` or `/hmem-migrate-o`.
+
+**Verify the binary installed correctly:**
+```bash
+hmem-curate --version   # should print 7.0.0
+```
+
+If `hmem-curate` is not found: `npm update -g hmem-mcp` (postinstall sometimes skips bin links).
+
+**2. Set up the hmem-using-hmem session hook**
+
+v7.0.0 ships a meta-skill that injects dispatch/memory habits at session start — similar to Superpowers' `using-superpowers`. One command does everything:
+
+```bash
+hmem setup-hook
+```
+
+This copies `scripts/hmem-session-inject.sh` to `~/.claude/hooks/` and registers the `SessionStart` hook in `settings.json`. Idempotent — safe to run again if already installed.
+
+After the next session restart, `hmem-using-hmem` meta-rules will be in context automatically.
+
+---
+
+## Step 2f: v7.0.0 — Device & Rate Limits in Statusline
+
+**Only needed when upgrading from < v7.0.0**
+
+**1. Active Device in Statusline**
+
+The statusline now shows which device the session is running on (using an I-entry):
+
+```
+Strato Server  |  P0048 hmem-mcp  |  3/5  |  5h: 34%/w: 17%
+```
+
+- Shows the I-entry title (e.g., "Strato Server"), no ID prefix
+- Shows "identify device" in gray if not yet configured
+- On first message of a new session, the agent auto-detects the device and calls `set_active_device`
+
+**Set up the device** (once per machine — persists across sessions):
+
+```
+set_active_device({ id: "I00XX" })   # use the I-entry ID for this machine
+```
+
+Device is stored in `~/.hmem/active-device`. To verify:
+```bash
+cat ~/.hmem/active-device
+```
+
+If no I-entry exists for this machine yet: create one first with `write_memory(prefix="I", ...)`.
+
+**2. Rate Limits in Statusline (Claude Max)**
+
+If you have a Claude Max subscription, the statusline automatically shows 5-hour and weekly usage:
+```
+5h: 34%/w: 17%
+```
+Colors: green (<50%), yellow (50–79%), red (≥80%). No config needed — data comes from Claude Code automatically. Only visible if Claude Code passes the data (Claude Max subscribers only).
+
+---
+
 ## Step 3: Entry Migration
 
 Some versions introduce new data formats. Check if migration is needed:
@@ -227,27 +314,110 @@ Some versions introduce new data formats. Check if migration is needed:
 
 ## Step 4: P-Entry Schema Enforcement (R0009)
 
-All P-entries (projects) must follow the standard L2 structure:
+All P-entries (projects) must follow the standard 16-section L2 structure defined in `hmem.config.json`. Core sections:
 
 ```
-.1 Overview
-.2 Codebase
-.3 Usage
-.4 Context
-.5 Deployment
-.6 Bugs
-.7 Protocol
-.8 Open tasks
-.9 Ideas
+.1  Overview       (readonly)
+.2  Codebase       (readonly)
+.3  Dependencies   (readonly)
+.4  Usage          (readonly)
+.5  Requirements   (readonly)
+.6  Context        (readonly)
+.7  Deployment     (readonly)
+.8  Security       (pointer — only E-entry refs)
+.9  Performance    (pointer — only E-entry refs)
+.10 Bugs           (pointer — only E-entry refs)
+.11 History        (readonly — session log, chronological)
+.12 Roadmap        (append)
+.13 Ideas          (append)
+.14 Team           (readonly)
+.15 Next Steps     (append)
+.16 Rules          (readonly — project-specific agent directives)
 ```
+
+`checkpointPolicy` controls what the Haiku checkpoint agent may write:
+- `readonly` — Haiku never modifies this section
+- `pointer` — Haiku may only add nodes that reference an entry ID (e.g. `[E0124]`)
+- `append` — Haiku may freely add sub-nodes
 
 For each active P-entry:
 1. `read_memory(id="P00XX", depth=2)` — check L2 structure
-2. Compare against the schema above
-3. Add missing sections: `append_memory(id="P00XX", content="\tOverview\n\t\tCurrent state: ...")`
-4. L1 body should be: `Name | Status | Stack | Description`
+2. Run `load_project(id="P00XX")` — auto-reconcile adds any missing sections
+3. L1 body should be: `Name | Status | Stack | Repo`
 
 **Do not restructure entries that already follow the schema.** Only fix what's missing or wrong.
+
+---
+
+## Step 4b: Config & DB Migration (Protocol → History + Rules)
+
+This step is only needed when upgrading from a config that still has `"Protocol"` as a section name.
+
+**Check if migration is needed:**
+```bash
+grep -c '"Protocol"' ~/.hmem/*/hmem.config.json ~/.hmem/Agents/*/hmem.config.json 2>/dev/null
+```
+If the output is `0` everywhere — skip this step.
+
+**1. Update hmem.config.json**
+
+In `memory.schemas.P.sections`, make these changes:
+- Rename `"Protocol"` → `"History"` and set `"checkpointPolicy": "readonly"`
+- Add `"Rules"` section at the end: `{ "name": "Rules", "loadDepth": 1, "checkpointPolicy": "readonly" }`
+- Add `checkpointPolicy` to all sections per the table in Step 4
+- In `loadProjectExpand.withChildren`, add `16` for Rules visibility
+
+Full recommended policies (add to each section):
+```json
+{ "name": "Overview",     "checkpointPolicy": "readonly" },
+{ "name": "Codebase",     "checkpointPolicy": "readonly" },
+{ "name": "Dependencies", "checkpointPolicy": "readonly" },
+{ "name": "Usage",        "checkpointPolicy": "readonly" },
+{ "name": "Requirements", "checkpointPolicy": "readonly" },
+{ "name": "Context",      "checkpointPolicy": "readonly" },
+{ "name": "Deployment",   "checkpointPolicy": "readonly" },
+{ "name": "Security",     "checkpointPolicy": "pointer"  },
+{ "name": "Performance",  "checkpointPolicy": "pointer"  },
+{ "name": "Bugs",         "checkpointPolicy": "pointer"  },
+{ "name": "History",      "checkpointPolicy": "readonly" },
+{ "name": "Roadmap",      "checkpointPolicy": "append"   },
+{ "name": "Ideas",        "checkpointPolicy": "append"   },
+{ "name": "Team",         "checkpointPolicy": "readonly" },
+{ "name": "Next Steps",   "checkpointPolicy": "append"   },
+{ "name": "Rules",        "loadDepth": 1, "checkpointPolicy": "readonly" }
+```
+
+**2. Rename Protocol → History in existing P-entries**
+
+Find all Protocol section nodes and rename them:
+```bash
+sqlite3 /path/to/your.hmem \
+  "UPDATE memory_nodes SET title='History', content=REPLACE(content,'Protocol','History'), updated_at=datetime('now') WHERE LOWER(title)='protocol' AND root_id LIKE 'P%';
+   SELECT changes() || ' nodes renamed';"
+```
+Then rebuild the FTS index:
+```bash
+sqlite3 /path/to/your.hmem "PRAGMA wal_checkpoint(TRUNCATE);"
+```
+
+**3. R-entry curation**
+
+Global R-entries should only contain rules that apply to ALL projects. Project-specific rules belong in the P-entry's `Rules` section.
+
+Review all R-entries (`read_memory(prefix="R")`). For each one:
+- Ask: "Would an agent working on an unrelated project need this?"
+- If NO → move to the relevant P-entry's Rules section and mark the R-entry as irrelevant
+
+Common candidates for migration:
+- Release/publish rules → into the project's P-entry Rules
+- Game/domain-specific constraints → into the relevant project's Rules
+- Tool-specific workarounds → into the project's Rules
+
+To add a rule to a P-entry:
+```
+append_memory(id="P00XX.YY", content="Rule text here (→ was R00ZZ)")
+```
+where `P00XX.YY` is the Rules section node ID (found via `load_project`).
 
 ---
 
@@ -335,6 +505,7 @@ update was installed — i.e., already on latest version).
 read_memory()                           # bulk read works
 read_memory(id="P00XX")                 # drill-down works
 load_project(id="P00XX")               # project loading works
+read_project(id="P00XX")               # v7.0.0: read without activating O-entry routing
 write_memory(prefix="T", content="Update smoke test — delete me", tags=["#test"])
                                         # write works → note the ID
 update_memory(id="T00XX", content="Update smoke test — verified", irrelevant=true)

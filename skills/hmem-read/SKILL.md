@@ -1,6 +1,6 @@
 ---
 name: hmem-read
-description: "Load long-term memory from hmem. Use when: user types /hmem-read or says 'load memory', 'check your memory', 'what do you remember', 'show me the project', 'continue where we left off', 'was weißt du über...'; starting work with no L1 summaries in context; after /compact or context reset to reload knowledge; before significant work to anchor with prior context; user asks about a specific project, error, or topic visible in L1 summaries; user says 'pick up where we left off', 'resume', 'Woran haben wir gearbeitet', 'Was war der letzte Stand'. Calls read_memory() or load_project() immediately. Also covers search, prefix filter, context_for, stale detection, find_related, memory_stats, memory_health."
+description: "Load long-term memory from hmem. Use when: user types /hmem-read or says 'load memory', 'check your memory', 'what do you remember', 'show me the project', 'continue where we left off', 'was weißt du über...'; starting work with no L1 summaries in context; after /compact or context reset to reload knowledge; before significant work to anchor with prior context; user asks about a specific project, error, or topic visible in L1 summaries; user says 'pick up where we left off', 'resume', 'Woran haben wir gearbeitet', 'Was war der letzte Stand'. Calls read_memory() or load_project() immediately. Also covers search, prefix filter, context_for, stale detection, find_related, memory_stats, memory_health. For cross-project context (reading a second project without switching the active one), use read_project() — e.g. when working on MAIMO but needing hmem API context."
 ---
 
 # Load Memory — Choose Your Path
@@ -42,6 +42,14 @@ exchanges — so you see exactly what happened in previous sessions, not just ti
   write_memory(prefix="P", content="New project: ...")   # → P00XX
   load_project(id="P00XX")
   ```
+
+- **Cross-project reference** — need context from another project *without* switching active project:
+  ```
+  read_project(id="P0048")   # focused briefing, does NOT activate
+  ```
+  Returns Overview, Codebase titles, Usage, Context, Requirements, Roadmap titles.
+  Omits: session history (O-entries), Bugs, History, Ideas, Next Steps, Rules, R-injection.
+  Use this when working on Project A but needing the API/architecture of Project B.
 
 - **No specific project** → load everything:
   ```
@@ -388,6 +396,7 @@ For a thorough deep-clean, use the `/hmem-curate` skill.
 | Load everything without purpose | Check L1 first, then expand selectively |
 | Read .hmem file directly | Always use MCP tools — it is a SQLite binary |
 | Just display this skill text | **Call a read_memory or load_project variant immediately** |
+| `load_project` on a secondary reference project | `read_project(id="P00XX")` — doesn't switch active project |
 | `update_memory(id="X", obsolete=true)` without `[✓ID]` | Write correction first, then mark obsolete with `[✓ID]` tag |
 | Repeated `read_memory()` to find old entries | `read_memory(titles_only=true, prefix="L")` or `read_memory(search="...")` |
 | Listing noise without fixing it | Fix it NOW: `update_memory(id, content, irrelevant=true)` |

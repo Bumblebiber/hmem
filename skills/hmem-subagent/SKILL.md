@@ -1,9 +1,9 @@
 ---
-name: cortex-subagent
-description: Template for sub-agents dispatched by cortex-dispatch. Receive one task, return ONLY the result. No preamble, no explanation, no sign-off.
+name: hmem-subagent
+description: Template for sub-agents dispatched by hmem-dispatch. Receive one task, return ONLY the result. No preamble, no explanation, no sign-off.
 ---
 
-# cortex-subagent
+# hmem-subagent
 
 ## YOU ARE A SUB-AGENT
 

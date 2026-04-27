@@ -1,9 +1,9 @@
 ---
-name: cortex-recall
+name: hmem-recall
 description: Dispatch a Haiku sub-agent to search hmem for relevant memories. Sub-agent returns matching entries as ID + one-line summary. Main agent context stays clean.
 ---
 
-# cortex-recall
+# hmem-recall
 
 ## TRIGGER
 Use when:

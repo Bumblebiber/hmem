@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /**
- * hmem — Humanlike Memory MCP Server.
+ * hmem — Humanlike Memory MCP Server (daily-use tools).
  *
  * Provides persistent, hierarchical memory for AI agents via MCP.
  * SQLite-backed, 5-level lazy loading.
+ *
+ * Curation/maintenance tools (memory_health, tag_bulk, rename_id, etc.) live in
+ * the separate hmem-curate-server. Activate it with /mcp when needed.
  *
  * Environment variables:
  *   HMEM_PATH                — Full path to .hmem file (auto-resolved if not set)
@@ -15,56 +18,23 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync, spawn } from "node:child_process";
-import Database from "better-sqlite3";
+import { spawn } from "node:child_process";
 import { searchMemory } from "./memory-search.js";
-import { openCompanyMemory, resolveHmemPath, HmemStore, SimilarEntriesError } from "./hmem-store.js";
+import { openCompanyMemory, HmemStore, SimilarEntriesError } from "./hmem-store.js";
 import type { MemoryEntry, MemoryNode } from "./hmem-store.js";
-import { loadHmemConfig, formatPrefixList, getSyncServers } from "./hmem-config.js";
+import { formatPrefixList, getSyncServers, loadHmemConfig } from "./hmem-config.js";
 import type { HmemConfig } from "./hmem-config.js";
 import { SessionCache } from "./session-cache.js";
-
-// ---- Environment ----
-const HMEM_PATH = process.env.HMEM_PATH || resolveHmemPath();
-const PROJECT_DIR = process.env.HMEM_PROJECT_DIR || path.dirname(HMEM_PATH);
-let DEPTH = parseInt(process.env.HMEM_DEPTH || "0", 10);
-
-// Legacy: PID-based identity override (Das Althing orchestrator)
-const ppid = process.ppid;
-const ctxFile = path.join(PROJECT_DIR, "orchestrator", ".mcp_contexts", `${ppid}.json`);
-try {
-  if (fs.existsSync(ctxFile)) {
-    const ctx = JSON.parse(fs.readFileSync(ctxFile, "utf-8"));
-    DEPTH = ctx.depth ?? DEPTH;
-  }
-} catch {}
-
-function log(msg: string) {
-  const name = path.basename(HMEM_PATH, ".hmem");
-  console.error(`[hmem:${name}] ${msg}`);
-}
-
-/**
- * Coerce LLM-provided array arguments: some models serialize arrays as JSON strings
- * (e.g. tags: '["#foo","#bar"]' instead of tags: ["#foo", "#bar"]). Accept both.
- * Wrap a zod string-array schema so the preprocessing happens before validation.
- */
-function jsonArrayString<T extends z.ZodTypeAny>(schema: T) {
-  return z.preprocess((val) => {
-    if (typeof val === "string") {
-      const trimmed = val.trim();
-      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-        try {
-          const parsed = JSON.parse(trimmed);
-          if (Array.isArray(parsed)) return parsed;
-        } catch { /* fall through — zod will report the type mismatch */ }
-      }
-    }
-    return val;
-  }, schema);
-}
+import { currentSessionId, writeActiveProjectFile, setActiveDevice } from "./session-state.js";
+import {
+  HMEM_PATH, PROJECT_DIR, hmemConfig, log,
+  jsonArrayString, safeError, activeProjectLine,
+  syncPull, syncPullThenPush, syncPush, syncPushWithRetry,
+  reserveNextId, reserveNextSubIds, resolveStore,
+} from "./mcp-shared.js";
 
 // ---- Session-scoped active project (not shared via DB — safe for multi-agent) ----
 let activeProjectId: string | null = null;
@@ -81,458 +51,17 @@ const dbMtimeAtStart: string | null = (() => {
   return null;
 })();
 
-// ---- Security helpers ----
-
-import os from "node:os";
-import { currentSessionId, writeActiveProjectFile } from "./session-state.js";
-
-/** Validate that a file path stays within the hmem directory or user's home. */
-function validateFilePath(userPath: string, hmemDir: string): string {
-  const resolved = path.resolve(userPath);
-  const home = os.homedir();
-  if (!resolved.startsWith(hmemDir + path.sep) && !resolved.startsWith(home + path.sep)
-      && resolved !== hmemDir && resolved !== home) {
-    throw new Error("Path must be within the hmem directory or home directory.");
-  }
-  return resolved;
-}
-
-/** Sanitize error for external consumption — strip file paths and stack traces. */
-function safeError(e: unknown): string {
-  const msg = e instanceof Error ? e.message : String(e);
-  return msg.replace(/\/[^\s:)]+/g, "[path]").substring(0, 300);
-}
-
-/** One-line active-project anchor for write/append/update responses.
- * After context compression the conversation history is gone; this line
- * re-anchors the agent to the current project on every write (issue #27). */
-function activeProjectLine(store: HmemStore): string {
-  const current = store.getActiveProject(currentSessionId());
-  if (!current) return "Active project: none (call load_project to set)";
-  const shortTitle = current.title.split("|")[0].trim();
-  return `Active project: ${current.id} ${shortTitle}`;
-}
-
-// ---- hmem-sync integration ----
-
-let lastPullAt = 0;
-const PULL_COOLDOWN_MS = 30_000;
-
-function hmemSyncEnabled(hmemPath: string): boolean {
-  const passphrase = process.env["HMEM_SYNC_PASSPHRASE"];
-  if (!passphrase) return false;
-  // Unified config: sync section with at least one server
-  const servers = getSyncServers(hmemConfig);
-  if (servers.length > 0 && servers.some(s => s.serverUrl && s.token)) return true;
-  // Legacy: check for .hmem-sync-config.json
-  const cfg = path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
-  return fs.existsSync(cfg);
-}
-
-function hmemSyncConfig(hmemPath: string): string {
-  return path.join(path.dirname(hmemPath), ".hmem-sync-config.json");
-}
-
-/**
- * Resolve hmem-sync CLI script path for direct Node invocation.
- * Avoids shell: true on Windows which causes visible PowerShell windows.
- * Returns [nodeExe, scriptPath] or null if hmem-sync is not found.
- */
-let _resolvedSyncBin: [string, string] | null | undefined;
-function resolveHmemSyncBin(): [string, string] | null {
-  if (_resolvedSyncBin !== undefined) return _resolvedSyncBin;
+// ---- Depth override (legacy Althing orchestrator) ----
+let DEPTH = parseInt(process.env.HMEM_DEPTH || "0", 10);
+{
+  const ppid = process.ppid;
+  const ctxFile = path.join(PROJECT_DIR, "orchestrator", ".mcp_contexts", `${ppid}.json`);
   try {
-    // Try which/where to find the hmem-sync script
-    const cmd = process.platform === "win32" ? "where" : "which";
-    const result = spawnSync(cmd, ["hmem-sync"], { encoding: "utf8", shell: true, windowsHide: true });
-    if (result.stdout) {
-      const lines = result.stdout.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-      // On Windows, where.exe may return bash wrapper first; prefer .cmd/.ps1.
-      const binPath = lines.find(l => l.endsWith(".cmd") || l.endsWith(".ps1")) || lines[0];
-      if (binPath.endsWith(".cmd") || binPath.endsWith(".ps1")) {
-        // Windows .cmd wrapper — read it to find the actual JS path
-        const content = fs.readFileSync(binPath, "utf8");
-        const match = content.match(/"([^"]+\.js)"/);
-        if (match) {
-          // npm-generated .cmd shims reference %~dp0 (wrapper dir). Resolve it.
-          const wrapperDir = path.dirname(binPath);
-          const jsPath = match[1]
-            .replace(/%~dp0\\?/gi, wrapperDir + path.sep)
-            .replace(/%dp0%\\?/gi, wrapperDir + path.sep);
-          _resolvedSyncBin = [process.execPath, path.resolve(jsPath)];
-          return _resolvedSyncBin;
-        }
-      } else {
-        // Unix: resolve symlink to the actual JS file
-        const realPath = fs.realpathSync(binPath);
-        _resolvedSyncBin = [process.execPath, realPath];
-        return _resolvedSyncBin;
-      }
+    if (fs.existsSync(ctxFile)) {
+      const ctx = JSON.parse(fs.readFileSync(ctxFile, "utf-8"));
+      DEPTH = ctx.depth ?? DEPTH;
     }
-  } catch { /* ignore */ }
-  _resolvedSyncBin = null;
-  return null;
-}
-
-/** Spawn hmem-sync with resolved Node path (no shell). Falls back to shell spawn. */
-function spawnSyncHmemSync(args: string[]): ReturnType<typeof spawnSync> {
-  const bin = resolveHmemSyncBin();
-  if (bin) {
-    return spawnSync(bin[0], [bin[1], ...args], {
-      env: { ...process.env }, encoding: "utf8", windowsHide: true,
-    });
-  }
-  // Fallback: shell spawn (legacy behavior)
-  return spawnSync("hmem-sync", args, {
-    env: { ...process.env }, encoding: "utf8",
-    shell: process.platform === "win32", windowsHide: true,
-  });
-}
-
-/** Spawn hmem-sync detached (async push). No shell needed. */
-function spawnDetachedHmemSync(args: string[]): void {
-  const bin = resolveHmemSyncBin();
-  if (bin) {
-    const child = spawn(bin[0], [bin[1], ...args], {
-      env: { ...process.env }, stdio: "ignore", detached: true, windowsHide: true,
-    });
-    child.unref();
-  } else {
-    const child = spawn("hmem-sync", args, {
-      env: { ...process.env }, stdio: "ignore", detached: true,
-      shell: process.platform === "win32", windowsHide: true,
-    });
-    child.unref();
-  }
-}
-
-
-/** Blocking pull — waits for completion. Skips if called within cooldown window.
- *  Returns newly synced entries AND entries that received new nodes (empty array if skipped or none). */
-function syncPull(hmemPath: string): Array<{id: string, title: string, created_at: string, modified?: boolean}> {
-  if (!hmemSyncEnabled(hmemPath)) return [];
-  const now = Date.now();
-  if (now - lastPullAt < PULL_COOLDOWN_MS) return [];
-  lastPullAt = now;
-
-  // Snapshot existing root IDs + node counts before pull
-  let prevIds = new Set<string>();
-  const prevNodeCounts = new Map<string, number>();
-  try {
-    const db = new Database(hmemPath, { readonly: true });
-    const rows = db.prepare("SELECT id FROM memory_nodes WHERE seq=0").all() as {id: string}[];
-    prevIds = new Set(rows.map(r => r.id));
-    const countRows = db.prepare("SELECT root_id, COUNT(*) as cnt FROM memory_nodes GROUP BY root_id").all() as {root_id: string, cnt: number}[];
-    for (const r of countRows) prevNodeCounts.set(r.root_id, r.cnt);
-    db.close();
-  } catch { /* db may not exist yet */ }
-
-  // Pull from all configured servers (unified multi-server or legacy single)
-  const servers = getSyncServers(hmemConfig);
-  if (servers.length > 0) {
-    for (const s of servers) {
-      if (!s.serverUrl || !s.token) continue;
-      const result = spawnSyncHmemSync([
-        "pull", "--config", hmemSyncConfig(hmemPath),
-        "--hmem-path", hmemPath,
-        "--server-url", s.serverUrl, "--token", s.token,
-      ]);
-      if (result.error) process.stderr.write(`hmem-sync pull error (${s.name ?? s.serverUrl}): ${result.error.message}\n`);
-    }
-  } else {
-    const result = spawnSyncHmemSync(["pull", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath]);
-    if (result.error) process.stderr.write(`hmem-sync pull error: ${result.error.message}\n`);
-  }
-
-  // Find new entries AND entries with new nodes introduced by this pull
-  try {
-    const db = new Database(hmemPath, { readonly: true });
-    const rows = db.prepare(
-      "SELECT id, content, created_at FROM memory_nodes WHERE seq=0"
-    ).all() as {id: string, content: string, created_at: string}[];
-
-    // Detect entries that received new nodes (existing roots with more nodes than before)
-    const newCountRows = db.prepare("SELECT root_id, COUNT(*) as cnt FROM memory_nodes GROUP BY root_id").all() as {root_id: string, cnt: number}[];
-    const modifiedRoots = new Set<string>();
-    for (const r of newCountRows) {
-      const prev = prevNodeCounts.get(r.root_id) ?? 0;
-      if (r.cnt > prev && prevIds.has(r.root_id)) {
-        modifiedRoots.add(r.root_id);
-      }
-    }
-
-    db.close();
-
-    const newEntries = rows
-      .filter(r => !prevIds.has(r.id))
-      .map(r => ({
-        id: r.id,
-        title: r.content.split("\n")[0].trim().slice(0, 60),
-        created_at: r.created_at.slice(0, 10),
-      }));
-
-    const modifiedEntries = rows
-      .filter(r => modifiedRoots.has(r.id) && prevIds.has(r.id))
-      .map(r => ({
-        id: r.id,
-        title: r.content.split("\n")[0].trim().slice(0, 60),
-        created_at: r.created_at.slice(0, 10),
-        modified: true as const,
-      }));
-
-    return [...newEntries, ...modifiedEntries];
-  } catch { return []; }
-}
-
-function syncPullThenPush(hmemPath: string): void {
-  if (!hmemSyncEnabled(hmemPath)) return;
-  const servers = getSyncServers(hmemConfig);
-  if (servers.length > 0) {
-    for (const s of servers) {
-      if (!s.serverUrl || !s.token) continue;
-      spawnSyncHmemSync([
-        "pull", "--config", hmemSyncConfig(hmemPath),
-        "--hmem-path", hmemPath,
-        "--server-url", s.serverUrl, "--token", s.token,
-      ]);
-    }
-  } else {
-    spawnSyncHmemSync(["pull", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath]);
-  }
-  lastPullAt = Date.now();
-}
-
-function syncPush(hmemPath: string): void {
-  if (!hmemSyncEnabled(hmemPath)) return;
-  const servers = getSyncServers(hmemConfig);
-  if (servers.length > 0) {
-    for (const s of servers) {
-      if (!s.serverUrl || !s.token) continue;
-      spawnDetachedHmemSync([
-        "push", "--config", hmemSyncConfig(hmemPath),
-        "--hmem-path", hmemPath,
-        "--server-url", s.serverUrl, "--token", s.token,
-      ]);
-    }
-  } else {
-    spawnDetachedHmemSync(["push", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath]);
-  }
-}
-
-/**
- * Atomically reserve an entry-ID at the sync server (multi-agent collision prevention).
- * Returns true if reserved (or sync disabled — local-only mode), false if conflict.
- * Caller should pull + recompute next ID + retry on false.
- *
- * For multi-server setups, attempts reservation on every configured server. If ANY server
- * reports a conflict, the ID is considered taken (fail-closed). This may be overly strict
- * for partial-availability scenarios but is correct for the common single-server case.
- */
-function reserveId(hmemPath: string, id: string): boolean {
-  if (!hmemSyncEnabled(hmemPath)) return true; // local-only mode → always "reserved"
-  const servers = getSyncServers(hmemConfig);
-  const targets = servers.length > 0
-    ? servers.filter(s => s.serverUrl && s.token).map(s => ({ url: s.serverUrl!, token: s.token! }))
-    : [{ url: "", token: "" }]; // legacy: CLI reads from config
-
-  for (const t of targets) {
-    const args = ["reserve", "--config", hmemSyncConfig(hmemPath), "--id", id];
-    if (t.url) args.push("--server-url", t.url, "--token", t.token);
-    const result = spawnSyncHmemSync(args);
-    if (result.status === 1) return false;          // conflict
-    if (result.status !== 0) {
-      process.stderr.write(`reserveId(${id}) error on ${t.url || "default"}: ${result.stderr || result.error?.message || "unknown"}\n`);
-      // Treat unreachable server as "ok" — fail-open for sync errors so writes don't block
-      // when server is down. Real conflicts (status 1) still block.
-    }
-  }
-  return true;
-}
-
-/**
- * Synchronous push that returns true on full success, false if the server reported
- * any conflicts (per Option α optimistic locking — exit code 3 from hmem-sync push).
- * Used by the append/update retry loop. Falls back to true if sync is disabled.
- */
-function syncPushSync(hmemPath: string): boolean {
-  if (!hmemSyncEnabled(hmemPath)) return true;
-  const servers = getSyncServers(hmemConfig);
-  const targets = servers.length > 0
-    ? servers.filter(s => s.serverUrl && s.token).map(s => ({ url: s.serverUrl!, token: s.token! }))
-    : [{ url: "", token: "" }];
-
-  let allClean = true;
-  for (const t of targets) {
-    const args = ["push", "--config", hmemSyncConfig(hmemPath), "--hmem-path", hmemPath];
-    if (t.url) args.push("--server-url", t.url, "--token", t.token);
-    const result = spawnSyncHmemSync(args);
-    if (result.status === 3) {
-      allClean = false;
-    } else if (result.status !== 0 && result.status !== null) {
-      process.stderr.write(`syncPushSync error on ${t.url || "default"}: status=${result.status} ${result.stderr || ""}\n`);
-      // Fail-open on transport errors (don't block writes if server is down)
-    }
-  }
-  return allClean;
-}
-
-/**
- * Pull-then-push retry loop for append/update operations.
- * Strategy: after a local mutation, try to push. If the server reports a
- * version_hash conflict, pull (which merges remote and updates state.versions
- * to the new server version), then retry. The local change is NOT rolled back
- * — it stays in the local DB and gets re-pushed with the fresh expected_version.
- *
- * Caveat: if a remote node collides with our local node at the SAME sub-id,
- * the pull's upsertEntry overwrites our local content with the remote one.
- * Detecting and re-allocating to the next free sub-id is a follow-up
- * (would need sub-node ID reservation, see Option β).
- */
-function syncPushWithRetry(hmemPath: string, maxAttempts = 3): { attempts: number; resolved: boolean } {
-  if (!hmemSyncEnabled(hmemPath)) return { attempts: 0, resolved: true };
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (syncPushSync(hmemPath)) {
-      if (attempt > 1) log(`syncPushWithRetry: resolved on attempt ${attempt}/${maxAttempts}`);
-      return { attempts: attempt, resolved: true };
-    }
-    log(`syncPushWithRetry: conflict on attempt ${attempt}/${maxAttempts}, pulling...`);
-    lastPullAt = 0; // bypass cooldown
-    syncPull(hmemPath);
-  }
-  log(`syncPushWithRetry: gave up after ${maxAttempts} attempts — local changes remain unpushed for this entry`);
-  return { attempts: maxAttempts, resolved: false };
-}
-
-/**
- * Reserve the top-level sub-node IDs that an append_memory call is about to create.
- * Multi-agent protection: prevents two agents from independently allocating the same
- * sub-id (e.g. both grabbing P0048.7.5) which would cause silent data loss when
- * pull-merge later overwrites local content.
- *
- * Strategy: peek the IDs the append would create, reserve each one. On any conflict,
- * pull (which advances the parent's sub-seq counter), recompute, retry. Returns the
- * final list of reserved IDs (which may differ from the initial peek if a retry was
- * needed). Throws after maxAttempts.
- */
-function reserveNextSubIds(
-  hmemPath: string,
-  parentId: string,
-  content: string,
-  hmemStore: HmemStore,
-  maxAttempts = 5,
-): string[] {
-  if (!hmemSyncEnabled(hmemPath)) {
-    // Local-only mode — peek once and return; caller still proceeds with write.
-    return hmemStore.peekAppendTopLevelIds(parentId, content);
-  }
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const candidates = hmemStore.peekAppendTopLevelIds(parentId, content);
-    if (candidates.length === 0) return [];
-
-    let conflictAt = -1;
-    for (let i = 0; i < candidates.length; i++) {
-      if (!reserveId(hmemPath, candidates[i])) {
-        conflictAt = i;
-        break;
-      }
-    }
-
-    if (conflictAt === -1) {
-      if (attempt > 1) log(`reserveNextSubIds: claimed [${candidates.join(", ")}] on attempt ${attempt}/${maxAttempts}`);
-      return candidates;
-    }
-
-    log(`reserveNextSubIds: conflict on ${candidates[conflictAt]} (attempt ${attempt}/${maxAttempts}), pulling...`);
-    lastPullAt = 0;
-    syncPull(hmemPath);
-  }
-  throw new Error(
-    `Could not reserve sub-IDs under ${parentId} after ${maxAttempts} attempts. ` +
-    `Another agent may be appending rapidly to the same parent — try again in a moment.`
-  );
-}
-
-/** Pull + retry loop: returns the reserved root ID, or throws if all attempts conflict.
- *  Does NOT do the actual write — caller must invoke hmemStore.write() right after. */
-function reserveNextId(hmemPath: string, prefix: string, hmemStore: HmemStore, maxAttempts = 5): string {
-  // Start from the local DB's next sequence; on conflict, bump past stale reservations
-  // by incrementing the sequence number directly. Pulling alone is insufficient because
-  // syncPull only fetches committed entries — it doesn't surface server-side reservations,
-  // so peekNextId would otherwise return the same vetoed ID forever (Bug fix in 6.1.1).
-  let candidate = hmemStore.peekNextId(prefix);
-  let lastTried = "";
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    lastTried = candidate;
-    if (reserveId(hmemPath, candidate)) {
-      log(`reserveNextId: claimed ${candidate} (attempt ${attempt}/${maxAttempts})`);
-      return candidate;
-    }
-    log(`reserveNextId: conflict on ${candidate}, pulling and bumping (${attempt}/${maxAttempts})`);
-    lastPullAt = 0;
-    syncPull(hmemPath);
-    // After pull, recompute the local candidate. If the local DB has caught up past the
-    // conflict, peekNextId will return a higher ID; otherwise bump past the conflict manually.
-    const fresh = hmemStore.peekNextId(prefix);
-    candidate = compareIds(fresh, candidate) > 0 ? fresh : bumpId(candidate);
-  }
-  throw new Error(
-    `Could not reserve ID for prefix ${prefix} after ${maxAttempts} attempts ` +
-    `(last tried: ${lastTried}). Another agent may be writing rapidly — try again in a moment.`
-  );
-}
-
-/** Increment the numeric suffix of an ID (e.g. "I0009" → "I0010"). */
-function bumpId(id: string): string {
-  const m = id.match(/^([A-Z]+)(\d+)$/);
-  if (!m) throw new Error(`bumpId: malformed id ${id}`);
-  const width = m[2].length;
-  return `${m[1]}${String(Number(m[2]) + 1).padStart(width, "0")}`;
-}
-
-/** Compare two IDs by numeric suffix. Returns >0 if a>b, <0 if a<b, 0 if equal. */
-function compareIds(a: string, b: string): number {
-  const ma = a.match(/(\d+)$/), mb = b.match(/(\d+)$/);
-  if (!ma || !mb) return 0;
-  return Number(ma[1]) - Number(mb[1]);
-}
-
-// Load hmem config (hmem.config.json in project dir, falls back to defaults)
-const hmemConfig = loadHmemConfig(PROJECT_DIR);
-log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth}`);
-
-/** Resolve which store to open. hmem_path wins over storeName. */
-function resolveStore(
-  storeName: "personal" | "company",
-  hmemPath: string | undefined,
-): { store: HmemStore; label: string; path: string; isExternal: boolean } {
-  if (hmemPath) {
-    if (!fs.existsSync(hmemPath)) {
-      throw new Error(`hmem_path not found: ${hmemPath}`);
-    }
-    const extConfig = loadHmemConfig(path.dirname(hmemPath));
-    return {
-      store: new HmemStore(hmemPath, extConfig),
-      label: path.basename(hmemPath, ".hmem"),
-      path: hmemPath,
-      isExternal: true,
-    };
-  }
-  if (storeName === "company") {
-    const companyPath = path.join(PROJECT_DIR, "company.hmem");
-    return {
-      store: openCompanyMemory(PROJECT_DIR, hmemConfig),
-      label: "company",
-      path: companyPath,
-      isExternal: false,
-    };
-  }
-  return {
-    store: new HmemStore(HMEM_PATH, hmemConfig),
-    label: path.basename(HMEM_PATH, ".hmem"),
-    path: HMEM_PATH,
-    isExternal: false,
-  };
+  } catch {}
 }
 
 // ---- Version upgrade detection ----
@@ -1008,10 +537,17 @@ server.tool(
           }
         }
 
-        // For E entries: note the auto-scaffolded structure
-        const eNote = prefix === "E"
-          ? `\nSchema: .1 Analysis, .2 Possible fixes, .3 Fixing attempts, .4 Solution, .5 Cause, .6 Key Learnings`
-          : "";
+        // Note auto-scaffolded structure for schema prefixes
+        let schemaNote = "";
+        if (prefix === "E") {
+          schemaNote = `\nSchema: .1 Analysis, .2 Possible fixes, .3 Fixing attempts, .4 Solution, .5 Cause, .6 Key Learnings`;
+        } else {
+          const scaffoldSchema = hmemConfig.schemas?.[prefix];
+          if (scaffoldSchema) {
+            const sectionList = scaffoldSchema.sections.map((s, i) => `.${i + 1} ${s.name}`).join(", ");
+            schemaNote = `\nSchema: ${sectionList}`;
+          }
+        }
 
         const activeLine = storeName === "personal" ? `\n${activeProjectLine(hmemStore)}` : "";
         return {
@@ -1019,7 +555,7 @@ server.tool(
             type: "text" as const,
             text: `Memory saved: ${result.id} (${result.timestamp.substring(0, 19)})\n` +
               `Store: ${storeLabel} | Category: ${prefix}` +
-              firstTimeNote + eNote + relatedHint + activeLine,
+              firstTimeNote + schemaNote + relatedHint + activeLine,
           }],
         };
       } finally {
@@ -1177,61 +713,6 @@ server.tool(
 );
 
 server.tool(
-  "update_many",
-  "Batch-update multiple memory entries at once. Applies the same flag(s) to all listed IDs. " +
-    "Use this instead of calling update_memory multiple times during curation.\n\n" +
-    "Example: update_many(ids=['T0005', 'T0012', 'L0044'], irrelevant=true)",
-  {
-    ids: z.array(z.string()).min(1).describe("List of entry/node IDs to update, e.g. ['T0005', 'T0012', 'L0044']"),
-    irrelevant: z.coerce.boolean().optional().describe("Mark all as irrelevant [-]"),
-    favorite: z.coerce.boolean().optional().describe("Set or clear [♥] favorite on all"),
-    active: z.coerce.boolean().optional().describe("Set or clear [*] active on all"),
-    pinned: z.coerce.boolean().optional().describe("Set or clear [P] pinned on all"),
-    store: z.enum(["personal", "company"]).default("personal"),
-  },
-  async ({ ids, irrelevant, favorite, active, pinned, store: storeName }) => {
-    try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
-      try {
-        if (storeName === "personal") syncPullThenPush(HMEM_PATH);
-
-        let updated = 0;
-        let notFound = 0;
-        for (const id of ids) {
-          const ok = hmemStore.updateNode(id, undefined as any, undefined, undefined, favorite, undefined, irrelevant, undefined, pinned, active);
-          if (ok) updated++;
-          else notFound++;
-        }
-
-        const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
-        const flags = [
-          irrelevant !== undefined ? `irrelevant=${irrelevant}` : "",
-          favorite !== undefined ? `favorite=${favorite}` : "",
-          active !== undefined ? `active=${active}` : "",
-          pinned !== undefined ? `pinned=${pinned}` : "",
-        ].filter(Boolean).join(", ");
-        log(`update_many [${storeLabel}]: ${updated}/${ids.length} updated (${flags})`);
-
-        if (storeName === "personal") syncPush(HMEM_PATH);
-        const result = `Updated ${updated} of ${ids.length} entries (${flags})`;
-        return {
-          content: [{ type: "text" as const, text: notFound > 0 ? `${result}\n${notFound} not found` : result }],
-        };
-      } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return {
-        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
-        isError: true,
-      };
-    }
-  }
-);
-
-server.tool(
   "flush_context",
   "Store a conversation chunk as linear context history (O-prefix). " +
     "The AI does the summarization: chunk raw text by topic, then summarize progressively.\n\n" +
@@ -1349,6 +830,41 @@ server.tool(
             content: [{ type: "text" as const, text: "WARNING: Memory database is corrupted! Aborting append to prevent further data loss." }],
             isError: true,
           };
+        }
+
+        // checkpointPolicy enforcement: block writes to readonly/pointer-protected schema sections
+        if (id.includes(".")) {
+          const idParts = id.split(".");
+          const appendPrefix = idParts[0].match(/^([A-Z]+)/)?.[1];
+          const sectionSchema = appendPrefix ? hmemConfig.schemas?.[appendPrefix] : undefined;
+          if (sectionSchema && idParts.length >= 2) {
+            const sectionNodeId = `${idParts[0]}.${idParts[1]}`;
+            const sectionTitle = hmemStore.getTitle(sectionNodeId);
+            const section = sectionTitle
+              ? sectionSchema.sections.find(s => s.name.toLowerCase() === sectionTitle.toLowerCase())
+              : undefined;
+            if (section?.checkpointPolicy === "readonly") {
+              return {
+                content: [{ type: "text" as const, text:
+                  `ERROR: "${section.name}" is read-only (checkpointPolicy: readonly).\n` +
+                  `This section is maintained manually — automated appends are not allowed.`
+                }],
+                isError: true,
+              };
+            }
+            if (section?.checkpointPolicy === "pointer") {
+              if (!/[A-Z]\d{4}/.test(content)) {
+                return {
+                  content: [{ type: "text" as const, text:
+                    `ERROR: "${section.name}" only accepts entry pointer nodes (checkpointPolicy: pointer).\n` +
+                    `Content must reference a memory entry ID (e.g., [E0124] description).\n` +
+                    `Example: append_memory(id="${sectionNodeId}", content="[E0124] Short description")`
+                  }],
+                  isError: true,
+                };
+              }
+            }
+          }
         }
 
         if (storeName === "personal") syncPullThenPush(HMEM_PATH);
@@ -1817,190 +1333,6 @@ server.tool(
 
 // bump_memory removed — access_count is auto-incremented on reads, favorites cover explicit importance
 
-// ---- Session Cache Reset ----
-
-server.tool(
-  "reset_memory_cache",
-  "Clear the session cache so all entries are treated as unseen again. " +
-    "The next bulk read will behave like the first read of a fresh session " +
-    "(full Fibonacci slots, no suppressed entries).\n\n" +
-    "Use when you need a clean slate — e.g., after a major topic change " +
-    "or when you suspect important entries were suppressed.",
-  {},
-  async () => {
-    const before = sessionCache.size;
-    const readsBefore = sessionCache.readCount;
-    sessionCache.reset();
-    return {
-      content: [{
-        type: "text" as const,
-        text: `Session cache reset. Cleared ${before} tracked entries, ` +
-          `bulk read counter ${readsBefore} → 0. ` +
-          `Next read_memory() will return the full first-read selection.`,
-      }],
-    };
-  }
-);
-
-// ---- Export Memory ----
-
-server.tool(
-  "export_memory",
-  "Export your memory, excluding secret entries and secret sub-nodes. " +
-    "Use for sharing, backup, or publishing a sanitized version of your memory.",
-  {
-    store: z.enum(["personal", "company"]).default("personal").describe(
-      "Source store: 'personal' (your own memory) or 'company' (shared company store)"
-    ),
-    format: z.enum(["text", "hmem"]).default("text").describe(
-      "Export format: 'text' = Markdown (returned inline), " +
-      "'hmem' = SQLite .hmem file (written to disk)"
-    ),
-    output_path: z.string().optional().describe(
-      "Output path for 'hmem' format. Default: export.hmem next to the source file. " +
-      "Ignored for 'text' format."
-    ),
-  },
-  async ({ store: storeName, format, output_path }) => {
-    try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
-      try {
-        if (format === "hmem") {
-          const defaultPath = path.join(
-            path.dirname(hmemStore.getDbPath()),
-            "export.hmem"
-          );
-          const outPath = validateFilePath(output_path || defaultPath, path.dirname(hmemStore.getDbPath()));
-          const result = hmemStore.exportPublicToHmem(outPath);
-          return { content: [{ type: "text" as const, text: `Exported to ${outPath}\n${result.entries} entries, ${result.nodes} nodes, ${result.tags} tags` }] };
-        } else {
-          const output = hmemStore.exportMarkdown();
-          return { content: [{ type: "text" as const, text: output }] };
-        }
-      } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return {
-        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
-        isError: true,
-      };
-    }
-  }
-);
-
-// ---- Import Memory ----
-
-server.tool(
-  "import_memory",
-  "Import entries from a .hmem file into your memory. " +
-    "Deduplicates by L1 content (merges sub-nodes), remaps IDs on conflict.",
-  {
-    source_path: z.string().describe("Path to .hmem file to import"),
-    store: z.enum(["personal", "company"]).default("personal").describe(
-      "Target store: 'personal' (your own memory) or 'company' (shared company store)"
-    ),
-    dry_run: z.coerce.boolean().default(false).describe(
-      "Preview only — report what would happen without modifying the database"
-    ),
-  },
-  async ({ source_path, store: storeName, dry_run }) => {
-    try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
-      try {
-        const safePath = validateFilePath(source_path, path.dirname(hmemStore.getDbPath()));
-        // Pull before import so the dedup logic and ID-remapping see the freshest state.
-        // Skip on dry_run since nothing is written.
-        if (storeName === "personal" && !dry_run) syncPullThenPush(HMEM_PATH);
-        const result = hmemStore.importFromHmem(safePath, dry_run);
-        const mode = dry_run ? "preview" : "imported";
-        log(`import_memory: ${mode} from ${safePath} (${result.inserted} new, ${result.merged} merged)`);
-
-        const lines: string[] = [];
-        lines.push(dry_run
-          ? `Import preview from ${source_path}:`
-          : `Imported from ${source_path}:`);
-        lines.push(`  ${result.inserted} entries ${dry_run ? "to insert" : "inserted"}`);
-        lines.push(`  ${result.merged} entries ${dry_run ? "to merge" : "merged"} (L1 match)`);
-        lines.push(`  ${result.nodesInserted} nodes ${dry_run ? "to insert" : "inserted"}`);
-        lines.push(`  ${result.nodesSkipped} nodes skipped (duplicate L2)`);
-        lines.push(`  ${result.tagsImported} tags ${dry_run ? "to import" : "imported"}`);
-        if (result.remapped) {
-          lines.push(`  ID remapping ${dry_run ? "required" : "applied"} (${result.conflicts} conflicts)`);
-        }
-        // Push imported entries through the optimistic-lock retry loop.
-        // Note: import allocates many fresh root IDs at once. Per-ID reservation is
-        // skipped here (would require pre-knowing all allocated IDs); the layer-2
-        // optimistic-lock check still detects post-hoc collisions and reports them.
-        if (storeName === "personal" && !dry_run && (result.inserted > 0 || result.merged > 0)) {
-          const retry = syncPushWithRetry(HMEM_PATH);
-          if (!retry.resolved) lines.push(`  ⚠ unresolved push conflicts after ${retry.attempts} attempts`);
-          else if (retry.attempts > 1) lines.push(`  (resolved push conflict after ${retry.attempts} attempts)`);
-        }
-        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
-      } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return {
-        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
-        isError: true,
-      };
-    }
-  }
-);
-
-server.tool(
-  "memory_stats",
-  "Shows budget status of your memory: total entries by prefix, nodes, favorites, pinned, most-accessed, oldest entry, stale count (not accessed in 30 days), unique hashtags, and avg nodes per entry.",
-  {
-    store: z.enum(["personal", "company"]).default("personal").describe(
-      "Target store: 'personal' (your own memory) or 'company' (shared company store)"
-    ),
-  },
-  async ({ store: storeName }) => {
-    try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
-      try {
-        const s = hmemStore.getStats();
-        const hmemPath = storeName === "company"
-          ? path.join(PROJECT_DIR, "company.hmem")
-          : HMEM_PATH;
-        const lines: string[] = [];
-        lines.push(`Memory stats (${storeName}):`);
-        lines.push(`  DB: ${hmemPath}`);
-        lines.push(`  Total entries: ${s.totalEntries}`);
-        const prefixLine = Object.entries(s.byPrefix).map(([p, c]) => `${p}:${c}`).join(", ");
-        if (prefixLine) lines.push(`  By prefix: ${prefixLine}`);
-        lines.push(`  Total nodes: ${s.totalNodes}  (avg ${s.avgDepth} nodes/entry)`);
-        lines.push(`  Favorites [♥]: ${s.favorites}  Pinned [P]: ${s.pinned}`);
-        lines.push(`  Unique hashtags: ${s.uniqueTags}`);
-        lines.push(`  Stale (>30d not accessed): ${s.staleCount}`);
-        if (s.oldestEntry) {
-          lines.push(`  Oldest entry: ${s.oldestEntry.id} (${s.oldestEntry.created_at}) — ${s.oldestEntry.title}`);
-        }
-        if (s.mostAccessed.length > 0) {
-          lines.push(`  Most accessed:`);
-          for (const e of s.mostAccessed) {
-            lines.push(`    ${e.id} (${e.access_count}×) — ${e.title}`);
-          }
-        }
-        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
-      } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
-    }
-  }
-);
-
 server.tool(
   "find_related",
   "Find entries related to the given entry. " +
@@ -2381,6 +1713,27 @@ server.tool(
         const totalTokens = Math.round(totalStats.totalChars / 4);
         const tokenInfo = ` | ${(outputTokens / 1000).toFixed(1)}k/${(totalTokens / 1000).toFixed(0)}k tokens`;
 
+        // Onboarding hints: show when no I/A-entries exist or no active I-entry
+        const onboardingHints: string[] = [];
+        const hasAnyI = !!totalStats.byPrefix["I"];
+        const hasActiveI = hasAnyI && !!(hmemStore.db.prepare(
+          "SELECT 1 FROM memories WHERE prefix = 'I' AND active = 1 AND irrelevant != 1 AND obsolete != 1 LIMIT 1"
+        ).get());
+        if (!hasAnyI || !hasActiveI) {
+          const reason = !hasAnyI ? "No I-entries found" : "No active I-entry";
+          onboardingHints.push(
+            `Hint: ${reason}. Document your devices: write_memory(prefix="I", content="Device Name | Active | OS | hostname\\n\\ndetails")`
+          );
+        }
+        if (!totalStats.byPrefix["A"]) {
+          onboardingHints.push(
+            `Hint: No A-entries found. Document installed apps/tools: write_memory(prefix="A", content="App Name | Active | version | install-path\\n\\ndetails")`
+          );
+        }
+        const onboardingSection = onboardingHints.length > 0
+          ? "\n\n" + onboardingHints.join("\n")
+          : "";
+
         log(`load_project: ${id} activated and loaded (depth=3)`);
 
         // Register in session cache to prevent redundant full loads
@@ -2392,7 +1745,137 @@ server.tool(
         return trackTokens({
           content: [{
             type: "text" as const,
-            text: `✓ Project ${id} activated.${tokenInfo}\n${irrelevantTip}\n\n${output}\n\n${irrelevantTip}`,
+            text: `✓ Project ${id} activated.${tokenInfo}\n${irrelevantTip}\n\n${output}\n\n${irrelevantTip}${onboardingSection}`,
+          }],
+        });
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
+    }
+  }
+);
+
+server.tool(
+  "read_project",
+  "Read a project's context without activating it — for cross-project reference. " +
+    "Returns a focused briefing (Overview, Codebase titles, Usage, Context, Requirements titles, Roadmap titles) " +
+    "without session history, rules injection, or changing the active project.\n\n" +
+    "Example: read_project({ id: 'P0048' })\n" +
+    "Use this when working on Project A but needing context about Project B.",
+  {
+    id: z.string().describe("Project entry ID, e.g. 'P0048'"),
+    store: z.enum(["personal", "company"]).default("personal").describe(
+      "Target store: 'personal' or 'company'"
+    ),
+  },
+  async ({ id, store: storeName }) => {
+    try {
+      const hmemStore = storeName === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : new HmemStore(HMEM_PATH, hmemConfig);
+      try {
+        if (!id.startsWith("P")) {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: read_project only works with P-prefix entries. Got: ${id}` }],
+            isError: true,
+          };
+        }
+
+        const isObsolete = (hmemStore.db.prepare(
+          "SELECT obsolete FROM memories WHERE id = ? AND obsolete = 1"
+        ).get(id) as any);
+        if (isObsolete) {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: ${id} is obsolete. Use the current version instead.` }],
+            isError: true,
+          };
+        }
+
+        const entries = hmemStore.read({ id, depth: 3, expand: true });
+        if (entries.length === 0) {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: Project ${id} not found.` }],
+            isError: true,
+          };
+        }
+
+        // depth 0=skip, 1=title+count, 2=L3 titles, 3=L3 title+body
+        const SECTION_DEPTHS: Record<string, number> = {
+          "overview": 3,
+          "codebase": 2,
+          "usage": 3,
+          "context": 3,
+          "requirements": 2,
+          "roadmap": 1,
+        };
+
+        const e = entries[0];
+        const lines: string[] = [];
+        const lastSeg = (nodeId: string) => "." + nodeId.split(".").pop();
+        lines.push(`${e.id}  ${e.title}`);
+        if (e.level_1 && e.level_1 !== e.title) lines.push(`  ${e.level_1}`);
+
+        if (e.children) {
+          for (const child of (e.children as MemoryNode[]).filter(c => !c.irrelevant)) {
+            const childTitle = (child.title || child.content || "").trim();
+            const depth = SECTION_DEPTHS[childTitle.toLowerCase()] ?? 0;
+            if (depth === 0) continue;
+
+            const cId = lastSeg(child.id);
+            lines.push(`  ${cId}  ${cleanTitle(childTitle, 60)}`);
+
+            if (depth === 1) {
+              const childCount = child.children ? child.children.filter((g: any) => !g.irrelevant).length : 0;
+              if (childCount > 0) lines[lines.length - 1] += ` (${childCount} entries)`;
+              continue;
+            }
+
+            if (child.children && child.children.length > 0) {
+              for (const gc of child.children.filter((g: any) => !g.irrelevant)) {
+                const gcId = lastSeg(gc.id);
+                lines.push(`    ${gcId}  ${cleanTitle(gc.title || gc.content, 80)}`);
+                if (depth >= 3 && gc.content && gc.content !== gc.title) {
+                  for (const bodyLine of gc.content.split("\n")) {
+                    lines.push(`      ${bodyLine}`);
+                  }
+                }
+                if (gc.child_count && gc.child_count > 0) {
+                  lines.push(`      [+${gc.child_count}]`);
+                }
+              }
+            } else if (child.child_count && child.child_count > 0) {
+              lines.push(`    [+${child.child_count}]`);
+            }
+          }
+        }
+
+        // Related E/L entries (useful for cross-project debugging)
+        try {
+          const ctx = hmemStore.findContext(id, 4, 10);
+          const relatedEL = ctx.tagRelated.filter(r =>
+            (r.entry.prefix === "E" || r.entry.prefix === "L") && !r.entry.obsolete && !r.entry.irrelevant
+          );
+          if (relatedEL.length > 0) {
+            lines.push("  Related errors & lessons:");
+            for (const r of relatedEL) {
+              lines.push(`    ${r.entry.id} [⚡]  ${cleanTitle(r.entry.title, 70)}`);
+            }
+          }
+        } catch { /* optional */ }
+
+        const output = lines.join("\n");
+        const outputTokens = Math.round(output.length / 4);
+        const totalStats = hmemStore.stats();
+        const totalTokens = Math.round(totalStats.totalChars / 4);
+        const tokenInfo = ` | ${(outputTokens / 1000).toFixed(1)}k/${(totalTokens / 1000).toFixed(0)}k tokens`;
+        log(`read_project: ${id} loaded (reference mode, not activated)`);
+
+        return trackTokens({
+          content: [{
+            type: "text" as const,
+            text: `✓ Project ${id} loaded (reference — not activated).${tokenInfo}\n\n${output}`,
           }],
         });
       } finally {
@@ -2544,226 +2027,6 @@ server.tool(
   }
 );
 
-server.tool(
-  "memory_health",
-  "Audit report for your memory: broken links (links pointing to deleted entries), " +
-    "orphaned entries (no sub-nodes), stale favorites/pinned (not accessed in 60 days), " +
-    "broken obsolete chains ([✓ID] pointing to non-existent entries), " +
-    "and tag orphans (tags with no matching entry). " +
-    "Run before/after a curation session.",
-  {
-    store: z.enum(["personal", "company"]).default("personal"),
-    hmem_path: z.string().optional().describe(
-      "Curator mode: absolute path to an external .hmem file. Overrides `store`."
-    ),
-  },
-  async ({ store: storeName, hmem_path }) => {
-    try {
-      const { store: hmemStore, label: storeLabelResolved } = resolveStore(storeName, hmem_path);
-      try {
-        const h = hmemStore.healthCheck();
-        const lines: string[] = [`Memory health report (${storeLabelResolved}):`];
-        const ok = (label: string) => lines.push(`  ✓ ${label}`);
-        const warn = (label: string) => lines.push(`  ⚠ ${label}`);
-
-        if (h.brokenLinks.length === 0) {
-          ok("No broken links");
-        } else {
-          warn(`${h.brokenLinks.length} entries with broken links:`);
-          for (const e of h.brokenLinks) {
-            lines.push(`    ${e.id} — ${e.title} → broken: ${e.brokenIds.join(", ")}`);
-          }
-        }
-
-        if (h.orphanedEntries.length === 0) {
-          ok("No orphaned entries (all have sub-nodes)");
-        } else {
-          warn(`${h.orphanedEntries.length} entries with no sub-nodes:`);
-          for (const e of h.orphanedEntries) {
-            lines.push(`    ${e.id} (${e.created_at}) — ${e.title}`);
-          }
-        }
-
-        if (h.staleFavorites.length === 0) {
-          ok("No stale favorites/pinned");
-        } else {
-          warn(`${h.staleFavorites.length} stale favorites/pinned (>60d not accessed):`);
-          for (const e of h.staleFavorites) {
-            lines.push(`    ${e.id} — ${e.title} [last: ${e.lastAccessed ?? "never"}]`);
-          }
-        }
-
-        if (h.brokenObsoleteChains.length === 0) {
-          ok("No broken obsolete chains");
-        } else {
-          warn(`${h.brokenObsoleteChains.length} broken [✓ID] references:`);
-          for (const e of h.brokenObsoleteChains) {
-            lines.push(`    ${e.id} — ${e.title} → [✓${e.badRef}] not found`);
-          }
-        }
-
-        if (h.tagOrphans === 0) {
-          ok("No tag orphans");
-        } else {
-          warn(`${h.tagOrphans} tag rows pointing to deleted entries`);
-        }
-
-        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
-      } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
-    }
-  }
-);
-
-server.tool(
-  "tag_bulk",
-  "Apply tag changes (add and/or remove) to all entries matching a filter. " +
-    "Filter by prefix, full-text search, or existing tag. " +
-    "Returns the number of entries modified. " +
-    "Also use tag_rename to rename a tag across all entries.",
-  {
-    filter: z.object({
-      prefix: z.string().optional().describe("Only entries with this prefix, e.g. 'L'"),
-      search: z.string().optional().describe("FTS5 search term — only matching entries"),
-      tag: z.string().optional().describe("Only entries that already have this tag"),
-    }).describe("At least one filter field required"),
-    add_tags: z.array(z.string()).optional().describe("Tags to add, e.g. ['#hmem', '#bugfix']"),
-    remove_tags: z.array(z.string()).optional().describe("Tags to remove"),
-    store: z.enum(["personal", "company"]).default("personal"),
-  },
-  async ({ filter, add_tags, remove_tags, store: storeName }) => {
-    try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
-      try {
-        const count = hmemStore.tagBulk(filter, add_tags, remove_tags);
-        const added = add_tags?.length ? `+[${add_tags.join(", ")}]` : "";
-        const removed = remove_tags?.length ? `-[${remove_tags.join(", ")}]` : "";
-        return {
-          content: [{
-            type: "text" as const,
-            text: `tag_bulk: modified ${count} entries. ${added} ${removed}`.trim(),
-          }],
-        };
-      } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
-    }
-  }
-);
-
-server.tool(
-  "tag_rename",
-  "Rename a hashtag across all entries and nodes. " +
-    "Example: tag_rename(old_tag='#sqlite', new_tag='#db') renames every occurrence.",
-  {
-    old_tag: z.string().describe("Existing tag to rename, e.g. '#old-tag'"),
-    new_tag: z.string().describe("New tag name, e.g. '#new-tag'"),
-    store: z.enum(["personal", "company"]).default("personal"),
-  },
-  async ({ old_tag, new_tag, store: storeName }) => {
-    try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
-      try {
-        const count = hmemStore.tagRename(old_tag, new_tag);
-        return {
-          content: [{
-            type: "text" as const,
-            text: count > 0
-              ? `Renamed ${old_tag} → ${new_tag} on ${count} entries/nodes.`
-              : `Tag ${old_tag} not found — nothing renamed.`,
-          }],
-        };
-      } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
-    }
-  }
-);
-
-server.tool(
-  "move_memory",
-  "Move a sub-node (and its entire subtree) to a different parent, updating all ID references. " +
-    "source_id must be a sub-node (e.g. 'P0029.15'), not a root entry. " +
-    "target_parent_id is the new parent: a root entry (e.g. 'L0074') or a sub-node (e.g. 'P0029.20'). " +
-    "Use during curation to reorganize entries into the correct hierarchy.",
-  {
-    source_id: z.string().describe("Sub-node to move, e.g. 'P0029.15' (must not be a root entry ID)"),
-    target_parent_id: z.string().describe("New parent: root 'L0074' or sub-node 'P0029.20'"),
-    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
-  },
-  async ({ source_id, target_parent_id, store }) => {
-    try {
-      const hmemStore = store === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
-      try {
-        const result = hmemStore.moveNode(source_id, target_parent_id);
-        const idLines = Object.entries(result.idMap)
-          .map(([old, nw]) => `  ${old} → ${nw}`)
-          .join("\n");
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Moved ${result.moved} node(s) to ${target_parent_id}.\nNew ID: ${result.newId}\n\nID mapping:\n${idLines}`,
-          }],
-        };
-      } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
-    }
-  }
-);
-
-server.tool(
-  "rename_id",
-  "Atomically rename an entry ID and update ALL references across the database. " +
-    "Renames: root entry, all child nodes, tags, FTS index, links in other entries, obsolete markers. " +
-    "Use to resolve ID conflicts after sync-push detects a collision. " +
-    "Example: rename_id({ old_id: 'P0048', new_id: 'P0052' })",
-  {
-    old_id: z.string().describe("Current entry ID to rename, e.g. 'P0048'"),
-    new_id: z.string().describe("New entry ID, e.g. 'P0052' — must have same prefix and not exist yet"),
-    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
-  },
-  async ({ old_id, new_id, store }) => {
-    try {
-      const hmemStore = store === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
-      try {
-        const result = hmemStore.renameId(old_id, new_id);
-        if (!result.ok) {
-          return { content: [{ type: "text" as const, text: `ERROR: ${result.error}` }], isError: true };
-        }
-        log(`rename_id: ${old_id} → ${new_id} (${result.affected} rows affected)`);
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Renamed ${old_id} → ${new_id} (${result.affected} rows affected).\nAll child nodes, tags, links, and FTS index updated.`,
-          }],
-        };
-      } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
-    }
-  }
-);
-
 // ---- Tool: list_projects ----
 
 server.tool(
@@ -2790,37 +2053,54 @@ server.tool(
   }
 );
 
-// ---- Tool: move_nodes ----
+// ---- Tool: set_active_device ----
 
 server.tool(
-  "move_nodes",
-  "Move session (L2), batch (L3), or exchange (L4) nodes between O-entries. Handles ID rewriting, tag migration, and cleanup of empty parents.",
+  "set_active_device",
+  "Set the active device for this machine. Call this once after identifying which machine you are on. " +
+    "The device ID must be an I-entry (Infrastructure entry) in hmem. " +
+    "Writes ~/.hmem/active-device so all future sessions on this machine know their device. " +
+    "Also updates the statusline display immediately.\n\n" +
+    "Example: set_active_device({ id: 'I0002' })",
   {
-    node_ids: z.array(z.string()).describe("IDs of nodes to move (L2, L3, or L4)"),
-    target_o_id: z.string().describe("Target O-entry ID (e.g. O0048)"),
-    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
+    id: z.string().describe("I-entry ID, e.g. 'I0002'"),
   },
-  async ({ node_ids, target_o_id, store }) => {
+  async ({ id }) => {
     try {
-      const hmemStore = store === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
-      try {
-        if (store === "personal") syncPullThenPush(HMEM_PATH);
-        const result = hmemStore.moveNodes(node_ids, target_o_id);
-        let text = `Moved ${result.moved} node(s) to ${target_o_id}.`;
-        if (result.errors.length > 0) {
-          text += `\nErrors:\n${result.errors.join("\n")}`;
-        }
-        if (store === "personal") {
-          const retry = syncPushWithRetry(HMEM_PATH);
-          if (!retry.resolved) text += `\n⚠ unresolved push conflicts after ${retry.attempts} attempts`;
-          else if (retry.attempts > 1) text += `\n(resolved push conflict after ${retry.attempts} attempts)`;
-        }
-        return { content: [{ type: "text" as const, text }] };
-      } finally {
-        hmemStore.close();
+      if (!id.startsWith("I")) {
+        return {
+          content: [{ type: "text" as const, text: `ERROR: set_active_device only works with I-prefix entries. Got: ${id}` }],
+          isError: true,
+        };
       }
+      const store = new HmemStore(HMEM_PATH, hmemConfig);
+      let title = id;
+      try {
+        const row = store.db.prepare(
+          "SELECT title FROM memories WHERE id = ? AND obsolete != 1 LIMIT 1"
+        ).get(id) as { title: string } | undefined;
+        if (!row) {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: Entry ${id} not found or obsolete.` }],
+            isError: true,
+          };
+        }
+        title = row.title.split("|")[0].trim();
+      } finally {
+        store.close();
+      }
+      setActiveDevice(id);
+      // Clear all statusline caches so the new device shows immediately
+      try {
+        const tmpDir = os.tmpdir();
+        for (const f of fs.readdirSync(tmpDir)) {
+          if (f.startsWith(".hmem_statusline_")) {
+            try { fs.unlinkSync(path.join(tmpDir, f)); } catch { /* ignore */ }
+          }
+        }
+      } catch { /* ignore */ }
+      log(`set_active_device: ${id} (${title})`);
+      return { content: [{ type: "text" as const, text: `Active device set to: ${id} ${title}` }] };
     } catch (e) {
       return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
     }

@@ -230,3 +230,30 @@ export function readActiveProjectForCurrentProcess(): string | null {
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Active device — global per-machine, stored in ~/.hmem/active-device
+// Contains the I-entry ID of the current device (e.g., "I0002")
+// ---------------------------------------------------------------------------
+
+function activeDeviceFilePath(): string {
+  return path.join(safeHomedir(), ".hmem", "active-device");
+}
+
+export function getActiveDevice(): string | null {
+  try {
+    const raw = fs.readFileSync(activeDeviceFilePath(), "utf-8").trim();
+    return raw || null;
+  } catch {
+    return null;
+  }
+}
+
+export function setActiveDevice(id: string): void {
+  const file = activeDeviceFilePath();
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, id);
+  fs.renameSync(tmp, file);
+}

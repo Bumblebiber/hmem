@@ -201,6 +201,17 @@ write_memory(
 
 Note: L2 nodes use 1 tab, L3 uses 2 tabs, L4 uses 3 tabs. Separate title from body with a blank line at the same indent level. Skip empty sections — no need for placeholder text.
 
+### Auto-Scaffold for Schema Prefixes (v7.0.0+)
+
+Any prefix with a schema defined in `hmem.config.json` gets its sections **auto-created on write** when you don't supply L2 nodes. This includes `I`, `A`, `P`, and any custom prefix with a schema. The write response shows the full section list:
+
+```
+write_memory(prefix="I", content="Laptop | Active | macOS 14 | macbook", tags=["#device"])
+→ Schema: .1 Specs, .2 OS, .3 IP Address, .4 Access, .5 Services, .6 Apps, .7 Storage, .8 Notes
+```
+
+Fill sections afterwards with `append_memory(id="I00XX.1", content="...")`. If you supply L2 nodes yourself, they are validated against the schema but no additional nodes are created.
+
 ### E-Entry Schema (auto-scaffolded)
 
 E-entries have a **pre-built structure** — just provide a title and short description, the server creates the rest:

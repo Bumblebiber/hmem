@@ -1,10 +1,14 @@
 ---
 name: hmem-new-project
 description: >
-  Create a new P-entry. Uses the schema from hmem.config.json if configured,
-  otherwise falls back to the standard R0009 schema. Use when the user says
-  "neues Projekt", "new project", "Projekt anlegen", or "/hmem-new-project".
-  Uses the create_project MCP tool which auto-creates P-entry (+ O-entry if createLinkedO is set).
+  Create a new project (P-entry) in hmem. Use this skill whenever: the user
+  asks to create/add/set up a new project in hmem ("neues Projekt", "new project",
+  "Projekt anlegen", "add project", "P-Entry erstellen", "in hmem aufnehmen",
+  "track this project", "create an entry for"); OR you are about to call
+  write_memory with prefix="P"; OR any agent is told to register or document
+  a project in memory. Never create P-entries manually — this skill handles
+  schema enforcement, section setup, and O-entry linking automatically.
+  Uses the create_project MCP tool.
 ---
 
 # /hmem-new-project — New Project Entry

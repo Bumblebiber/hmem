@@ -10,6 +10,9 @@ description: >
 
 # /hmem-migrate-o — O-Entry Migration to Project-Bound Structure
 
+> **Prerequisite:** This skill uses `move_nodes` and `rename_id` from the **hmem-curate** MCP server.
+> Tell the user to activate it via `/mcp` before proceeding.
+
 This is a one-time migration from the old flat O-entry format to the new 5-level hierarchy where each O-entry is permanently bound to a P-entry (O0048 belongs to P0048).
 
 ## What Changes

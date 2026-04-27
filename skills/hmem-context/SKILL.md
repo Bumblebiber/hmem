@@ -1,9 +1,9 @@
 ---
-name: cortex-read
+name: hmem-context
 description: Load specific context from hmem based on what is needed RIGHT NOW. Use when load_project output is not enough for the current question.
 ---
 
-# cortex-read
+# hmem-context
 
 ## TRIGGER
 Use when:
@@ -11,7 +11,7 @@ Use when:
 - You need to recall a specific bug, pattern, or lesson
 - You need code details not in the Overview
 
-Do NOT use for session start — use cortex-start instead.
+Do NOT use for session start — use hmem-session-start instead.
 
 ## STEP 1: Identify what type of information is needed
 

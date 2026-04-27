@@ -1,5 +1,35 @@
 # Changelog
 
+## 7.0.0 — 2026-04-27
+
+### Breaking Changes
+
+- **Two-server split** — the daily-use server (`hmem`) now ships 11 tools only. The 11 maintenance/destructive tools (`update_many`, `reset_memory_cache`, `export_memory`, `import_memory`, `memory_stats`, `memory_health`, `tag_bulk`, `tag_rename`, `move_memory`, `rename_id`, `move_nodes`) have moved to a separate `hmem-curate` binary. Add `hmem-curate` to your `.mcp.json` and activate it only when running `/hmem-curate` or `/hmem-migrate-o`. See the upgrade steps in `/hmem-update`.
+
+### Added
+
+- **`read_project()` MCP tool** — load another project's context (Overview, Codebase titles, Usage, Context, Requirements titles, Roadmap titles) without activating it or routing exchanges to its O-entry. Intended for cross-project reference while working on a different project.
+
+- **`set_active_device()` MCP tool** — registers the current machine's I-entry ID in `~/.hmem/active-device`. Called automatically on the first message of a new session if no device file exists.
+
+- **Device tracking in statusline** — the statusline now shows the active device name (I-entry title) as the first segment, e.g. `Strato Server | P0048 hmem-mcp | …`. Shows `identify device` in gray if `set_active_device` has not been called yet. Create an I-entry for each machine, then call `set_active_device({ id: "I00XX" })` once per device.
+
+- **Rate limits in statusline** — Claude Max subscribers see live 5-hour and weekly usage percentages: `5h: 34% / w: 17%`. Color-coded green/yellow/red. No configuration required — data comes from Claude Code automatically.
+
+- **`hmem setup-hook` CLI command** — registers the `SessionStart` hook that injects the `hmem-using-hmem` meta-skill at every session start. Idempotent, safe to re-run.
+
+- **hmem-using-hmem meta-skill** — session-start injection of dispatch and memory habits. Mirrors Superpowers' `using-superpowers` pattern. Teaches the agent when to use `hmem-dispatch`, `hmem-recall`, `hmem-write`, `hmem-new-project`, etc.
+
+- **`checkpointPolicy` enforcement in `append_memory`** — schema sections can now carry `"checkpointPolicy": "readonly"` (no automated appends) or `"checkpointPolicy": "pointer"` (only `[E0124]`-style entry references allowed). Enforced for all callers, not just checkpoint agents.
+
+- **Auto-scaffold from config schema** — `write_memory` now creates all defined schema sections as empty L2 nodes immediately on entry creation, for every prefix that has a schema in `hmem.config.json` (except `E`, which keeps its own scaffold logic). The response shows the full section list: `Schema: .1 Specs, .2 OS, …`.
+
+- **load_project onboarding hints** — when no I-entries exist (or none are active), and when no A-entries exist, `load_project` now appends contextual hints pointing the agent to create infrastructure and app entries.
+
+### Changed
+
+- **`hmem-new-project` skill trigger sharpened** — the trigger description now more explicitly fires when a new project needs to be created, reducing missed activations in parallel sessions.
+
 ## 6.6.4 — 2026-04-23
 
 ### Added

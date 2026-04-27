@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /**
- * hmem — Humanlike Memory MCP Server.
+ * hmem — Humanlike Memory MCP Server (daily-use tools).
  *
  * Provides persistent, hierarchical memory for AI agents via MCP.
  * SQLite-backed, 5-level lazy loading.
+ *
+ * Curation/maintenance tools (memory_health, tag_bulk, rename_id, etc.) live in
+ * the separate hmem-curate-server. Activate it with /mcp when needed.
  *
  * Environment variables:
  *   HMEM_PATH                — Full path to .hmem file (auto-resolved if not set)

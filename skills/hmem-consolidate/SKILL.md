@@ -1,13 +1,13 @@
 ---
-name: cortex-consolidate
+name: hmem-consolidate
 description: Merge all session checkpoint summaries into one final O-Entry summary. Run at end of sessions with 2 or more checkpoints.
 ---
 
-# cortex-consolidate
+# hmem-consolidate
 
 ## TRIGGER
 Run when:
-- The session is ending AND cortex-checkpoint ran 2 or more times
+- The session is ending AND hmem-checkpoint ran 2 or more times
 - User types /consolidate
 
 Do NOT run if there was only one checkpoint — that summary is already final.

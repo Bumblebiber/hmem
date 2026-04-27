@@ -130,6 +130,13 @@ export interface SchemaSection {
      *  Consumed by the checkpoint agent (Task #4 routing) and can be shown as placeholder
      *  body in empty sections. Kept to ~100 chars; longer descriptions belong in prose docs. */
     description?: string;
+    /**
+     * Controls what the checkpoint agent may write to this section.
+     * readonly — checkpoint may not write to this section at all
+     * pointer  — checkpoint may only add short pointer lines (e.g. "→ E00XX Title"), no full content
+     * append   — normal appends allowed (default if omitted)
+     */
+    checkpointPolicy?: "readonly" | "pointer" | "append";
 }
 export interface EntrySchema {
     sections: SchemaSection[];

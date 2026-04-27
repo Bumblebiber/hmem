@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveEnvDefaults } from "./cli-env.js";
 import { loadHmemConfig } from "./hmem-config.js";
-import { readActiveProjectForCurrentProcess } from "./session-state.js";
+import { readActiveProjectForCurrentProcess, getActiveDevice } from "./session-state.js";
 
 interface StatusInput {
   session_id?: string;
@@ -27,6 +27,10 @@ interface StatusInput {
       cache_creation_input_tokens?: number;
       cache_read_input_tokens?: number;
     };
+  };
+  rate_limits?: {
+    five_hour?: { used_percentage?: number | null };
+    seven_day?: { used_percentage?: number | null };
   };
 }
 
@@ -50,8 +54,27 @@ const CACHE_TTL = 30; // seconds
 
 interface HmemStatus {
   project: string;       // "P0048 hmem-mcp" or ""
+  device: string;        // "I0002 Strato Server" or "" (not set)
   exchanges: number;     // exchanges since last checkpoint
   interval: number;      // checkpoint interval (0 = disabled)
+}
+
+function buildRateLimits(input: StatusInput): string {
+  const fiveHour = input.rate_limits?.five_hour?.used_percentage;
+  const sevenDay = input.rate_limits?.seven_day?.used_percentage;
+  if (fiveHour == null && sevenDay == null) return "";
+
+  const fiveColor = fiveHour != null
+    ? (fiveHour >= 80 ? C.red : fiveHour >= 50 ? C.yellow : C.green)
+    : C.gray;
+  const weekColor = sevenDay != null
+    ? (sevenDay >= 80 ? C.red : sevenDay >= 50 ? C.yellow : C.green)
+    : C.gray;
+
+  const parts: string[] = [];
+  if (fiveHour != null) parts.push(`${fiveColor}5h: ${Math.round(fiveHour)}%${C.reset}`);
+  if (sevenDay != null) parts.push(`${weekColor}w: ${Math.round(sevenDay)}%${C.reset}`);
+  return parts.join(`${C.gray}/${C.reset}`);
 }
 
 function buildContextBar(input: StatusInput): string {
@@ -79,7 +102,7 @@ function buildContextBar(input: StatusInput): string {
 }
 
 async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus> {
-  const empty: HmemStatus = { project: "", exchanges: 0, interval: 0 };
+  const empty: HmemStatus = { project: "", device: "", exchanges: 0, interval: 0 };
   const CACHE_FILE = cacheFile(sessionId);
 
   // Check cache
@@ -150,6 +173,20 @@ async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus>
         project = `${projRow.id} ${name}`;
       }
 
+      // Active device — global per-machine file
+      let device = "";
+      const deviceId = getActiveDevice();
+      if (deviceId) {
+        const devRow = db.prepare(
+          "SELECT id, title FROM memories WHERE id = ? AND prefix='I' AND obsolete!=1 LIMIT 1"
+        ).get(deviceId) as { id: string; title: string } | undefined;
+        if (devRow) {
+          device = devRow.title.split("|")[0].trim();
+        } else {
+          device = deviceId;
+        }
+      }
+
       // Exchange count since last checkpoint
       let exchanges = 0;
 
@@ -174,12 +211,12 @@ async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus>
 
           const interval = hmemConfig.checkpointInterval;
           exchanges = batchExchanges;
-          status = { project, exchanges, interval };
+          status = { project, device, exchanges, interval };
         } else {
-          status = { project, exchanges: 0, interval: hmemConfig.checkpointInterval };
+          status = { project, device, exchanges: 0, interval: hmemConfig.checkpointInterval };
         }
       } else {
-        status = { project, exchanges: 0, interval: hmemConfig.checkpointInterval };
+        status = { project, device, exchanges: 0, interval: hmemConfig.checkpointInterval };
       }
     } finally {
       db.close();
@@ -212,6 +249,14 @@ export async function statusline(): Promise<void> {
   if (ctxBar) parts.push(ctxBar);
 
   const status = await getHmemStatus(input.session_id);
+
+  // Device
+  if (status.device) {
+    parts.push(`${C.white}${status.device}${C.reset}`);
+  } else {
+    parts.push(`${C.gray}identify device${C.reset}`);
+  }
+
   if (status.project) {
     parts.push(`${C.cyan}${status.project}${C.reset}`);
   } else {
@@ -227,6 +272,10 @@ export async function statusline(): Promise<void> {
       : C.gray;
     parts.push(`${cpColor}${ratio}${C.reset}`);
   }
+
+  // Rate limits (Claude Max subscription)
+  const rateLimits = buildRateLimits(input);
+  if (rateLimits) parts.push(rateLimits);
 
   if (parts.length > 0) {
     const sep = `  ${C.gray}|${C.reset}  `;

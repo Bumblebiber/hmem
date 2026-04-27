@@ -612,6 +612,18 @@ export class HmemStore {
           this.addTag(rootId, "#open");
         }
       }
+      // Auto-scaffold from config schema for all prefixes with a defined schema (not E).
+      if (prefix !== "E") {
+        const schemaForScaffold = this.cfg.schemas?.[prefix];
+        const hasDirectChildren = nodes.some(n => n.depth === 2 && n.parent_id === rootId);
+        if (schemaForScaffold && !hasDirectChildren) {
+          for (let i = 0; i < schemaForScaffold.sections.length; i++) {
+            const sec = schemaForScaffold.sections[i];
+            const nodeId = `${rootId}.${i + 1}`;
+            insertNode.run(nodeId, rootId, rootId, 2, i + 1, sec.name, sec.name, timestamp, timestamp);
+          }
+        }
+      }
     })();
 
     // Build compact structure summary for agent verification

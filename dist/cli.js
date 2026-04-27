@@ -72,6 +72,11 @@ switch (command) {
         await migrateOEntries();
         break;
     }
+    case "setup-hook": {
+        const { setupHook } = await import("./cli-setup-hook.js");
+        await setupHook();
+        break;
+    }
     case "version":
     case "--version":
     case "-v": {
@@ -91,6 +96,7 @@ Usage:
   hmem log-exchange   Log a chat exchange to active O-entry (called by Stop hook)
   hmem context-inject Output compressed context for re-injection after /clear
   hmem deactivate     Clear active project for current session (called by SessionStart[clear] hook)
+  hmem setup-hook     Add hmem-using-hmem SessionStart hook to Claude Code settings
   hmem delete <ID>    Permanently delete an entry (curator use only, not synced)
   hmem checkpoint     Extract knowledge from recent exchanges via Haiku (background)
   hmem hook-startup   UserPromptSubmit hook — counter, checkpoint reminders (cross-platform)

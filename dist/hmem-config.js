@@ -230,6 +230,9 @@ export function loadHmemConfig(projectDir) {
                     if (typeof sec.description === "string" && sec.description.trim()) {
                         section.description = sec.description.trim();
                     }
+                    if (sec.checkpointPolicy === "readonly" || sec.checkpointPolicy === "pointer" || sec.checkpointPolicy === "append") {
+                        section.checkpointPolicy = sec.checkpointPolicy;
+                    }
                     validSections.push(section);
                 }
                 schemas[prefix] = {
