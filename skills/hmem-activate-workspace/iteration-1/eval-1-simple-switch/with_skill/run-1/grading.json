@@ -1,0 +1,55 @@
+{
+  "eval_id": 1,
+  "run_type": "with_skill",
+  "expectations": [
+    {
+      "text": "Agent explicitly notes which project was active before switching (OLD_PROJECT)",
+      "passed": true,
+      "evidence": "Step 1 states: 'OLD_PROJECT: P0043 (EasySAP)' and 'OLD_O: O0043 (corresponding O-entry for EasySAP session logging)'"
+    },
+    {
+      "text": "Agent calls load_project on the target project (P0048)",
+      "passed": true,
+      "evidence": "Step 2 states: 'I would call: load_project(id: \"P0048\")'"
+    },
+    {
+      "text": "Agent checks the OLD O-entry for misrouted exchanges (reads O0043 or mentions doing so)",
+      "passed": true,
+      "evidence": "Step 3 states: 'Call read_memory(id: \"O0043\") to fetch today's session and batch nodes from the EasySAP O-entry'"
+    },
+    {
+      "text": "Agent outputs a confirmation showing the activated project and O-entry routing",
+      "passed": true,
+      "evidence": "Step 4 shows final output: 'Activated: P0048 hmem / O-entry routing: O0048 / Misrouted exchanges moved: none'"
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0,
+    "total": 4,
+    "pass_rate": 1.0
+  },
+  "claims": [
+    {
+      "claim": "No MCP tools were actually invoked — this is a simulation",
+      "type": "process",
+      "verified": true,
+      "evidence": "Note at end: 'No MCP tools were actually invoked. The simulation shows what I would check and note...'"
+    },
+    {
+      "claim": "The skill examines today's timestamps to determine if any moves are needed",
+      "type": "process",
+      "verified": true,
+      "evidence": "Step 3: 'Examine the timestamps on all O0043 child nodes (O0043.1, O0043.2, etc.) to identify exchanges created today (2026-04-25)'"
+    }
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "assertion": "Agent checks the OLD O-entry for misrouted exchanges (reads O0043 or mentions doing so)",
+        "reason": "The assertion passes if the agent merely mentions reading O0043 — it could describe the check without demonstrating any real judgment about misrouted content. Consider also asserting that the agent performs content-based classification (not just timestamp filtering) to determine which exchanges belong where."
+      }
+    ],
+    "overall": "Assertions are well-targeted and discriminating. All four steps of the expected skill behavior are covered."
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "skill_name": "hmem-activate",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "aktiviere projekt hmem",
+      "expected_output": "Agent notes OLD_PROJECT, calls load_project(P0048), checks O0043 for misrouted exchanges, outputs routing confirmation.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "ich hab gerade kurz P0054 geladen um was nachzuschauen, jetzt will ich wieder zurück zu hmem (P0048)",
+      "expected_output": "Agent identifies P0054 as the misrouting source, activates P0048, inspects O0054 for today's P0048 exchanges, moves if found.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "lade mal kurz projekt EasySAP damit ich was nachschauen kann, danach wechsel ich wieder zurück",
+      "expected_output": "Agent activates P0043, warns about O-entry rerouting to O0043, reminds user to re-activate P0048 explicitly when done.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "wir haben das falsche Projekt aktiviert",
+      "expected_output": "Agent recognizes this as an error state, asks which project should be active OR infers from context, then re-activates the correct project and checks for misrouted exchanges in the wrongly-activated project's O-entry.",
+      "files": []
+    }
+  ]
+}

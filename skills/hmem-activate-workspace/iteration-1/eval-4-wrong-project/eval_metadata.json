@@ -1,0 +1,23 @@
+{
+  "eval_id": 4,
+  "eval_name": "wrong-project",
+  "prompt": "wir haben das falsche Projekt aktiviert",
+  "assertions": [
+    {
+      "id": "identifies-correct-project",
+      "text": "Agent infers or asks which project should actually be active (does not just accept the wrong one)"
+    },
+    {
+      "id": "reactivates-correct-project",
+      "text": "Agent calls load_project on the correct project (P0048 in this scenario)"
+    },
+    {
+      "id": "checks-misrouted-in-wrong",
+      "text": "Agent checks the wrongly-activated project's O-entry (O0054) for misrouted exchanges from the current session"
+    },
+    {
+      "id": "moves-if-found",
+      "text": "Agent describes using move_nodes to move misrouted exchanges from wrong O-entry to correct one"
+    }
+  ]
+}

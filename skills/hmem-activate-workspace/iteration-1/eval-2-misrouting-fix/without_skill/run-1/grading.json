@@ -1,0 +1,44 @@
+{
+  "eval_id": 2,
+  "run_type": "without_skill",
+  "expectations": [
+    {
+      "text": "Agent correctly identifies P0054 as OLD_PROJECT (the one to check for misrouted exchanges)",
+      "passed": false,
+      "evidence": "The agent acknowledges P0054 as 'currently active' and as the project to deactivate, but never frames it as OLD_PROJECT to check for misrouted exchanges. The misrouting concept is entirely absent from the response."
+    },
+    {
+      "text": "Agent calls load_project on P0048 (the target)",
+      "passed": true,
+      "evidence": "Step 1 states: 'load_project({ id: \\'P0048\\', store: \\'personal\\' })'"
+    },
+    {
+      "text": "Agent checks O0054 specifically for today's exchanges that may belong to the P0048 context",
+      "passed": false,
+      "evidence": "No mention of reading O0054 or checking for misrouted exchanges anywhere in the response. The response is entirely about loading P0048 and getting the briefing."
+    },
+    {
+      "text": "Agent mentions or describes using move_nodes to correct misrouted exchanges if found",
+      "passed": false,
+      "evidence": "No mention of move_nodes or any exchange-routing correction. The response ends with 'P0054 is automatically deactivated when P0048 becomes active' — no misrouting awareness."
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 3,
+    "total": 4,
+    "pass_rate": 0.25
+  },
+  "claims": [
+    {
+      "claim": "'No Issues Expected — The call is straightforward'",
+      "type": "quality",
+      "verified": false,
+      "evidence": "The scenario explicitly involves a brief mid-session project load, which is precisely where misrouting issues can occur. Calling this a straightforward single-call switch misses the entire routing-correction concern."
+    }
+  ],
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "The without_skill response correctly loads P0048 but completely misses the misrouting-detection and correction behavior that the skill is designed to handle. Strong discriminating signal."
+  }
+}

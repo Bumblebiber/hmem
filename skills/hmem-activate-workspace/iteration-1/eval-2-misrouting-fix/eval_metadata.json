@@ -1,0 +1,23 @@
+{
+  "eval_id": 2,
+  "eval_name": "misrouting-fix",
+  "prompt": "ich hab gerade kurz P0054 geladen um was nachzuschauen, jetzt will ich wieder zurück zu hmem (P0048)",
+  "assertions": [
+    {
+      "id": "identifies-old-as-p0054",
+      "text": "Agent correctly identifies P0054 as OLD_PROJECT (the one to check for misrouted exchanges)"
+    },
+    {
+      "id": "activates-p0048",
+      "text": "Agent calls load_project on P0048 (the target)"
+    },
+    {
+      "id": "inspects-o0054",
+      "text": "Agent checks O0054 specifically for today's exchanges that may belong to the P0048 context"
+    },
+    {
+      "id": "move-nodes-mentioned",
+      "text": "Agent mentions or describes using move_nodes to correct misrouted exchanges if found"
+    }
+  ]
+}

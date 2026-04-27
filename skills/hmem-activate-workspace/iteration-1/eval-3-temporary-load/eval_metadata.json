@@ -1,0 +1,23 @@
+{
+  "eval_id": 3,
+  "eval_name": "temporary-load",
+  "prompt": "lade mal kurz projekt EasySAP damit ich was nachschauen kann, danach wechsel ich wieder zurück",
+  "assertions": [
+    {
+      "id": "notes-current-before-switch",
+      "text": "Agent notes P0048 as current project before switching to P0043"
+    },
+    {
+      "id": "activates-p0043",
+      "text": "Agent calls load_project on P0043 (EasySAP)"
+    },
+    {
+      "id": "warns-about-routing",
+      "text": "Agent warns that O-entry routing now points to O0043, and reminds user to explicitly switch back"
+    },
+    {
+      "id": "no-spurious-move",
+      "text": "Agent does NOT move any nodes (there are no misrouted exchanges yet at this point)"
+    }
+  ]
+}

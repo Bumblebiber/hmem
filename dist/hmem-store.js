@@ -252,10 +252,10 @@ export class HmemStore {
         const seq = this.nextSeq(prefix);
         const rootId = `${prefix}${String(seq).padStart(4, "0")}`;
         const timestamp = new Date().toISOString();
-        const { title, level1, nodes } = this.parseTree(content, rootId);
+        const { title, level1, nodes: parsedNodes } = this.parseTree(content, rootId);
+        // nodes is mutable — E-entries may have invalid L2 nodes stripped before insert
+        let nodes = parsedNodes;
         // Schema validation: validate parsed section nodes, not raw content.
-        // The parser already separates section titles from body text, so this correctly
-        // ignores body lines that happen to be at L2 depth after a blank line.
         const schema = this.cfg.schemas?.[prefix];
         if (schema) {
             const sectionNames = new Set(schema.sections.map(s => s.name.toLowerCase()));
@@ -265,11 +265,20 @@ export class HmemStore {
                 return ![...sectionNames].some(sec => firstWord.startsWith(sec));
             });
             if (invalid.length > 0) {
-                const sectionList = schema.sections.map((s, i) => `.${i + 1} ${s.name}`).join(", ");
-                throw new Error(`${prefix}-entry schema violation.\n` +
-                    `Valid sections: ${sectionList}\n` +
-                    `Invalid L2 nodes: ${invalid.map(n => `"${n.title.substring(0, 50)}"`).join(", ")}\n\n` +
-                    `L2 node names must match defined schema sections.`);
+                if (prefix === "E") {
+                    // E-entries auto-scaffold their structure — silently drop invalid direct children.
+                    // This handles the common case where body text is accidentally tab-indented,
+                    // creating spurious L2 nodes that don't match schema section names.
+                    const invalidIds = new Set(invalid.map(n => n.id));
+                    nodes = nodes.filter(n => !invalidIds.has(n.id) && !invalidIds.has(n.parent_id));
+                }
+                else {
+                    const sectionList = schema.sections.map((s, i) => `.${i + 1} ${s.name}`).join(", ");
+                    throw new Error(`${prefix}-entry schema violation.\n` +
+                        `Valid sections: ${sectionList}\n` +
+                        `Invalid L2 nodes: ${invalid.map(n => `"${n.title.substring(0, 50)}"`).join(", ")}\n\n` +
+                        `L2 node names must match defined schema sections.`);
+                }
             }
         }
         if (!level1) {

@@ -1,0 +1,23 @@
+{
+  "eval_id": 1,
+  "eval_name": "simple-switch",
+  "prompt": "aktiviere projekt hmem",
+  "assertions": [
+    {
+      "id": "notes-old-project",
+      "text": "Agent explicitly notes which project was active before switching (OLD_PROJECT)"
+    },
+    {
+      "id": "calls-load-project",
+      "text": "Agent calls load_project on the target project (P0048)"
+    },
+    {
+      "id": "checks-misrouted",
+      "text": "Agent checks the OLD O-entry for misrouted exchanges (reads O0043 or mentions doing so)"
+    },
+    {
+      "id": "outputs-confirmation",
+      "text": "Agent outputs a confirmation showing the activated project and O-entry routing"
+    }
+  ]
+}

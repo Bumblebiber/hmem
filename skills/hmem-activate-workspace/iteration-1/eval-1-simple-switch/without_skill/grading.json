@@ -1,0 +1,44 @@
+{
+  "eval_id": 1,
+  "run_type": "without_skill",
+  "expectations": [
+    {
+      "text": "Agent explicitly notes which project was active before switching (OLD_PROJECT)",
+      "passed": false,
+      "evidence": "The agent mentions 'Aktuell aktives Projekt: P0043 (EasySAP)' at the top but never explicitly names it as the OLD_PROJECT or frames it as a tracked switch with routing implications. No OLD_PROJECT / OLD_O labeling present."
+    },
+    {
+      "text": "Agent calls load_project on the target project (P0048)",
+      "passed": false,
+      "evidence": "Agent does not know the real ID of the hmem project: 'load_project(id=\"P00XX\", // Die echte ID des hmem-Projekts)'. It uses a placeholder (P00XX) rather than the correct P0048, indicating it did not actually call the tool."
+    },
+    {
+      "text": "Agent checks the OLD O-entry for misrouted exchanges (reads O0043 or mentions doing so)",
+      "passed": false,
+      "evidence": "No mention of O-entries, misrouted exchanges, or reading O0043 anywhere in the response. The concept of O-entry routing is entirely absent."
+    },
+    {
+      "text": "Agent outputs a confirmation showing the activated project and O-entry routing",
+      "passed": false,
+      "evidence": "Confirmation given is generic: '✓ Projekt \"hmem\" ist jetzt aktiv' — no O-entry routing information included."
+    }
+  ],
+  "summary": {
+    "passed": 0,
+    "failed": 4,
+    "total": 4,
+    "pass_rate": 0.0
+  },
+  "claims": [
+    {
+      "claim": "The workflow is a 'Single-Step-Dialog, kein mehrstufiger Prozess'",
+      "type": "quality",
+      "verified": false,
+      "evidence": "The skill requires multiple steps (note OLD_PROJECT, call load_project, check O0043 for misrouting, confirm). Describing it as single-step misses the critical routing-check step entirely."
+    }
+  ],
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "The without_skill baseline clearly fails all skill-specific behaviors. The contrast with the with_skill run is sharp, making these evals discriminating."
+  }
+}

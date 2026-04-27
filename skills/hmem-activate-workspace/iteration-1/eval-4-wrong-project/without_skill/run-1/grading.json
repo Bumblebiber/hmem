@@ -1,0 +1,44 @@
+{
+  "eval_id": 4,
+  "run_type": "without_skill",
+  "expectations": [
+    {
+      "text": "Agent infers or asks which project should actually be active (does not just accept the wrong one)",
+      "passed": true,
+      "evidence": "Section 2 states: 'Call load_project(id=\"P0048\") to: Switch from MAIMO-RPG to hmem' — the agent identifies P0048 as the correct target and does not continue with P0054."
+    },
+    {
+      "text": "Agent calls load_project on the correct project (P0048 in this scenario)",
+      "passed": true,
+      "evidence": "Section 2 states: 'Immediately load P0048 with load_project(id=\"P0048\")'"
+    },
+    {
+      "text": "Agent checks the wrongly-activated project's O-entry (O0054) for misrouted exchanges from the current session",
+      "passed": false,
+      "evidence": "No mention of checking O0054, reading the wrong project's O-entry, or inspecting for misrouted exchanges. The response ends after loading P0048 and offering to help with hmem work."
+    },
+    {
+      "text": "Agent describes using move_nodes to move misrouted exchanges from wrong O-entry to correct one",
+      "passed": false,
+      "evidence": "No mention of move_nodes anywhere in the response. The routing-correction step is entirely absent."
+    }
+  ],
+  "summary": {
+    "passed": 2,
+    "failed": 2,
+    "total": 4,
+    "pass_rate": 0.5
+  },
+  "claims": [
+    {
+      "claim": "The agent provides the 'Correct Response Flow' for this scenario",
+      "type": "quality",
+      "verified": false,
+      "evidence": "The response correctly switches to P0048 but omits checking O0054 for exchanges that were logged during the wrong-project session. Any work done while P0054 was active that pertained to hmem would remain misrouted, which the response does not address."
+    }
+  ],
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "The without_skill response correctly identifies and loads the right project but completely misses the misrouting-detection and correction behavior. The two failing assertions precisely capture the skill's added value in this scenario."
+  }
+}

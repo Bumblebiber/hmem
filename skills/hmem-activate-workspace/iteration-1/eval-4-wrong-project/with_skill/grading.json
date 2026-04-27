@@ -1,0 +1,55 @@
+{
+  "eval_id": 4,
+  "run_type": "with_skill",
+  "expectations": [
+    {
+      "text": "Agent infers or asks which project should actually be active (does not just accept the wrong one)",
+      "passed": true,
+      "evidence": "Decision Point section states: 'Approach: 1. First attempt: Infer from context. ... 2. If context unclear: Ask the user \"Which project should be active instead?\"' — the agent explicitly reasons about whether to ask or infer rather than silently accepting P0054."
+    },
+    {
+      "text": "Agent calls load_project on the correct project (P0048 in this scenario)",
+      "passed": true,
+      "evidence": "Step 2 shows: '[SIMULATED CALL] load_project(id: \"P0048\")' with confirmation 'Active project now: P0048 hmem'"
+    },
+    {
+      "text": "Agent checks the wrongly-activated project's O-entry (O0054) for misrouted exchanges from the current session",
+      "passed": true,
+      "evidence": "Step 3 states: '[SIMULATED CALL] read_memory(id: \"O0054\")' and proceeds to analyze each exchange (O0054.1, O0054.2, O0054.3) for misrouting."
+    },
+    {
+      "text": "Agent describes using move_nodes to move misrouted exchanges from wrong O-entry to correct one",
+      "passed": true,
+      "evidence": "Step 3 shows: '[SIMULATED CALL] move_nodes(node_ids: [\"O0054.2\", \"O0054.3\"], target_o_id: \"O0048\")' with full result description."
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0,
+    "total": 4,
+    "pass_rate": 1.0
+  },
+  "claims": [
+    {
+      "claim": "The agent correctly identifies O0054.2 and O0054.3 as misrouted based on content analysis",
+      "type": "quality",
+      "verified": true,
+      "evidence": "Step 3 analysis: 'O0054.2: \"User switched context to hmem\", \"P0048 questions\", \"hmem system\" → Belongs to P0048 (Misrouted)' and 'O0054.3: \"project activation flow\", \"P0048 context\", \"move_nodes\" → Belongs to P0048 (Misrouted)'"
+    },
+    {
+      "claim": "The agent keeps O0054.1 (MAIMO combat mechanics) in place as legitimately belonging to P0054",
+      "type": "quality",
+      "verified": true,
+      "evidence": "'O0054.1: \"MAIMO combat mechanics\" → Belongs to P0054 ✓ (Correct routing, keep in place)'"
+    }
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "assertion": "Agent infers or asks which project should actually be active (does not just accept the wrong one)",
+        "reason": "This assertion passes even when the agent simply reads the project ID from scenario context metadata. A stronger version would verify the agent handles the ambiguous case where context does not already state which project should be active."
+      }
+    ],
+    "overall": "All four critical behaviors for the wrong-project scenario are covered. The with_skill response demonstrates thorough content-based misrouting detection which goes beyond what the assertions strictly require."
+  }
+}

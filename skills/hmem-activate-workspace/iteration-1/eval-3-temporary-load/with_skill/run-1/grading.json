@@ -1,0 +1,48 @@
+{
+  "eval_id": 3,
+  "run_type": "with_skill",
+  "expectations": [
+    {
+      "text": "Agent notes P0048 as current project before switching to P0043",
+      "passed": true,
+      "evidence": "Step 1 states: 'OLD_PROJECT: P0048 (hmem)' and 'OLD_O: O0048'"
+    },
+    {
+      "text": "Agent calls load_project on P0043 (EasySAP)",
+      "passed": true,
+      "evidence": "Step 2 states: 'Would call: load_project(id=\"P0043\")'"
+    },
+    {
+      "text": "Agent warns that O-entry routing now points to O0043, and reminds user to explicitly switch back",
+      "passed": true,
+      "evidence": "The 'User Re-activation Warning' section states: 'You'll need to re-invoke the skill to switch back. It's not automatic.' and confirms: 'OUTPUT: Activated: P0043 (EasySAP) / O-entry routing: O0043'"
+    },
+    {
+      "text": "Agent does NOT move any nodes (there are no misrouted exchanges yet at this point)",
+      "passed": true,
+      "evidence": "Step 3 concludes: 'Expected result for this scenario: Likely \"none\" — this is a fresh switch, not a return to a previously mixed session.' Final output shows: 'Misrouted exchanges moved: none'"
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0,
+    "total": 4,
+    "pass_rate": 1.0
+  },
+  "claims": [
+    {
+      "claim": "The skill correctly reasons that misrouting check applies even on a fresh temporary switch",
+      "type": "quality",
+      "verified": true,
+      "evidence": "Step 3 explains: 'Misrouting check applies here: User switched projects mid-session. If there are today-stamped exchanges in O0048 that discuss EasySAP topics... they should be moved to O0043.' Then correctly concludes no moves are needed for a fresh switch."
+    }
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "reason": "No assertion checks that the agent performs the misrouting check on O0048 (not O0043) — the direction matters here. An agent that checks the wrong O-entry would still pass the current assertions."
+      }
+    ],
+    "overall": "Assertions correctly test the key behaviors for a temporary-load scenario. The 'no spurious move' assertion is valuable for catching over-eager agents."
+  }
+}

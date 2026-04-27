@@ -1,5 +1,17 @@
 # Changelog
 
+## 7.0.1 — 2026-04-27
+
+### Added
+
+- **`title` + `body` params for `write_memory`, `update_memory`, `append_memory`** — explicit title/body split instead of blank-line convention. All three tools now accept `title` (root title) and `body` (drill-down text) as separate parameters alongside the legacy `content` string. `content` is now optional in `write_memory` and `append_memory`. `update_memory` can update body-only by passing only `body` (existing title is preserved). Legacy `content`-only calls continue to work unchanged.
+
+- **`hmem-new-error` skill** — structured workflow for creating E-entries in hmem. Mirrors `hmem-new-project`. Ensures correct schema, status tags, and linking to affected project nodes.
+
+### Fixed
+
+- **E-entry Auto-Scaffold: silently drop invalid L2 nodes** — `write_memory` with `prefix="E"` no longer throws on schema violations. Instead, tab-indented body text that was accidentally parsed as L2 nodes is silently dropped, and the entry is created with its correct scaffolded sections. Other prefixes still throw on invalid L2 nodes.
+
 ## 7.0.0 — 2026-04-27
 
 ### Breaking Changes

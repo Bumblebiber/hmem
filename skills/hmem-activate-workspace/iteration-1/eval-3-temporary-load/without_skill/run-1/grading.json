@@ -1,0 +1,44 @@
+{
+  "eval_id": 3,
+  "run_type": "without_skill",
+  "expectations": [
+    {
+      "text": "Agent notes P0048 as current project before switching to P0043",
+      "passed": true,
+      "evidence": "The response mentions 'Previous active project (hmem/P0048) can be restored immediately' and Step 3 shows 'load_project({ id: \\'P0048\\', store: \\'personal\\' })' as the switch-back command, implying P0048 is the current project."
+    },
+    {
+      "text": "Agent calls load_project on P0043 (EasySAP)",
+      "passed": true,
+      "evidence": "Step 1 states: 'load_project({ id: \\'P0043\\', store: \\'personal\\' })'"
+    },
+    {
+      "text": "Agent warns that O-entry routing now points to O0043, and reminds user to explicitly switch back",
+      "passed": false,
+      "evidence": "No mention of O-entry routing pointing to O0043. The response says it's a 'non-destructive context switch' and that the user 'can restore immediately', but gives no warning about routing implications or the need to explicitly invoke the switch-back."
+    },
+    {
+      "text": "Agent does NOT move any nodes (there are no misrouted exchanges yet at this point)",
+      "passed": true,
+      "evidence": "No move_nodes call or any mention of moving exchanges anywhere in the response."
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 1,
+    "total": 4,
+    "pass_rate": 0.75
+  },
+  "claims": [
+    {
+      "claim": "This is a 'non-destructive context switch' where the user 'retains full project knowledge while reviewing EasySAP'",
+      "type": "quality",
+      "verified": false,
+      "evidence": "The response omits that O-entry routing changes when the project switches — any new exchanges logged during the temporary EasySAP view will be routed to O0043, not O0048. This routing side-effect is non-trivial and the response gives no indication of it."
+    }
+  ],
+  "eval_feedback": {
+    "suggestions": [],
+    "overall": "The without_skill response handles the basic switching correctly but misses the critical routing-awareness that the skill provides. The one failing assertion cleanly identifies the gap."
+  }
+}

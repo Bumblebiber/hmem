@@ -359,20 +359,23 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
     "  Level 3: 2 tabs — even more detail\n" +
     "  Level 4: 3 tabs — fine-grained detail\n" +
     "  Level 5: 4 tabs — raw context/data\n" +
-    "Body text (shown on drill-down, hidden in listings) — use a blank line to separate title from body:\n" +
-    "  Title line\\n\\nBody text here.\\nMore body text.\\n\\tChild title\\n\\n\\tChild body text.\n" +
+    "Body text (shown on drill-down, hidden in listings): use the 'body' parameter — or a blank line in 'content':\n" +
+    "  write_memory(prefix='L', title='My Lesson', body='Detailed body text.', content='\\tSection\\n\\t\\tDetails')\n" +
+    "  write_memory(prefix='L', content='My Lesson\\n\\nBody text.\\n\\tSection\\n\\t\\tDetails')  ← legacy format\n" +
     "The system auto-assigns an ID and timestamp. " +
     `Use prefix to categorize: ${prefixList}.\n\n` +
     "Store types:\n" +
     "  personal (default): Your private memory\n", {
     prefix: z.string().toUpperCase().describe(`Memory category: ${prefixList}`),
-    content: z.string().min(3).describe("The memory content. Use tab indentation for depth levels. Separate title from body with a blank line (like git commits).\n" +
-        "Example:\n" +
-        "Council Dashboard for Althing Inc.\n\n" +
-        "Built a real-time dashboard with React + Vite. ShadcnUI for components, SSE for live updates.\n" +
-        "\tFrontend architecture\n\n" +
-        "\tReact + Vite, ShadcnUI components, SSE for real-time updates\n" +
-        "\t\tAuth was tricky — EventSource can't send custom headers"),
+    title: z.string().optional().describe("Optional: explicit root title. If provided, overrides the first line of 'content'. Use together with 'body'."),
+    body: z.string().optional().describe("Optional: explicit body text for the root entry (shown on drill-down, hidden in listings). " +
+        "Prefer this over blank-line tricks in 'content'. " +
+        "Example: write_memory(prefix='P', title='My Project', body='Full description.', content='\\tSection\\n\\t\\tDetails')"),
+    content: z.string().optional().describe("Memory content with tab-indented sub-nodes. " +
+        "If 'title' is provided: only sub-nodes here (no L1 title needed). " +
+        "Legacy mode (no 'title'): full entry including title + blank-line body.\n" +
+        "Example (title+body mode): content='\\tSection\\n\\t\\tDetails'\n" +
+        "Example (legacy): content='My Entry\\n\\nBody text.\\n\\tSection'"),
     links: jsonArrayString(z.array(z.string()).optional()).describe("Optional: IDs of related memories, e.g. ['P0001', 'L0005']"),
     favorite: z.coerce.boolean().optional().describe("Mark this entry as a favorite — shown with [♥] in bulk reads and always inlined with L2 detail. " +
         "Use for reference info you need to see every session, regardless of category."),
@@ -383,44 +386,42 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
     force: z.coerce.boolean().optional().describe("Force creation of a new root entry even if existing entries share tags. " +
         "Only use when you intentionally want a separate entry, not a child of an existing one."),
-}, async ({ prefix, content, links, favorite, tags, pinned, store: storeName, force }) => {
+}, async ({ prefix, title: titleParam, body: bodyParam, content: rawContent, links, favorite, tags, pinned, store: storeName, force }) => {
     const isFirstTime = !fs.existsSync(HMEM_PATH);
+    // Build effective content from title/body/content params
+    let content;
+    if (titleParam !== undefined) {
+        // New mode: title + optional body + optional sub-nodes
+        const subNodes = rawContent?.trim() ?? "";
+        content = titleParam
+            + (bodyParam ? "\n\n" + bodyParam : "")
+            + (subNodes ? "\n" + subNodes : "");
+    }
+    else if (rawContent !== undefined && rawContent.trim().length >= 3) {
+        // Legacy mode: full content string
+        if (bodyParam) {
+            // Inject body after first line
+            const nl = rawContent.indexOf("\n");
+            const firstLine = nl >= 0 ? rawContent.substring(0, nl) : rawContent;
+            const rest = nl >= 0 ? rawContent.substring(nl + 1) : "";
+            content = firstLine + "\n\n" + bodyParam + (rest.trim() ? "\n" + rest : "");
+        }
+        else {
+            content = rawContent;
+        }
+    }
+    else {
+        return {
+            content: [{ type: "text", text: "ERROR: Either 'title' or 'content' (min 3 chars) must be provided." }],
+            isError: true,
+        };
+    }
     // O-prefix is reserved for flush_context
     if (prefix.toUpperCase() === "O") {
         return {
             content: [{ type: "text", text: "ERROR: O-prefix entries are created via flush_context, not write_memory." }],
             isError: true,
         };
-    }
-    // Schema validation: if a schema is defined for this prefix, validate L2 node names.
-    // This prevents agents from creating off-schema sections in structured entries.
-    const writeSchema = hmemConfig.schemas?.[prefix.toUpperCase()];
-    if (writeSchema) {
-        const sectionNames = writeSchema.sections.map(s => s.name.toLowerCase());
-        const lines = content.split("\n");
-        // L2 candidates: exactly one tab indent AND not a legacy body line ("\t> ...").
-        // Blank-line-separated bodies under an L2 title are safe to ignore here because
-        // they appear AFTER a valid L2 title and fail the schema check only if the user
-        // placed free-form prose right under a valid section — in which case the title
-        // line above already satisfies the schema.
-        const l2Lines = lines
-            .filter(l => /^\t[^\t]/.test(l) && !/^\t>(?: |$)/.test(l))
-            .map(l => l.replace(/^\t/, "").toLowerCase().trim());
-        if (l2Lines.length > 0) {
-            const invalid = l2Lines.filter(l => {
-                const firstWord = l.split(/\s*[—\-:]/)[0].trim();
-                return !sectionNames.some(sec => firstWord.startsWith(sec));
-            });
-            if (invalid.length > 0) {
-                return {
-                    content: [{ type: "text", text: `ERROR: ${prefix.toUpperCase()}-entry schema violation.\n` +
-                                `Valid sections: ${writeSchema.sections.map(s => s.name).join(", ")}\n` +
-                                `Invalid L2 nodes: ${invalid.map(l => `"${l.substring(0, 50)}"`).join(", ")}\n\n` +
-                                `L2 node names must match defined schema sections. Fix and retry.` }],
-                    isError: true,
-                };
-            }
-        }
     }
     try {
         const hmemStore = storeName === "company"
@@ -504,11 +505,11 @@ server.tool("write_memory", "Write a new memory entry to your hierarchical long-
 });
 server.tool("update_memory", "Update the text of an existing memory entry or sub-node (your own personal memory). " +
     "Only modifies the text at the specified ID — children are preserved unchanged.\n\n" +
-    "Separate title from body with a blank line (like git commits): 'New title\\n\\nBody line 1\\nBody line 2'. Title is shown in listings, body on drill-down.\n\n" +
     "Use cases:\n" +
-    "- Correct outdated wording: update_memory(id='L0003', content='corrected summary')\n" +
-    "- Add title/body split: update_memory(id='L0003', content='Short title\\n\\nDetailed body text')\n" +
-    "- Fix a sub-node: update_memory(id='L0003.2', content='node title\\n\\nnode body')\n" +
+    "- Update title only: update_memory(id='L0003', content='corrected summary')\n" +
+    "- Update body only: update_memory(id='L0003', body='New detailed body text.')  ← title preserved\n" +
+    "- Update title+body: update_memory(id='L0003', content='Short title', body='Detailed body text.')\n" +
+    "- Fix a sub-node: update_memory(id='L0003.2', content='node title', body='node body')\n" +
     "- Mark as obsolete: FIRST write the correction, THEN update with [✓ID] reference:\n" +
     "  1. write_memory(prefix='E', content='Correct fix is...') → E0076\n" +
     "  2. update_memory(id='E0042', content='Wrong — see [✓E0076]', obsolete=true)\n" +
@@ -518,7 +519,12 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
     "To add new child nodes, use append_memory. " +
     "To replace an entire entry, mark the old root obsolete and write a new one.", {
     id: z.string().describe("ID of the entry or node to update, e.g. 'L0003' or 'L0003.2'"),
-    content: z.string().min(1).describe("New text content for this node (plain text, no indentation)"),
+    content: z.string().optional().describe("New title (plain text, no indentation). " +
+        "If 'body' is also provided, this becomes the new title and 'body' the new body. " +
+        "Omit to update only body text (existing title is preserved)."),
+    body: z.string().optional().describe("New body text (shown on drill-down). " +
+        "If 'content' is also provided: content=new title, body=new body. " +
+        "If only 'body': existing title is preserved, only body is updated."),
     links: jsonArrayString(z.array(z.string()).optional()).describe("Optional: update linked entry IDs (root entries only). Replaces existing links."),
     obsolete: z.coerce.boolean().optional().describe("Mark this root entry as no longer valid (root entries only). " +
         "Requires [✓ID] correction reference in content (e.g. 'Wrong — see [✓E0076]')."),
@@ -536,11 +542,30 @@ server.tool("update_memory", "Update the text of an existing memory entry or sub
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
     hmem_path: z.string().optional().describe("Curator mode: absolute path to an external .hmem file to update. " +
         "Overrides the `store` parameter. Sync is skipped for external files."),
-}, async ({ id, content, links, obsolete, favorite, irrelevant, tags, pinned, active, store: storeName, hmem_path }) => {
+}, async ({ id, content: rawContent, body: bodyParam, links, obsolete, favorite, irrelevant, tags, pinned, active, store: storeName, hmem_path }) => {
     try {
         const { store: hmemStore, label: storeLabelResolved } = resolveStore(storeName, hmem_path);
         const isExternal = !!hmem_path;
         try {
+            // Build effective content from body param if provided
+            let content = rawContent;
+            if (bodyParam !== undefined) {
+                if (content !== undefined && content.trim().length > 0) {
+                    // content = new title, body = new body
+                    content = content.trim() + "\n\n" + bodyParam;
+                }
+                else {
+                    // body only: preserve existing title
+                    const existingTitle = hmemStore.getTitle(id);
+                    if (existingTitle === null) {
+                        return {
+                            content: [{ type: "text", text: `ERROR: Entry "${id}" not found.` }],
+                            isError: true,
+                        };
+                    }
+                    content = existingTitle + "\n\n" + bodyParam;
+                }
+            }
             if (hmemStore.corrupted) {
                 return {
                     content: [{ type: "text", text: "WARNING: Memory database is corrupted! Aborting update to prevent further data loss." }],
@@ -673,17 +698,33 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
     "Content uses tab indentation relative to the parent:\n" +
     "  0 tabs = direct child of id\n" +
     "  1 tab  = grandchild, etc.\n" +
-    "Separate title from body with a blank line: 'Node title\\n\\nBody shown on drill-down\\n\\tChild node'\n\n" +
+    "Two modes:\n" +
+    "  Simple (title+body): append_memory(id='L0003', title='New finding', body='Detailed explanation')\n" +
+    "  Complex (full sub-tree): append_memory(id='L0003', content='New finding\\n\\tSub-detail\\n\\t\\tDeep')\n\n" +
     "Examples:\n" +
-    "  append_memory(id='L0003', content='New finding\\n> Detailed explanation\\n\\tSub-detail') " +
-    "→ adds L2 node (with title + body) + L3 child\n" +
-    "  append_memory(id='L0003.2', content='Extra note') " +
-    "→ adds L3 node under the L2 node L0003.2", {
+    "  append_memory(id='P0048.6', title='Crash on startup', body='Steps: open app, click X') → adds child with body\n" +
+    "  append_memory(id='L0003.2', content='Extra note') → adds child under L0003.2", {
     id: z.string().describe("Root entry ID or parent node ID to append children to, e.g. 'L0003' or 'L0003.2'"),
-    content: z.string().min(1).describe("Tab-indented content to append. 0 tabs = direct child of id.\n" +
-        "Example: 'New point\\n\\tSub-detail'"),
+    title: z.string().optional().describe("Simple mode: title for the new node. Use with 'body' for clean title+body creation."),
+    body: z.string().optional().describe("Simple mode: body text for the new node (shown on drill-down). Use with 'title'."),
+    content: z.string().optional().describe("Complex mode: full tab-indented sub-tree to append. 0 tabs = direct child of id.\n" +
+        "Example: 'New section\\n\\tChild\\n\\t\\tGrandchild'. Omit if using 'title'+'body'."),
     store: z.enum(["personal", "company"]).default("personal").describe("Target store: 'personal' or 'company'"),
-}, async ({ id, content, store: storeName }) => {
+}, async ({ id, title: titleParam, body: bodyParam, content: rawContent, store: storeName }) => {
+    // Build effective content from title/body or raw content
+    let content;
+    if (titleParam !== undefined) {
+        content = titleParam + (bodyParam ? "\n\n" + bodyParam : "");
+    }
+    else if (rawContent !== undefined && rawContent.trim().length > 0) {
+        content = rawContent;
+    }
+    else {
+        return {
+            content: [{ type: "text", text: "ERROR: Either 'title' or 'content' must be provided." }],
+            isError: true,
+        };
+    }
     // Schema enforcement: if a schema is defined for this prefix, block appends to root
     // entries. New L2 nodes are not allowed — agents must append to specific sections.
     if (!id.includes(".")) {

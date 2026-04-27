@@ -1,0 +1,49 @@
+{
+  "eval_id": 2,
+  "run_type": "with_skill",
+  "expectations": [
+    {
+      "text": "Agent correctly identifies P0054 as OLD_PROJECT (the one to check for misrouted exchanges)",
+      "passed": true,
+      "evidence": "Step 1 states: 'OLD_PROJECT: P0054 (currently active)' and 'OLD_O: O0054 (corresponding O-entry for P0054)'"
+    },
+    {
+      "text": "Agent calls load_project on P0048 (the target)",
+      "passed": true,
+      "evidence": "Step 2 states: 'MCP call I would make: load_project(id=\"P0048\")'"
+    },
+    {
+      "text": "Agent checks O0054 specifically for today's exchanges that may belong to the P0048 context",
+      "passed": true,
+      "evidence": "Step 3 states: 'MCP call I would make: read_memory(id=\"O0054\")' and 'Filter for nodes with today's timestamp (2026-04-25)' and 'Read each exchange's content to determine if it discusses P0048 topics'"
+    },
+    {
+      "text": "Agent mentions or describes using move_nodes to correct misrouted exchanges if found",
+      "passed": true,
+      "evidence": "Step 3 states: 'I would collect their node IDs at the batch level (L3) and call: move_nodes(node_ids: [\"O0054.3\"], target_o_id: \"O0048\")'"
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0,
+    "total": 4,
+    "pass_rate": 1.0
+  },
+  "claims": [
+    {
+      "claim": "The agent provides both a 'no misrouting' and 'misrouting found' confirmation example",
+      "type": "quality",
+      "verified": true,
+      "evidence": "Step 4 shows Scenario A (no misrouting) and Scenario B (misrouting with 1 batch moved) confirmation outputs"
+    }
+  ],
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "assertion": "Agent checks O0054 specifically for today's exchanges that may belong to the P0048 context",
+        "reason": "The assertion is satisfied by mentioning read_memory(O0054) and filtering by today's timestamp, but doesn't verify that the agent correctly distinguishes P0054 topics from P0048 topics within those exchanges. A response that just lists all today's exchanges without content-based classification would also pass this assertion."
+      }
+    ],
+    "overall": "Assertions are well-targeted for the misrouting-fix scenario. Good coverage of the key differentiating behaviors."
+  }
+}
