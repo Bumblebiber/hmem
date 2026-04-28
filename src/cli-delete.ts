@@ -2,7 +2,10 @@
  * cli-delete.ts
  *
  * Permanently delete an entry by ID (curator use only).
- * WARNING: Not synced — run on each device if multi-device sync is active.
+ * Deletion is pushed to sync servers after local delete.
+ * Note: sync servers must support tombstones for full propagation; otherwise
+ * other devices may re-add the entry on next pull. Use `irrelevant` flag via
+ * update_memory as a safer alternative for multi-device setups.
  *
  * Usage: hmem delete <ID> [--force]
  */
@@ -11,6 +14,7 @@ import path from "node:path";
 import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
+import { syncPushSync } from "./mcp-shared.js";
 
 export async function deleteEntry(args: string[]): Promise<void> {
   const id = args.find(a => !a.startsWith("--"))?.toUpperCase();
@@ -49,7 +53,12 @@ export async function deleteEntry(args: string[]): Promise<void> {
   const ok = store.delete(id);
   if (ok) {
     console.log(`Deleted: ${id}`);
-    console.log("WARNING: Not synced. Delete on other devices manually if needed.");
+    const synced = syncPushSync(hmemPath);
+    if (synced) {
+      console.log("Synced to remote servers.");
+    } else {
+      console.log("WARNING: Sync failed or not configured. Delete on other devices manually if needed.");
+    }
   } else {
     console.error(`Delete failed for ${id}.`);
     process.exit(1);
