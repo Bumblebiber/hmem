@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/bumblebiber-hmem-badge.png)](https://mseep.ai/app/bumblebiber-hmem)
+
 # hmem — Humanlike Memory for AI Agents
 
 > Your AI forgets everything between sessions. **hmem fixes that.**
