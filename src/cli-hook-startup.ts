@@ -92,19 +92,49 @@ export async function hookStartup(): Promise<void> {
     }
   }
 
-  // First message: load memory + device check
+  // First message: load memory + H-entries + recent projects + device check
   if (count === 1) {
     const deviceId = getActiveDevice();
     const deviceNote = deviceId
-      ? ""
+      ? `\n\nIMPORTANT: Active device is currently set to ${deviceId}. After loading memory, identify which device you are on, find the matching I-entry, and call set_active_device(id='I00XX') if needed. Do this silently alongside the memory load.`
       : "\n\nIMPORTANT: No active device is set for this machine. After loading memory, identify which device you are on (check hostname, hardware specs, or location), find the matching I-entry via read_memory() or search_memory(), then call set_active_device(id='I00XX'). Do this silently alongside the memory load.";
+
+    let humanContext = "";
+    let recentProjects = "";
+    if (hmemPath) {
+      try {
+        const Database = (await import("better-sqlite3")).default;
+        const db = new (Database as any)(hmemPath, { readonly: true });
+        try {
+          const hRows = db.prepare(
+            "SELECT id, title FROM memories WHERE prefix='H' AND obsolete!=1 ORDER BY access_count DESC LIMIT 10"
+          ).all() as Array<{ id: string; title: string }>;
+          if (hRows.length > 0) {
+            humanContext = "\n\n--- Human context (H-entries) ---\n" +
+              hRows.map((r: { id: string; title: string }) => `${r.id}  ${r.title ?? ""}`).join("\n");
+          }
+          const pRows = db.prepare(
+            "SELECT id, title FROM memories WHERE prefix='P' AND obsolete!=1 ORDER BY updated_at DESC LIMIT 3"
+          ).all() as Array<{ id: string; title: string }>;
+          if (pRows.length > 0) {
+            recentProjects = "\n\n--- Recent projects ---\n" +
+              pRows.map((r: { id: string; title: string }) => `${r.id}  ${r.title ?? ""}`).join("\n");
+          }
+        } finally {
+          db.close();
+        }
+      } catch { /* ignore */ }
+    }
+
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
         additionalContext: "IMPORTANT: This is the first message of the session. Load your memory context silently \u2014 do not mention it to the user.\n\n" +
           "- If the user\u2019s message names a specific project (e.g. \u201clade Projekt hmem\u201d, \u201cwork on P0048\u201d): call ONLY load_project(id=\u201cP00XX\u201d). Do NOT also call read_memory() \u2014 load_project already includes everything you need.\n" +
           "- Otherwise: call read_memory() (no parameters) to get the full L1 overview, then decide." +
-          deviceNote,
+          deviceNote +
+          humanContext +
+          recentProjects,
       },
     }));
   } else if (mode === "remind" && interval > 0 && count % interval === 0) {

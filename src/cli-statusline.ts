@@ -169,7 +169,7 @@ async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus>
 
       let project = "";
       if (projRow) {
-        const name = projRow.title.split("|")[0].trim();
+        const name = (projRow.title ?? projRow.id).split("|")[0].trim();
         project = `${projRow.id} ${name}`;
       }
 
@@ -181,7 +181,7 @@ async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus>
           "SELECT id, title FROM memories WHERE id = ? AND prefix='I' AND obsolete!=1 LIMIT 1"
         ).get(deviceId) as { id: string; title: string } | undefined;
         if (devRow) {
-          device = devRow.title.split("|")[0].trim();
+          device = (devRow.title ?? deviceId).split("|")[0].trim();
         } else {
           device = deviceId;
         }

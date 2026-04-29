@@ -1867,7 +1867,7 @@ server.tool("set_active_device", "Set the active device for this machine. Call t
                     isError: true,
                 };
             }
-            title = row.title.split("|")[0].trim();
+            title = (row.title ?? id).split("|")[0].trim();
         }
         finally {
             store.close();

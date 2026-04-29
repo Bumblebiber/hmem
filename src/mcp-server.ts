@@ -2140,7 +2140,7 @@ server.tool(
             isError: true,
           };
         }
-        title = row.title.split("|")[0].trim();
+        title = (row.title ?? id).split("|")[0].trim();
       } finally {
         store.close();
       }
