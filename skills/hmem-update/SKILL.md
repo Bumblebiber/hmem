@@ -292,6 +292,34 @@ No schema changes, no DB migrations.
 
 ---
 
+## Step 2h: v7.0.4 - Null-Safe Titles and Richer Session-Start Context
+
+**Only needed when upgrading from < v7.0.4**
+
+### Null-safe title fixes (set_active_device + statusline)
+
+Some I-entries (and potentially other entries) have a NULL title in SQLite. In prior versions this caused set_active_device and the statusline to crash with Cannot read properties of null (reading split). Both are now fixed with (row.title ?? id).split("|")[0].
+
+**No action needed** - the fix is purely in the code. If set_active_device was crashing before, it will now work correctly.
+
+### hook-startup enhancements (first-message context injection)
+
+The UserPromptSubmit hook now injects richer context on the **first message of every session**:
+
+1. **Always-on device reminder** - regardless of whether a device is already set, the agent is reminded to verify the active device matches the current machine and call set_active_device if needed. Previously this reminder was only shown when no device was set at all.
+
+2. **H-entries (human profile)** - up to 10 H-entries (sorted by access count) are injected as a short list (ID  title). Gives the agent immediate context about the user without requiring a separate read_memory(prefix="H") call.
+
+3. **Recent projects** - the 3 most recently updated P-entries are injected as ID  title. Helps the agent recognize which project to load if the user's first message is project-related.
+
+**No config change needed** - all enhancements are automatic from the updated cli-hook-startup.js.
+
+### Windows example config on GitHub
+
+settings.windows.example.json is now in the Bumblebiber/hmem repository. If you are on Windows, refer to it as the canonical example for hook and statusline configuration with "shell": "powershell".
+
+---
+
 ## Step 3: Entry Migration
 
 Some versions introduce new data formats. Check if migration is needed:
