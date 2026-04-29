@@ -1,0 +1,17 @@
+{
+  "_comment": "Claude Code settings for Windows (Git Bash + Node). Copy relevant sections into ~/.claude/settings.json.",
+  "_note": "Replace YOUR_USERNAME with your Windows username. Run npm root -g to verify the node_modules path.",
+  "env": {
+    "HMEM_PATH": "C:/Users/YOUR_USERNAME/.hmem/Agents/DEVELOPER/DEVELOPER.hmem"
+  },
+  "hooks": {
+    "UserPromptSubmit": [{"matcher": "","hooks": [{"type": "command","command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/hmem-mcp/dist/cli.js hook-startup","shell": "powershell"}]}],
+    "Stop": [{"matcher": "","hooks": [{"type": "command","command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/hmem-mcp/dist/cli.js log-exchange","shell": "powershell"}]}],
+    "SessionStart": [{"matcher": "clear","hooks": [{"type": "command","command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/hmem-mcp/dist/cli.js context-inject","shell": "powershell"}]}]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/hmem-mcp/dist/cli.js statusline",
+    "shell": "powershell"
+  }
+}
