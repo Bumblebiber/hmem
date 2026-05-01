@@ -2,15 +2,15 @@
 
 >  Your AI forgets everything between sessions.  **hmem fixes that.**
 
-One `read_memory()` cal l. 5k tokens. Your agent knows every project,  every past mistake, every decision you ever  made together — across sessions, devices, a nd AI providers. No setup per conversation. N o "let me re-read the codebase." It just *rem embers*.
+One `load_project()` call. 5k tokens. Your agent knows everything important about a project,  every past mistake, every decision you ever  made together — across sessions, devices, and AI providers. No setup per conversation. No "let me re-read the codebase." It just *remembers*.
 
 ---
 
 ## The Problem
 
-Every AI sessi on starts from zero. Your agent asks the same  questions, makes the same mistakes, contradi cts last week's decisions, and wastes 50k tok ens loading context it already processed yest erday.
+Every AI session starts from zero. Your agent asks the same questions, makes the same mistakes, contradi cts last week's decisions, and wastes 50k tok ens loading context it already processed yesterday.
 
-You've tried workarounds — CLAUDE.m d files, custom prompts, manually pasting con text. They don't scale. You have 10 projects.  You switch between 3 devices. You use differ ent AI tools.
+You've tried workarounds — CLAUDE.m d files, custom prompts, manually pasting con text. They don't scale. You have 10 projects.  You switch between 3 devices. You use different AI tools.
 
 ## The Solution
 
@@ -22,7 +22,7 @@ Agent:  "Got it. v 5.0.0, TypeScript/SQLite/npm, 10 source files ,
          auto-checkpoints v ia Haiku. What's next?"
 ```
 
-That's it. 700 t okens for a complete project briefing. The ag ent knows the stack, the architecture, the op en bugs, the recent decisions, and exactly wh ere you left off — even if "you" was a diff erent AI on a different machine yesterday.
+That's it. 700 t okens for a complete project briefing. The ag ent knows the stack, the architecture, the open bugs, the recent decisions, and exactly wh ere you left off — even if "you" was a different AI on a different machine yesterday.
 
 - --
 
