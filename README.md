@@ -1,5 +1,7 @@
 # hmem — Humanlike Memory for AI Agents
 
+[![SafeSkill 68/100](https://img.shields.io/badge/SafeSkill-68%2F100_Use%20with%20Caution-orange)](https://safeskill.dev/scan/bumblebiber-hmem)
+
 > Your AI forgets everything between sessions. **hmem fixes that.**
 
 One `load_project()` call. 5k tokens. Your agent knows everything important about a project, every past mistake, every decision you ever made together — across sessions, devices, and AI providers. No setup per conversation. No "let me re-read the codebase." It just *remembers*.
