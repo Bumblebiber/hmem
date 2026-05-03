@@ -22,6 +22,7 @@ Write out before dispatching:
 - INPUT: exactly what the sub-agent needs — no more, no less
 - TASK: what to do with the input
 - OUTPUT FORMAT: what to return
+- VERIFY (optional): a concrete shell command that proves completion (e.g. `npx tsc --noEmit`, `grep "pattern" file.ts`). Use for tasks that produce code or file changes.
 
 ## STEP 2: Dispatch
 
@@ -30,15 +31,21 @@ Send the sub-agent ONLY this prompt — no conversation history, no project cont
 ---
 Task: <TASK>
 Input: <INPUT>
+[If VERIFY set:] After completing the task, run: <VERIFY_CMD>
 Return your answer in exactly this format:
 [RESULT]
 <answer here>
 [/RESULT]
+[If VERIFY set:]
+[VERIFY_RESULT]
+pass | fail: <command output or error>
+[/VERIFY_RESULT]
 Max 200 words. Use the hmem-subagent skill.
 ---
 
 ## STEP 3: Inject result
 
 Take ONLY the content between [RESULT] and [/RESULT].
+If [VERIFY_RESULT] is present: check pass/fail. On fail, report the verification error instead of declaring the task complete.
 Discard all sub-agent reasoning and preamble.
 Use the result directly in the main conversation.

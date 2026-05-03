@@ -39,6 +39,13 @@ Shows:
 - **Stale favorites/pinned** — not accessed in >60 days (demote or verify)
 - **Broken obsolete chains** — `[✓ID]` pointing to deleted entries
 
+**Severity classification — prioritize fixes in this order:**
+| Severity | Examples | Action |
+|----------|----------|--------|
+| **BLOCKER** | Broken links, broken obsolete chains | Fix before any other curation |
+| **WARNING** | Orphaned stubs, stale favorites >90 days, P-entry token bloat | Fix in current session |
+| **INFO** | Vague titles, duplicate candidates, minor tag cleanup | Fix if time allows |
+
 Useful before starting:
 ```
 memory_stats()

@@ -310,6 +310,17 @@ export declare class HmemStore {
         staleCount: number;
     };
     /**
+     * Per-project token size estimates for `hmem stats`.
+     * Measures load_project payload size: level_1 + all node content/titles at depth ≤ 3.
+     */
+    projectTokenStats(): Array<{
+        id: string;
+        title: string;
+        estChars: number;
+        lastAccessed: string | null;
+        active: number;
+    }>;
+    /**
      * Update specific fields of an existing root entry (curator use only).
      */
     update(id: string, fields: Partial<Pick<MemoryEntry, "level_1" | "level_2" | "level_3" | "level_4" | "level_5" | "links" | "obsolete" | "favorite" | "irrelevant" | "active">>): boolean;

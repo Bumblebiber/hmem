@@ -45,6 +45,15 @@ Move at the batch or session level (e.g. `O0043.3`), not exchange by exchange.
 
 **If OLD_O has no today-exchanges, or all exchanges genuinely belong to OLD_PROJECT:** skip this step.
 
+## STEP 3.5: Noise Check
+
+Scan the load_project output:
+- **>4k tokens** → invoke `hmem-curate` first
+- **✓ DONE Roadmap items** → `update_memory(id, { irrelevant: true })`
+- **Decommissioned / concept entries in Infrastructure** → `update_memory(id, { irrelevant: true })`
+
+Fix immediately, do not defer.
+
 ## STEP 4: Confirm
 
 Output:

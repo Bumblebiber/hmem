@@ -62,6 +62,11 @@ switch (command) {
         await summarizeSession(process.argv[3] || "");
         break;
     }
+    case "stats": {
+        const { printStats } = await import("./cli-stats.js");
+        await printStats(process.argv[3]);
+        break;
+    }
     case "delete": {
         const { deleteEntry } = await import("./cli-delete.js");
         await deleteEntry(process.argv.slice(3));

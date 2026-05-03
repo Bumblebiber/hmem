@@ -161,23 +161,14 @@ function compressExchangeText(text, maxLen) {
     const lines = cleaned.split("\n")
         .map(l => l.trim())
         .filter(l => l.length > 0);
-    // Build result from meaningful lines, joining with " | "
-    let result = "";
-    for (const line of lines) {
-        if (!result) {
-            result = line;
-        }
-        else if (result.length + line.length + 3 <= maxLen) {
-            result += " | " + line;
-        }
-        else {
-            break;
-        }
-    }
-    if (result.length > maxLen) {
-        result = result.substring(0, maxLen - 3) + "...";
-    }
-    return result;
+    const full = lines.join(" | ");
+    if (full.length <= maxLen)
+        return full;
+    // Head+tail: keep first 60% (intent/context) + last 35% (conclusions/decisions)
+    const sep = " … ";
+    const headLen = Math.floor((maxLen - sep.length) * 0.6);
+    const tailLen = maxLen - sep.length - headLen;
+    return full.substring(0, headLen) + sep + full.substring(full.length - tailLen);
 }
 function formatRecentOEntries(store, limit, exchangeCount, linkedTo, expandAll) {
     if (limit <= 0)
@@ -1344,7 +1335,15 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                             continue;
                         }
                         if (child.children && child.children.length > 0) {
-                            const grandchildren = child.children.filter((g) => !g.irrelevant);
+                            const DONE_FILTER_SECTIONS = ["roadmap", "next steps"];
+                            const filterDone = DONE_FILTER_SECTIONS.includes(childTitle.toLowerCase());
+                            let grandchildren = child.children.filter((g) => !g.irrelevant);
+                            if (filterDone) {
+                                grandchildren = grandchildren.filter((g) => {
+                                    const t = (g.title || g.content || "").trim();
+                                    return !t.startsWith("✓") && !t.startsWith("DONE");
+                                });
+                            }
                             for (const gc of grandchildren) {
                                 const gcId = lastSeg(gc.id);
                                 if (depth >= 3) {
@@ -1465,15 +1464,18 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                 }
             }
             catch { /* findContext may fail on empty/new entries */ }
-            // Inject R-entries (rules) — always shown at project load
+            // Inject R-entries (rules) — only project-specific rules (linked to this project)
             const ruleEntries = hmemStore.read({
                 prefix: "R",
-                depth: 1,
-            }).filter(r => !r.obsolete && !r.irrelevant);
+                depth: 2,
+            }).filter(r => !r.obsolete && !r.irrelevant && Array.isArray(r.links) && r.links.includes(id));
             if (ruleEntries.length > 0) {
                 lines.push("  Rules:");
                 for (const r of ruleEntries) {
                     lines.push(`    ${r.id}  ${cleanTitle(r.title)}`);
+                    if (r.level_1 && r.level_1 !== r.title) {
+                        lines.push(`      ${r.level_1}`);
+                    }
                 }
             }
             // Inject recent O-entries linked to THIS project
@@ -1492,10 +1494,9 @@ server.tool("load_project", "Load a project and activate it. Returns L2 content 
                 }
             }
             // Inject global context — configurable via hmem.config.json `globalLoad`.
-            // Default (when not set): R (depth 2) + C#universal (depth 2).
+            // Default (when not set): C#universal (depth 2). R-entries excluded — project-specific rules shown above.
             {
                 const globalItems = hmemConfig.globalLoad ?? [
-                    { prefix: "R", loadDepth: 2 },
                     { prefix: "C", loadDepth: 2, tagFilter: "#universal" },
                 ];
                 for (const item of globalItems) {

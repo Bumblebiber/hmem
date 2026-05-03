@@ -655,8 +655,21 @@ export class HmemStore {
             const searchTerm = opts.search.replace(/"/g, "").trim();
             if (!searchTerm)
                 return [];
-            // FTS5 phrase match — all words must appear in the text
-            const ftsMatch = `"${searchTerm}"`;
+            // Stopwords that pollute BM25 rankings in code/memory context
+            const FTS_STOPWORDS = new Set([
+                "the", "a", "an", "and", "or", "in", "of", "to", "with", "on", "for", "is", "are", "was", "were", "be", "been",
+                "add", "added", "fix", "fixed", "update", "updates", "updated", "run", "running", "using", "use", "used",
+                "test", "tests", "done", "make", "made", "new", "get", "set", "has", "have", "had", "its",
+                "der", "die", "das", "ein", "eine", "und", "oder", "von", "zu", "mit", "auf", "ist", "sind", "hat", "haben",
+            ]);
+            const words = searchTerm.split(/\s+/)
+                .map(w => w.replace(/[^a-zA-Z0-9äöüÄÖÜß_-]/g, ""))
+                .filter(w => w.length > 1 && !FTS_STOPWORDS.has(w.toLowerCase()));
+            // Multi-word: AND match on individual tokens (better recall than phrase match)
+            // Single-word or all-stopwords: fall back to phrase match on original term
+            const ftsMatch = words.length >= 2
+                ? words.map(w => `"${w}"`).join(" ")
+                : `"${searchTerm}"`;
             const ftsRows = this.db.prepare("SELECT rm.root_id, rm.node_id FROM hmem_fts_rowid_map rm " +
                 "JOIN hmem_fts fts ON fts.rowid = rm.fts_rowid " +
                 "WHERE hmem_fts MATCH ?").all(ftsMatch);
@@ -1672,6 +1685,34 @@ export class HmemStore {
         // Stale: not accessed in 60+ days (non-obsolete, non-irrelevant)
         const staleCount = this.db.prepare("SELECT COUNT(*) as c FROM memories WHERE seq > 0 AND prefix != 'O' AND irrelevant != 1 AND obsolete != 1 AND last_accessed < datetime('now', '-60 days')").get().c;
         return { total, byPrefix, totalChars: memChars + nodeChars, staleCount };
+    }
+    /**
+     * Per-project token size estimates for `hmem stats`.
+     * Measures load_project payload size: level_1 + all node content/titles at depth ≤ 3.
+     */
+    projectTokenStats() {
+        const rows = this.db.prepare(`
+      SELECT
+        m.id,
+        m.title,
+        m.last_accessed,
+        m.active,
+        COALESCE(LENGTH(m.level_1), 0) + COALESCE((
+          SELECT SUM(LENGTH(COALESCE(n.title,'')) + LENGTH(COALESCE(n.content,'')))
+          FROM memory_nodes n
+          WHERE n.root_id = m.id AND n.depth <= 3
+        ), 0) AS est_chars
+      FROM memories m
+      WHERE m.prefix = 'P' AND m.obsolete != 1 AND m.irrelevant != 1 AND m.seq > 0
+      ORDER BY m.last_accessed DESC NULLS LAST
+    `).all();
+        return rows.map(r => ({
+            id: r.id,
+            title: (r.title ?? "").split("|")[0].trim(),
+            estChars: r.est_chars ?? 0,
+            lastAccessed: r.last_accessed ?? null,
+            active: r.active ?? 0,
+        }));
     }
     /**
      * Update specific fields of an existing root entry (curator use only).

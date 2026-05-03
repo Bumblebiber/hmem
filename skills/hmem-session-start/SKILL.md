@@ -19,7 +19,28 @@ Replace P00XX with the actual project ID (e.g., P0048).
 load_project returns the project brief, recent O-Entry summaries, rules, and lessons.
 Do NOT call read_memory separately. load_project is the only activation action.
 
-## STEP 2: O-Entry routing check
+## STEP 2: Noise Check
+
+**Do this immediately after load_project, before any other work.**
+
+Scan the output for:
+- **>4k tokens** → invoke `hmem-curate` on this project first, then continue
+- **✓ DONE items in Roadmap** → `update_memory(id, { irrelevant: true })`
+- **Decommissioned / concept entries in Infrastructure** → `update_memory(id, { irrelevant: true })`
+- **Old status snapshots in Overview** (superseded by newer) → mark obsolete
+
+Fix noise immediately. Do not note it and defer.
+
+## STEP 3: Calibrate explanation depth
+
+Read H0003 (IT Skills) — the scale is 1–9:
+- **7–9 = Expert**: use technical language directly, no padding, no basics
+- **4–6 = Proficient**: explain concepts but skip fundamentals
+- **1–3 = Basics**: explain with examples
+
+Apply this calibration for the entire session. When explaining something in a domain, check the matching H0003 skill first.
+
+## STEP 4: O-Entry routing check
 
 **This step is critical.** Every `load_project` call changes which O-entry receives session exchanges. If you called `load_project` on any project other than your working project — even briefly, even for administrative reasons (reconcile, curation, migration) — those exchanges were misrouted to the wrong O-entry.
 

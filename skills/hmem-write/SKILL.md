@@ -590,6 +590,24 @@ Create new H-entries as topics emerge naturally from conversation.
 
 Match the language of existing entries. Before writing, check what language the memory store uses (run `read_memory()` if unsure). If existing entries are in German, write in German. If English, write in English. Do not mix languages within a single store — it makes search and curation harder.
 
+## After Writing: Verify the Entry Captured the Insight
+
+For L, D, and E entries with complex reasoning, do a quick read-back:
+```
+read_memory(id="X")
+```
+
+Ask: does this entry answer **"why?"** not just "what?"
+
+Update if any of these are true:
+- Entry is under 20 words with no body
+- Content is "Lesson learned: X" with no explanation or evidence
+- Entry would be incomprehensible to a future agent without this conversation context
+
+Skip for: simple factual entries, routine appends, O-entry checkpoints.
+
+---
+
 ## Anti-Patterns
 
 | Wrong | Right |
