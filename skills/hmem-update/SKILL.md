@@ -320,6 +320,26 @@ settings.windows.example.json is now in the Bumblebiber/hmem repository. If you 
 
 ---
 
+## Step 2i: v7.1.0 — load_project Noise Reduction + Skill Improvements
+
+**Only needed when upgrading from < v7.1.0**
+
+### load_project: DONE-filter in schema mode
+
+`load_project` now hides `✓ DONE` and `DONE`-prefixed items from **Roadmap** and **Next Steps** sections when using schema-driven rendering. Previously this filter only applied to legacy rendering mode (no schema). No config change needed — automatic.
+
+### load_project: Project-specific R-entries only
+
+Rules (`R`-prefix entries) are now only shown in `load_project` if the rule has an explicit link to the current project (`r.links.includes(projectId)`). Global rules without a project link are no longer injected. This eliminates ~1k token duplication for projects with many global rules. **Action:** If you have project-specific rules that should appear in `load_project`, ensure they have a `links` entry pointing to the project.
+
+### Skill improvements
+
+- **hmem-dispatch**: New optional `VERIFY` field — specify a shell command the sub-agent must run and return as `[VERIFY_RESULT]`. Use for code-change tasks to close the feedback loop.
+- **hmem-curate**: Health check findings now classified as BLOCKER / WARNING / INFO for structured triage.
+- **hmem-write**: New "After Writing" verification step — for complex L/D/E entries, read back the written entry and verify it captures "why?", not just "what?".
+
+---
+
 ## Step 3: Entry Migration
 
 Some versions introduce new data formats. Check if migration is needed:
