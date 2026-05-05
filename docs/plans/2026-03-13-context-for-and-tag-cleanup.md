@@ -91,7 +91,7 @@ In `renderChildrenExpanded` — find all `formatTagSuffix` calls and add `curato
 - [ ] **Step 4: Compile and verify**
 
 ```bash
-cd /home/bbbee/hmem && npx tsc
+cd /home/username/hmem && npx tsc
 ```
 
 - [ ] **Step 5: Smoke test**
@@ -301,7 +301,7 @@ private resolveDirectLinks(entryId: string): MemoryEntry[] {
 - [ ] **Step 3: Compile**
 
 ```bash
-cd /home/bbbee/hmem && npx tsc
+cd /home/username/hmem && npx tsc
 ```
 
 - [ ] **Step 4: Commit**
@@ -418,7 +418,7 @@ assignBulkTags(entries: MemoryEntry[]): void {
 - [ ] **Step 5: Compile**
 
 ```bash
-cd /home/bbbee/hmem && npx tsc
+cd /home/username/hmem && npx tsc
 ```
 
 - [ ] **Step 6: Smoke test**
@@ -458,7 +458,7 @@ In `package.json`:
 - [ ] **Step 2: Commit, push, publish**
 
 ```bash
-cd /home/bbbee/hmem
+cd /home/username/hmem
 git add -A
 git commit -m "chore: bump to v2.7.0 (context_for + tag display cleanup)"
 git push

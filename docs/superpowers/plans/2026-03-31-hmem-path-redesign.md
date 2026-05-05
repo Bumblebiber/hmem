@@ -127,7 +127,7 @@ describe("resolveHmemPath", () => {
 - [ ] **Step 2: Run tests — expect failure (function doesn't exist yet)**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx vitest run tests/path-resolution.test.ts
+cd /home/username/projects/hmem && npx vitest run tests/path-resolution.test.ts
 ```
 
 Expected: FAIL — `resolveHmemPathNew` is not exported.
@@ -178,7 +178,7 @@ import os from "node:os";
 - [ ] **Step 4: Run tests — expect pass**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx vitest run tests/path-resolution.test.ts
+cd /home/username/projects/hmem && npx vitest run tests/path-resolution.test.ts
 ```
 
 Expected: All 5 tests PASS.
@@ -240,7 +240,7 @@ export function resolveEnvDefaults(): void {
 - [ ] **Step 2: Verify compilation**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx tsc --noEmit
+cd /home/username/projects/hmem && npx tsc --noEmit
 ```
 
 Expected: No errors.
@@ -332,7 +332,7 @@ HMEM_PROJECT_DIR   Directory for config + company.hmem (derived from HMEM_PATH)
 - [ ] **Step 9: Verify compilation**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx tsc --noEmit
+cd /home/username/projects/hmem && npx tsc --noEmit
 ```
 
 Expected: No errors.
@@ -340,7 +340,7 @@ Expected: No errors.
 - [ ] **Step 10: Run all tests**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx vitest run
+cd /home/username/projects/hmem && npx vitest run
 ```
 
 Expected: All tests pass.
@@ -461,7 +461,7 @@ const firstTimeNote = isFirstTime
 - [ ] **Step 7: Verify compilation**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx tsc --noEmit
+cd /home/username/projects/hmem && npx tsc --noEmit
 ```
 
 - [ ] **Step 8: Commit**
@@ -534,7 +534,7 @@ describe("min_role removal", () => {
 - [ ] **Step 2: Run tests — expect some failures**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx vitest run tests/min-role-removal.test.ts
+cd /home/username/projects/hmem && npx vitest run tests/min-role-removal.test.ts
 ```
 
 - [ ] **Step 3: Remove `min_role` from `write_memory` tool schema in mcp-server.ts**
@@ -596,7 +596,7 @@ Already partially done in Task 4. Ensure no remaining references to `ROLE`, `HME
 - [ ] **Step 9: Run tests**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx vitest run
+cd /home/username/projects/hmem && npx vitest run
 ```
 
 Expected: All tests pass.
@@ -604,7 +604,7 @@ Expected: All tests pass.
 - [ ] **Step 10: Verify compilation**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx tsc --noEmit
+cd /home/username/projects/hmem && npx tsc --noEmit
 ```
 
 - [ ] **Step 11: Commit**
@@ -668,7 +668,7 @@ export function openAgentMemory(projectDir: string, templateName: string, config
 - [ ] **Step 4: Verify compilation + tests**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx tsc --noEmit && npx vitest run
+cd /home/username/projects/hmem && npx tsc --noEmit && npx vitest run
 ```
 
 - [ ] **Step 5: Commit**
@@ -700,7 +700,7 @@ If it's unused in practice: mark as deprecated.
 - [ ] **Step 3: Verify compilation + tests**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx tsc --noEmit && npx vitest run
+cd /home/username/projects/hmem && npx tsc --noEmit && npx vitest run
 ```
 
 - [ ] **Step 4: Commit**
@@ -720,7 +720,7 @@ git commit -m "refactor: update routeTask to work without HMEM_AGENT_ID"
 - [ ] **Step 1: Build the project**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx tsc
+cd /home/username/projects/hmem && npx tsc
 ```
 
 - [ ] **Step 2: Test MCP server start with HMEM_PATH**
@@ -750,7 +750,7 @@ Expected: Works via legacy path resolution (with deprecation warning).
 - [ ] **Step 5: Run full test suite**
 
 ```bash
-cd /home/bbbee/projects/hmem && npx vitest run
+cd /home/username/projects/hmem && npx vitest run
 ```
 
 Expected: All tests pass.

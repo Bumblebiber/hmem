@@ -45,7 +45,7 @@
 - [ ] **Step 3: Compile and verify**
 
 ```bash
-cd /home/bbbee/hmem && npx tsc
+cd /home/username/hmem && npx tsc
 ```
 
 - [ ] **Step 4: Commit**
@@ -103,7 +103,7 @@ O-entries don't need curation prompts:
 - [ ] **Step 4: Compile and test**
 
 ```bash
-cd /home/bbbee/hmem && npx tsc
+cd /home/username/hmem && npx tsc
 ```
 
 Verify with a manual test: write an O-entry via `write_memory(prefix="O", ...)`, then do `read_memory()` — it should NOT appear.
@@ -210,13 +210,13 @@ Unlike `write()` which takes tab-indented content and builds a tree, `writeLinea
 - [ ] **Step 2: Compile**
 
 ```bash
-cd /home/bbbee/hmem && npx tsc
+cd /home/username/hmem && npx tsc
 ```
 
 - [ ] **Step 3: Quick smoke test**
 
 ```bash
-cd /home/bbbee/hmem && node -e "
+cd /home/username/hmem && node -e "
 const { HmemStore } = await import('./dist/hmem-store.js');
 const store = new HmemStore('/tmp/test-linear.hmem');
 const result = store.writeLinear('O', {
@@ -357,7 +357,7 @@ O-entries should only be created via flush_context, not via write_memory. In the
 - [ ] **Step 3: Compile**
 
 ```bash
-cd /home/bbbee/hmem && npx tsc
+cd /home/username/hmem && npx tsc
 ```
 
 - [ ] **Step 4: Commit**
@@ -514,7 +514,7 @@ update_memory(id="O0001", irrelevant=true)
 - [ ] **Step 7: Final commit**
 
 ```bash
-cd /home/bbbee/hmem
+cd /home/username/hmem
 git add -A
 git commit -m "test: flush_context end-to-end verified"
 ```

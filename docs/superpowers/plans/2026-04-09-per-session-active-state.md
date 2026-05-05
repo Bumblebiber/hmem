@@ -119,7 +119,7 @@ describe("session-state", () => {
 - [ ] **Step 2: Run tests, verify they fail**
 
 ```bash
-cd /home/bbbee/projects/hmem
+cd /home/username/projects/hmem
 npx vitest run test/session-state.test.ts
 ```
 Expected: FAIL — module not found.

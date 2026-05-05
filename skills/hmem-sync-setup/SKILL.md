@@ -129,7 +129,7 @@ npm install -g hmem-sync
 ### Step 2: Gather credentials from the original device
 
 The user needs:
-- **Server URL** (e.g. `https://bbbee.uber.space/hmem-sync`)
+- **Server URL** (e.g. `https://your-server.example.com/hmem-sync`)
 - **User ID** (e.g. `bbbee`)
 - **Token** (64-char hex string from `.hmem-sync-token`)
 - **Passphrase** (same as original device)

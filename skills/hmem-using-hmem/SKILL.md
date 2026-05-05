@@ -36,7 +36,7 @@ Not all Bash calls need dispatching. The key distinction:
 | **Targeted** | Known path/pattern, single command, result ≤3 lines | Run directly |
 | **Exploratory** | Open-ended, multiple locations, result unknown | Dispatch |
 
-**Targeted (OK to run directly):** `find /home/bbbee -name "settings.json" -path "*claude*"` — one known location, one expected result.
+**Targeted (OK to run directly):** `find /home/username -name "settings.json" -path "*claude*"` — one known location, one expected result.
 
 **Exploratory (must dispatch):** `grep -r "functionName" ~/projects/` across repos, or "where is X defined?" without knowing which file.
 

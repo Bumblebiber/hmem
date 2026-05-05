@@ -150,7 +150,7 @@ describe("schema parsing", () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run test/hmem-config-schema.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run test/hmem-config-schema.test.ts`
 Expected: FAIL — `cfg.schemas` is undefined (property doesn't exist on HmemConfig)
 
 - [ ] **Step 3: Add schema types and parsing to `hmem-config.ts`**
@@ -216,7 +216,7 @@ Add schema parsing in `loadHmemConfig`, after the `loadProjectExpand` block (aft
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run test/hmem-config-schema.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run test/hmem-config-schema.test.ts`
 Expected: All 7 tests PASS
 
 - [ ] **Step 5: Commit**
@@ -382,7 +382,7 @@ describe("create_project with schema", () => {
 
 - [ ] **Step 2: Run tests to verify they pass (these test the content-building logic, not the MCP handler)**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run test/create-project-schema.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run test/create-project-schema.test.ts`
 Expected: PASS — tests validate the schema config + content building pattern
 
 - [ ] **Step 3: Modify `create_project` in `mcp-server.ts` to use schema**
@@ -471,7 +471,7 @@ Update the success message to list actual section names:
 
 - [ ] **Step 4: Run full test suite**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run`
+Run: `cd /home/username/projects/hmem && npx vitest run`
 Expected: All tests PASS (no regressions)
 
 - [ ] **Step 5: Commit**
@@ -599,7 +599,7 @@ describe("load_project per-section depth", () => {
 
 - [ ] **Step 2: Run tests to verify they pass (schema structure tests)**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run test/load-project-schema.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run test/load-project-schema.test.ts`
 Expected: PASS
 
 - [ ] **Step 3: Modify `load_project` rendering to use per-section depth**
@@ -753,7 +753,7 @@ Replace the rendering block:
 
 - [ ] **Step 4: Run full test suite**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run`
+Run: `cd /home/username/projects/hmem && npx vitest run`
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
@@ -949,7 +949,7 @@ describe("auto-reconcile", () => {
 
 - [ ] **Step 2: Run tests to verify they pass (testing the reconcile logic in isolation)**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run test/load-project-schema.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run test/load-project-schema.test.ts`
 Expected: PASS
 
 - [ ] **Step 3: Add auto-reconcile to `load_project` in `mcp-server.ts`**
@@ -998,7 +998,7 @@ Then append the reconcile notice to the output (after the `lines` array is built
 
 - [ ] **Step 4: Run full test suite**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run`
+Run: `cd /home/username/projects/hmem && npx vitest run`
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
@@ -1019,7 +1019,7 @@ When a schema is defined for P, the old `loadProjectExpand.withBody` / `withChil
 
 - [ ] **Step 1: Verify no code outside `mcp-server.ts` reads `loadProjectExpand`**
 
-Run: `cd /home/bbbee/projects/hmem && grep -rn "loadProjectExpand" src/ --include="*.ts"`
+Run: `cd /home/username/projects/hmem && grep -rn "loadProjectExpand" src/ --include="*.ts"`
 Expected: Only references in `hmem-config.ts` (type + default + parsing) and `mcp-server.ts` (legacy rendering path). No other consumers.
 
 - [ ] **Step 2: Confirm legacy path still uses `loadProjectExpand` correctly**
@@ -1072,7 +1072,7 @@ Add `schemas` key inside the `memory` block:
 
 - [ ] **Step 3: Verify config loads without errors**
 
-Run: `cd /home/bbbee/projects/hmem && node -e "const { loadHmemConfig } = require('./dist/hmem-config.js'); const c = loadHmemConfig(process.env.HOME + '/.hmem/Agents/DEVELOPER'); console.log(JSON.stringify(c.schemas, null, 2))"`
+Run: `cd /home/username/projects/hmem && node -e "const { loadHmemConfig } = require('./dist/hmem-config.js'); const c = loadHmemConfig(process.env.HOME + '/.hmem/Agents/DEVELOPER'); console.log(JSON.stringify(c.schemas, null, 2))"`
 Expected: Schema object printed with 11 P sections
 
 - [ ] **Step 4: Commit config change (if in a tracked location)**
@@ -1123,12 +1123,12 @@ git commit -m "feat: hmem-wipe skill pflegt Next Steps before context clear"
 
 - [ ] **Step 1: Build**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
+Run: `cd /home/username/projects/hmem && npm run build`
 Expected: No TypeScript errors
 
 - [ ] **Step 2: Run full test suite**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run`
+Run: `cd /home/username/projects/hmem && npx vitest run`
 Expected: All tests PASS
 
 - [ ] **Step 3: Manual smoke test — create_project with schema**
@@ -1158,12 +1158,12 @@ git commit -m "fix: smoke test fixes for configurable entry schemas"
 
 - [ ] **Step 1: Bump version**
 
-Run: `cd /home/bbbee/projects/hmem && npm version patch`
+Run: `cd /home/username/projects/hmem && npm version patch`
 Expected: Version bumped (e.g. 6.2.1 or 6.3.0)
 
 - [ ] **Step 2: Build and publish**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build && npm publish`
+Run: `cd /home/username/projects/hmem && npm run build && npm publish`
 Expected: Published to npm as `hmem-mcp`
 
 - [ ] **Step 3: Update global install**

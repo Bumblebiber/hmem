@@ -1,6 +1,6 @@
 #!/bin/bash
 # Autoresearch Nightly — optimizes hmem checkpoint prompts
-# Run via cron: 0 2 * * 0 /home/bbbee/projects/hmem/scripts/autoresearch-nightly.sh
+# Run via cron: 0 2 * * 0 /home/username/projects/hmem/scripts/autoresearch-nightly.sh
 #
 # What it does:
 # 1. Creates a fresh branch from main

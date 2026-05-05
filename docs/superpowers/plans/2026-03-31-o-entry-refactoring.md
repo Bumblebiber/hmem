@@ -89,7 +89,7 @@ describe("resolveProjectO", () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
 Expected: FAIL — `store.resolveProjectO is not a function`
 
 - [ ] **Step 3: Implement resolveProjectO**
@@ -125,7 +125,7 @@ resolveProjectO(projectSeq: number): string {
 
 - [ ] **Step 4: Run tests to verify resolveProjectO passes**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
 Expected: 3 PASS
 
 - [ ] **Step 5: Write failing tests for resolveSession**
@@ -220,7 +220,7 @@ resolveSession(oId: string, transcriptPath: string): string {
 
 - [ ] **Step 7: Run tests to verify resolveSession passes**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
 Expected: 6 PASS
 
 - [ ] **Step 8: Write failing tests for resolveBatch**
@@ -315,7 +315,7 @@ resolveBatch(sessionId: string, oId: string, batchSize: number): string {
 
 - [ ] **Step 10: Run all tests**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
 Expected: 9 PASS
 
 - [ ] **Step 11: Commit**
@@ -382,7 +382,7 @@ describe("appendExchangeV2", () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
 Expected: FAIL — `store.appendExchangeV2 is not a function`
 
 - [ ] **Step 3: Implement appendExchangeV2**
@@ -441,7 +441,7 @@ getChildNodes(parentId: string): MemoryNode[] {
 
 - [ ] **Step 5: Run tests**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
 Expected: ALL PASS
 
 - [ ] **Step 6: Commit**
@@ -543,7 +543,7 @@ describe("getOEntryExchangesV2", () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
 Expected: FAIL
 
 - [ ] **Step 3: Implement getOEntryExchangesV2**
@@ -619,7 +619,7 @@ getOEntryExchangesV2(
 
 - [ ] **Step 4: Run tests**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
 Expected: ALL PASS
 
 - [ ] **Step 5: Commit**
@@ -917,7 +917,7 @@ private _cleanupEmptyParents(oId: string): void {
 
 - [ ] **Step 5: Run tests**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/o-entry-refactoring.test.ts`
 Expected: ALL PASS
 
 - [ ] **Step 6: Commit**
@@ -1014,7 +1014,7 @@ Then use `store.countBatchExchanges(batchId)` instead of direct db access.
 
 - [ ] **Step 3: Build and verify no compile errors**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
+Run: `cd /home/username/projects/hmem && npm run build`
 Expected: Clean compile
 
 - [ ] **Step 4: Commit**
@@ -1202,7 +1202,7 @@ move_nodes(node_ids=["<exchange_id>"], target_o_id="O00XX")
 
 - [ ] **Step 2: Build and verify**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
+Run: `cd /home/username/projects/hmem && npm run build`
 Expected: Clean compile
 
 - [ ] **Step 3: Commit**
@@ -1265,7 +1265,7 @@ server.tool(
 
 - [ ] **Step 3: Build and verify**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
+Run: `cd /home/username/projects/hmem && npm run build`
 Expected: Clean compile
 
 - [ ] **Step 4: Commit**
@@ -1401,7 +1401,7 @@ if (e.prefix === "O" && !expand) {
 
 - [ ] **Step 4: Build and verify**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
+Run: `cd /home/username/projects/hmem && npm run build`
 Expected: Clean compile
 
 - [ ] **Step 5: Commit**
@@ -1463,7 +1463,7 @@ if (projRow) {
 
 - [ ] **Step 3: Build and verify**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
+Run: `cd /home/username/projects/hmem && npm run build`
 Expected: Clean compile
 
 - [ ] **Step 4: Commit**
@@ -1648,7 +1648,7 @@ if (activeProject) {
 
 - [ ] **Step 4: Build and verify**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
+Run: `cd /home/username/projects/hmem && npm run build`
 Expected: Clean compile
 
 - [ ] **Step 5: Commit**
@@ -1831,7 +1831,7 @@ export async function migrateOEntries(): Promise<void> {
 
 - [ ] **Step 2: Build and verify**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
+Run: `cd /home/username/projects/hmem && npm run build`
 Expected: Clean compile
 
 - [ ] **Step 3: Commit**
@@ -1898,7 +1898,7 @@ getOEntryExchanges(oEntryId: string, limit: number, skipSkillDialogs = false): {
 
 - [ ] **Step 3: Build and run all tests**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build && npx vitest run`
+Run: `cd /home/username/projects/hmem && npm run build && npx vitest run`
 Expected: Clean compile, all tests pass
 
 - [ ] **Step 4: Commit**
@@ -1991,7 +1991,7 @@ describe("Full pipeline integration", () => {
 
 - [ ] **Step 2: Run full test suite**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run`
+Run: `cd /home/username/projects/hmem && npx vitest run`
 Expected: ALL PASS
 
 - [ ] **Step 3: Commit**
@@ -2009,11 +2009,11 @@ Covers batch rotation, session switching, dual-format reads, and cross-project m
 
 - [ ] **Step 1: Build the project**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
+Run: `cd /home/username/projects/hmem && npm run build`
 
 - [ ] **Step 2: Run migration on the live database**
 
-Run: `cd /home/bbbee/projects/hmem && HMEM_PROJECT_DIR=/home/bbbee/projects/hmem node dist/cli.js migrate-o-entries`
+Run: `cd /home/username/projects/hmem && HMEM_PROJECT_DIR=/home/username/projects/hmem node dist/cli.js migrate-o-entries`
 
 Review the output carefully. Note which O-entries were renamed and which were tagged #legacy.
 

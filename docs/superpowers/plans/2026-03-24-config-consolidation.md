@@ -40,8 +40,8 @@ The `memory` section stores `maxCharsPerLevel` (the internal array format), not 
     "bulkReadV2": { "topAccessCount": 3, "topNewestCount": 5 }
   },
   "sync": {
-    "serverUrl": "https://bbbee.uber.space/hmem-sync",
-    "userId": "bbbee",
+    "serverUrl": "https://your-server.example.com/hmem-sync",
+    "userId": "your-user-id",
     "salt": "YOUR_BASE64_SALT_HERE",
     "token": "YOUR_AUTH_TOKEN_HERE",
     "syncSecrets": true,
@@ -77,8 +77,8 @@ The `memory` section stores `maxCharsPerLevel` (the internal array format), not 
 ### Task 1: Extend HmemConfig interface and loadHmemConfig (hmem-mcp)
 
 **Files:**
-- Modify: `/home/bbbee/projects/hmem/src/hmem-config.ts`
-- Create: `/home/bbbee/projects/hmem/tests/config-consolidation.test.ts`
+- Modify: `/home/username/projects/hmem/src/hmem-config.ts`
+- Create: `/home/username/projects/hmem/tests/config-consolidation.test.ts`
 
 The core change: `hmem.config.json` can now have two shapes:
 1. **Legacy (flat):** `{ "maxL1Chars": 200 }` — current format, memory settings at top level
@@ -118,7 +118,7 @@ describe("loadHmemConfig", () => {
 
 - [ ] **Step 2: Run test to verify it passes (existing behavior)**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
 Expected: PASS (legacy behavior unchanged)
 
 - [ ] **Step 3: Write tests for unified format**
@@ -166,7 +166,7 @@ Expected: PASS (legacy behavior unchanged)
 
 - [ ] **Step 4: Run test to verify it fails**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
 Expected: FAIL — sync field doesn't exist yet
 
 - [ ] **Step 5: Implement unified config loading in hmem-config.ts**
@@ -222,13 +222,13 @@ if (syncRaw && syncRaw.serverUrl && syncRaw.userId && syncRaw.salt) {
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
 Expected: ALL PASS
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/bbbee/projects/hmem
+cd /home/username/projects/hmem
 git add src/hmem-config.ts tests/config-consolidation.test.ts
 git commit -m "feat: support unified hmem.config.json with memory + sync sections"
 ```
@@ -238,8 +238,8 @@ git commit -m "feat: support unified hmem.config.json with memory + sync section
 ### Task 2: Add saveHmemConfig function (hmem-mcp)
 
 **Files:**
-- Modify: `/home/bbbee/projects/hmem/src/hmem-config.ts`
-- Modify: `/home/bbbee/projects/hmem/tests/config-consolidation.test.ts`
+- Modify: `/home/username/projects/hmem/src/hmem-config.ts`
+- Modify: `/home/username/projects/hmem/tests/config-consolidation.test.ts`
 
 Currently there is no `saveHmemConfig()` — config is read-only. We need a save function for migration and for hmem-sync to persist state changes back.
 
@@ -292,7 +292,7 @@ describe("saveHmemConfig", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
 Expected: FAIL — saveHmemConfig doesn't exist
 
 - [ ] **Step 3: Implement saveHmemConfig**
@@ -329,17 +329,17 @@ export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
 Expected: ALL PASS
 
 - [ ] **Step 5: Export saveHmemConfig from index.ts**
 
-Add `saveHmemConfig` to the exports in `/home/bbbee/projects/hmem/src/index.ts`.
+Add `saveHmemConfig` to the exports in `/home/username/projects/hmem/src/index.ts`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/bbbee/projects/hmem
+cd /home/username/projects/hmem
 git add src/hmem-config.ts src/index.ts tests/config-consolidation.test.ts
 git commit -m "feat: add saveHmemConfig for writing unified config"
 ```
@@ -349,8 +349,8 @@ git commit -m "feat: add saveHmemConfig for writing unified config"
 ### Task 3: Update hmem init to write ALL defaults explicitly (hmem-mcp)
 
 **Files:**
-- Modify: `/home/bbbee/projects/hmem/src/cli-init.ts`
-- Modify: `/home/bbbee/projects/hmem/tests/config-consolidation.test.ts`
+- Modify: `/home/username/projects/hmem/src/cli-init.ts`
+- Modify: `/home/username/projects/hmem/tests/config-consolidation.test.ts`
 
 - [ ] **Step 1: Write test for init config output**
 
@@ -371,7 +371,7 @@ describe("init config output", () => {
 
 - [ ] **Step 2: Run test to verify it passes**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
+Run: `cd /home/username/projects/hmem && npx vitest run tests/config-consolidation.test.ts`
 Expected: PASS (saveHmemConfig already implemented)
 
 - [ ] **Step 3: Find and update cli-init.ts config writing**
@@ -386,14 +386,14 @@ saveHmemConfig(projectDir, { ...DEFAULT_CONFIG });
 
 - [ ] **Step 4: Build and manually test**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
-Run: `mkdir -p /tmp/test-init && cd /tmp/test-init && node /home/bbbee/projects/hmem/dist/cli.js init`
+Run: `cd /home/username/projects/hmem && npm run build`
+Run: `mkdir -p /tmp/test-init && cd /tmp/test-init && node /home/username/projects/hmem/dist/cli.js init`
 Verify: `cat /tmp/test-init/hmem.config.json` shows full `{ "memory": { ... } }` format
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/bbbee/projects/hmem
+cd /home/username/projects/hmem
 git add src/cli-init.ts
 git commit -m "feat: hmem init writes all config defaults explicitly"
 ```
@@ -403,13 +403,13 @@ git commit -m "feat: hmem init writes all config defaults explicitly"
 ### Task 4: Update HmemSyncClient state management (hmem-sync)
 
 **Files:**
-- Modify: `/home/bbbee/projects/hmem-sync/src/sync.ts`
+- Modify: `/home/username/projects/hmem-sync/src/sync.ts`
 
 **This is critical.** `HmemSyncClient` currently manages its own state via `.hmem-sync.json` (line 117). The constructor hardcodes `this.statePath = join(dirname(hmemPath), ".hmem-sync.json")` and `saveState()` writes there directly. We need to allow the caller (cli.ts) to provide an alternative state persistence mechanism.
 
 - [ ] **Step 1: Add optional state callback to HmemSyncClient constructor**
 
-Modify the constructor signature in `/home/bbbee/projects/hmem-sync/src/sync.ts:112`:
+Modify the constructor signature in `/home/username/projects/hmem-sync/src/sync.ts:112`:
 
 ```typescript
 export class HmemSyncClient {
@@ -455,7 +455,7 @@ All existing `new HmemSyncClient(hmemPath, pass, cfg)` calls still work — `opt
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /home/bbbee/projects/hmem-sync
+cd /home/username/projects/hmem-sync
 git add src/sync.ts
 git commit -m "feat: HmemSyncClient accepts optional state callback for unified config"
 ```
@@ -465,8 +465,8 @@ git commit -m "feat: HmemSyncClient accepts optional state callback for unified 
 ### Task 5: hmem-sync reads from unified config with legacy fallback + migration (hmem-sync)
 
 **Files:**
-- Modify: `/home/bbbee/projects/hmem-sync/src/cli.ts`
-- Create: `/home/bbbee/projects/hmem-sync/tests/config-migration.test.ts`
+- Modify: `/home/username/projects/hmem-sync/src/cli.ts`
+- Create: `/home/username/projects/hmem-sync/tests/config-migration.test.ts`
 
 - [ ] **Step 1: Write comprehensive migration tests**
 
@@ -791,13 +791,13 @@ Wire up `loadUnifiedConfig` and `migrateLegacyConfig` into the test file by expo
 
 - [ ] **Step 7: Run all tests**
 
-Run: `cd /home/bbbee/projects/hmem-sync && npx vitest run`
+Run: `cd /home/username/projects/hmem-sync && npx vitest run`
 Expected: ALL PASS
 
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /home/bbbee/projects/hmem-sync
+cd /home/username/projects/hmem-sync
 git add src/cli.ts src/sync.ts tests/config-migration.test.ts
 git commit -m "feat: unified config loading with legacy migration and state callback"
 ```
@@ -807,7 +807,7 @@ git commit -m "feat: unified config loading with legacy migration and state call
 ### Task 6: Update hmem-sync connect command for unified format (hmem-sync)
 
 **Files:**
-- Modify: `/home/bbbee/projects/hmem-sync/src/cli.ts`
+- Modify: `/home/username/projects/hmem-sync/src/cli.ts`
 
 - [ ] **Step 1: Update cmdConnect to write unified config**
 
@@ -846,13 +846,13 @@ console.log(green(`✓ Config saved: ${unifiedPath}`));
 
 - [ ] **Step 2: Test connect flow manually**
 
-Run: `mkdir -p /tmp/test-sync && cd /tmp/test-sync && node /home/bbbee/projects/hmem-sync/dist/cli.js connect`
+Run: `mkdir -p /tmp/test-sync && cd /tmp/test-sync && node /home/username/projects/hmem-sync/dist/cli.js connect`
 Verify: Only `hmem.config.json` is written, no legacy files. Memory settings preserved.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/bbbee/projects/hmem-sync
+cd /home/username/projects/hmem-sync
 git add src/cli.ts
 git commit -m "feat: connect writes unified hmem.config.json, preserves existing memory settings"
 ```
@@ -862,7 +862,7 @@ git commit -m "feat: connect writes unified hmem.config.json, preserves existing
 ### Task 7: Update hmem-mcp auto-sync to use unified config (hmem-mcp)
 
 **Files:**
-- Modify: `/home/bbbee/projects/hmem/src/mcp-server.ts` (3 locations: lines 82-90, line 933)
+- Modify: `/home/username/projects/hmem/src/mcp-server.ts` (3 locations: lines 82-90, line 933)
 
 - [ ] **Step 1: Update hmemSyncEnabled() at line 82-86**
 
@@ -907,13 +907,13 @@ Search all callers and pass the loaded `config` object.
 
 - [ ] **Step 5: Build and test**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
+Run: `cd /home/username/projects/hmem && npm run build`
 Expected: Clean compile
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/bbbee/projects/hmem
+cd /home/username/projects/hmem
 git add src/mcp-server.ts
 git commit -m "feat: auto-sync checks unified config.sync + legacy .hmem-sync-config.json"
 ```
@@ -923,34 +923,34 @@ git commit -m "feat: auto-sync checks unified config.sync + legacy .hmem-sync-co
 ### Task 8: Build, version bump, and end-to-end test
 
 **Files:**
-- Modify: `/home/bbbee/projects/hmem/package.json` — version bump to 3.8.0
-- Modify: `/home/bbbee/projects/hmem-sync/package.json` — version bump to 0.6.0
+- Modify: `/home/username/projects/hmem/package.json` — version bump to 3.8.0
+- Modify: `/home/username/projects/hmem-sync/package.json` — version bump to 0.6.0
 
 - [ ] **Step 1: Build hmem-mcp**
 
-Run: `cd /home/bbbee/projects/hmem && npm run build`
+Run: `cd /home/username/projects/hmem && npm run build`
 Expected: Clean compile, no errors
 
 - [ ] **Step 2: Build hmem-sync**
 
-Run: `cd /home/bbbee/projects/hmem-sync && npm run build`
+Run: `cd /home/username/projects/hmem-sync && npm run build`
 Expected: Clean compile, no errors
 
 - [ ] **Step 3: Run all tests in both repos**
 
-Run: `cd /home/bbbee/projects/hmem && npx vitest run`
-Run: `cd /home/bbbee/projects/hmem-sync && npx vitest run`
+Run: `cd /home/username/projects/hmem && npx vitest run`
+Run: `cd /home/username/projects/hmem-sync && npx vitest run`
 Expected: ALL PASS
 
 - [ ] **Step 4: End-to-end migration test on real data**
 
 1. Backup: `cp ~/.hmem/Agents/DEVELOPER/hmem.config.json ~/.hmem/Agents/DEVELOPER/hmem.config.json.bak`
 2. Verify legacy files exist: `ls ~/.hmem/Agents/DEVELOPER/.hmem-sync*`
-3. Run: `cd ~/.hmem/Agents/DEVELOPER && node /home/bbbee/projects/hmem-sync/dist/cli.js status`
+3. Run: `cd ~/.hmem/Agents/DEVELOPER && node /home/username/projects/hmem-sync/dist/cli.js status`
 4. Verify migration happened: `cat ~/.hmem/Agents/DEVELOPER/hmem.config.json` should show `{ "memory": {...}, "sync": {...} }`
 5. Verify legacy files deleted: `ls ~/.hmem/Agents/DEVELOPER/.hmem-sync*` should show nothing (or only backup)
-6. Run: `echo 'iauhsd/(&876AS' | node /home/bbbee/projects/hmem-sync/dist/cli.js pull` — should work with unified config
-7. Verify MCP server loads correctly: `node /home/bbbee/projects/hmem/dist/mcp-server.js` (check startup log)
+6. Run: `echo 'iauhsd/(&876AS' | node /home/username/projects/hmem-sync/dist/cli.js pull` — should work with unified config
+7. Verify MCP server loads correctly: `node /home/username/projects/hmem/dist/mcp-server.js` (check startup log)
 8. Rollback if needed: `cp ~/.hmem/Agents/DEVELOPER/hmem.config.json.bak ~/.hmem/Agents/DEVELOPER/hmem.config.json`
 
 - [ ] **Step 5: Version bump**
@@ -961,11 +961,11 @@ hmem-sync: bump to 0.6.0 in `package.json`
 - [ ] **Step 6: Commit and push both repos**
 
 ```bash
-cd /home/bbbee/projects/hmem
+cd /home/username/projects/hmem
 git add -A && git commit -m "feat: config consolidation v3.8.0 — unified hmem.config.json"
 git push
 
-cd /home/bbbee/projects/hmem-sync
+cd /home/username/projects/hmem-sync
 git add -A && git commit -m "feat: config consolidation v0.6.0 — unified hmem.config.json with legacy migration"
 git push
 ```

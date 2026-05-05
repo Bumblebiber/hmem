@@ -48,7 +48,7 @@ Content:
 {
   "sessionId": "abc-123",
   "projectId": "P0048",
-  "hmemPath": "/home/bbbee/.hmem/memory.hmem",
+  "hmemPath": "/home/username/.hmem/memory.hmem",
   "updatedAt": "2026-04-09T12:34:56Z",
   "pid": 12345
 }
@@ -123,7 +123,7 @@ Every `cli-log-exchange.ts` call appends:
   "ts": "2026-04-09T12:34:56Z",
   "op": "log-exchange",
   "sessionId": "abc-123",
-  "hmemPath": "/home/bbbee/.hmem/memory.hmem",
+  "hmemPath": "/home/username/.hmem/memory.hmem",
   "activeProjectId": "P0048",
   "oId": "O0048",
   "batchId": "O0048.17.3",

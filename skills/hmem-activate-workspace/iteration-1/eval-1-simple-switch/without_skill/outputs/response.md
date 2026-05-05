@@ -8,7 +8,7 @@ Aktuell aktives Projekt: P0043 (EasySAP)
 
 ### Schritt 1: Projekt identifizieren
 - Benutzer sagt "aktiviere projekt hmem"
-- Ich weiß aus dem Kontext, dass ich in `/home/bbbee/projects/hmem` bin
+- Ich weiß aus dem Kontext, dass ich in `/home/username/projects/hmem` bin
 - Das Projekt "hmem" ist wahrscheinlich eine der P-Einträge in meinem hmem-Speicher
 - Normalerweise würde ich `list_projects()` aufrufen, aber ich kann hier keine MCP-Tools aufrufen
 - Im Standard-Workflow: Ich würde das hmem-Projekt in der P-Liste suchen (vermutlich P00XX für "hmem")

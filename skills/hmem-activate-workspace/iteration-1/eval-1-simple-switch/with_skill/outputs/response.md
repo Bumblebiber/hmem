@@ -4,7 +4,7 @@
 - User request: "aktiviere projekt hmem"
 - Current active project: P0043 (EasySAP)
 - Target project: P0048 (hmem)
-- Skill file read: `/home/bbbee/projects/hmem/skills/hmem-activate/SKILL.md`
+- Skill file read: `/home/username/projects/hmem/skills/hmem-activate/SKILL.md`
 
 ---
 

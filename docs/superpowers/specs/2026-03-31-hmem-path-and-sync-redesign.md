@@ -111,8 +111,8 @@ Single config file, replaces all `.hmem-sync-*.json` files:
     "checkpointMode": "auto"
   },
   "sync": {
-    "serverUrl": "https://bbbee.uber.space/hmem-sync",
-    "userId": "bbbee",
+    "serverUrl": "https://your-server.example.com/hmem-sync",
+    "userId": "your-user-id",
     "salt": "YOUR_BASE64_SALT_HERE",
     "token": "YOUR_AUTH_TOKEN_HERE"
   },

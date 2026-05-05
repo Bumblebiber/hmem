@@ -64,7 +64,7 @@ The Stop hook receives `transcript_path` in stdin JSON. Each Claude Code session
 ```
 /tmp/.hmem_session_<hmem_path_hash>.json
 {
-  "transcript_path": "/home/bbbee/.claude/projects/.../abc123.jsonl",
+  "transcript_path": "/home/username/.claude/projects/.../abc123.jsonl",
   "session_l2_id": "O0048.3",
   "batch_l3_id": "O0048.3.2",
   "exchange_count": 3
