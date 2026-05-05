@@ -749,24 +749,33 @@ server.tool("append_memory", "Append new child nodes to an existing memory entry
                     isError: true,
                 };
             }
-            // checkpointPolicy enforcement: block writes to readonly/pointer-protected schema sections
-            if (id.includes(".")) {
-                const idParts = id.split(".");
-                const appendPrefix = idParts[0].match(/^([A-Z]+)/)?.[1];
-                const sectionSchema = appendPrefix ? hmemConfig.schemas?.[appendPrefix] : undefined;
-                if (sectionSchema && idParts.length >= 2) {
+            // checkpointPolicy enforcement
+            // readonly: prevents adding new L2 sections to a project root (schema is the source of truth).
+            //           Does NOT block appending L3+ children under an existing section.
+            // pointer:  section only accepts entry-pointer nodes (e.g. [E0124]) at any depth.
+            const idParts = id.split(".");
+            const appendPrefix = idParts[0].match(/^([A-Z]+)/)?.[1];
+            const sectionSchema = appendPrefix ? hmemConfig.schemas?.[appendPrefix] : undefined;
+            if (sectionSchema) {
+                if (!id.includes(".")) {
+                    // Appending directly to a root entry (e.g. id="P0048") would create a new L2 section.
+                    // Block this if the schema has readonly sections — those sections are schema-controlled.
+                    const hasReadonlySection = sectionSchema.sections.some(s => s.checkpointPolicy === "readonly");
+                    if (hasReadonlySection) {
+                        return {
+                            content: [{ type: "text", text: `ERROR: Cannot add new sections to ${id}. Its L2 structure is schema-controlled.\n` +
+                                        `To add a section, update hmem.config.json (memory.schemas.${appendPrefix}.sections).` }],
+                            isError: true,
+                        };
+                    }
+                }
+                else if (idParts.length >= 2) {
+                    // Appending under an existing section (L3+). Only enforce pointer policy here.
                     const sectionNodeId = `${idParts[0]}.${idParts[1]}`;
                     const sectionTitle = hmemStore.getTitle(sectionNodeId);
                     const section = sectionTitle
                         ? sectionSchema.sections.find(s => s.name.toLowerCase() === sectionTitle.toLowerCase())
                         : undefined;
-                    if (section?.checkpointPolicy === "readonly") {
-                        return {
-                            content: [{ type: "text", text: `ERROR: "${section.name}" is read-only (checkpointPolicy: readonly).\n` +
-                                        `This section is maintained manually — automated appends are not allowed.` }],
-                            isError: true,
-                        };
-                    }
                     if (section?.checkpointPolicy === "pointer") {
                         if (!/[A-Z]\d{4}/.test(content)) {
                             return {

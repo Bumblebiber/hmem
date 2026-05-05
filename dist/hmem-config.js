@@ -74,7 +74,7 @@ export const DEFAULT_CONFIG = {
         P: {
             sections: [
                 { name: "Overview", loadDepth: 2, description: "Current state / Goals / Architecture / Environment as L3 (≤4 lines each). L1 body: Name | Status | Tech | Repo" },
-                { name: "Codebase", loadDepth: 1, description: "Entry point, Core modules, Helpers, Config, Tests. L3 = module group, L4 = signature + purpose" },
+                { name: "Codebase", loadDepth: 1, description: "L3.0 = Pipeline (data flow overview, auto-created). L3.N = Module (title: filename, body: purpose). L4 = exported function/class (title: full signature, body: description + src/file.ts). Append modules: append_memory(id='P00XX.2'). Append functions: append_memory(id='P00XX.2.N').", defaultChildren: ["Pipeline"] },
                 { name: "Usage", loadDepth: 1, description: "Installation, CLI/API, common workflows. No code — commands only" },
                 { name: "Context", loadDepth: 1, description: "Initiator, audience, business context, dependencies as L3" },
                 { name: "Deployment", loadDepth: 1, description: "Only if relevant. Server, build, CI/CD, release process" },
