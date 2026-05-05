@@ -107,14 +107,43 @@ export async function hookStartup(): Promise<void> {
         const db = new (Database as any)(hmemPath, { readonly: true });
         try {
           const hRows = db.prepare(
-            "SELECT id, title FROM memories WHERE prefix='H' AND obsolete!=1 ORDER BY access_count DESC LIMIT 10"
-          ).all() as Array<{ id: string; title: string }>;
+            "SELECT id, title, level_1 FROM memories WHERE prefix='H' AND obsolete!=1 ORDER BY access_count DESC LIMIT 10"
+          ).all() as Array<{ id: string; title: string; level_1: string }>;
           if (hRows.length > 0) {
             humanContext = "\n\n--- Human context (H-entries) ---\n" +
-              hRows.map((r: { id: string; title: string }) => `${r.id}  ${r.title ?? ""}`).join("\n");
+              hRows.map((r) => {
+                const raw = r.title || r.level_1 || "";
+                return `${r.id}  ${raw.split("\n")[0]}`;
+              }).join("\n");
           }
+
+          // Active I-entry: body + L2 titles + L3 for Apps
+          if (deviceId) {
+            const iRow = db.prepare(
+              "SELECT id, level_1 FROM memories WHERE id=? AND obsolete!=1"
+            ).get(deviceId) as { id: string; level_1: string } | undefined;
+            if (iRow) {
+              let iContext = `\n\n--- Active device (${iRow.id}) ---\n${iRow.level_1 || ""}`;
+              const l2Rows = db.prepare(
+                "SELECT id, title FROM memory_nodes WHERE root_id=? AND depth=2 AND (irrelevant IS NULL OR irrelevant!=1) ORDER BY seq"
+              ).all(deviceId) as Array<{ id: string; title: string }>;
+              for (const l2 of l2Rows) {
+                iContext += `\n  ${l2.id}  ${l2.title || ""}`;
+                if (l2.title === "Apps") {
+                  const l3Rows = db.prepare(
+                    "SELECT title FROM memory_nodes WHERE parent_id=? AND depth=3 AND (irrelevant IS NULL OR irrelevant!=1) ORDER BY seq"
+                  ).all(l2.id) as Array<{ title: string }>;
+                  for (const l3 of l3Rows) {
+                    iContext += `\n    - ${l3.title || ""}`;
+                  }
+                }
+              }
+              humanContext += iContext;
+            }
+          }
+
           const pRows = db.prepare(
-            "SELECT id, title FROM memories WHERE prefix='P' AND obsolete!=1 ORDER BY updated_at DESC LIMIT 3"
+            "SELECT id, title FROM memories WHERE prefix='P' AND obsolete!=1 ORDER BY updated_at DESC LIMIT 5"
           ).all() as Array<{ id: string; title: string }>;
           if (pRows.length > 0) {
             recentProjects = "\n\n--- Recent projects ---\n" +

@@ -27,15 +27,30 @@ This is not optional. A 3-line grep dispatched is better than a slow main-contex
 | Start curation / cleanup of memory | `hmem-curate` |
 | Migrate O-entries to new format | `hmem-migrate-o` |
 
+## Targeted vs. Exploratory
+
+Not all Bash calls need dispatching. The key distinction:
+
+| Type | Characteristics | Action |
+|------|----------------|--------|
+| **Targeted** | Known path/pattern, single command, result ≤3 lines | Run directly |
+| **Exploratory** | Open-ended, multiple locations, result unknown | Dispatch |
+
+**Targeted (OK to run directly):** `find /home/bbbee -name "settings.json" -path "*claude*"` — one known location, one expected result.
+
+**Exploratory (must dispatch):** `grep -r "functionName" ~/projects/` across repos, or "where is X defined?" without knowing which file.
+
+When in doubt: if you'd be surprised by the output → dispatch it.
+
 ## Red Flags
 
 These thoughts mean STOP — dispatch instead:
 
 | Thought | Reality |
 |---------|---------|
-| "I'll just grep this quickly" | Dispatch it. Main context stays clean. |
-| "Let me run find real fast" | Dispatch it. |
-| "It's only one Bash call" | If it's exploratory → dispatch. |
+| "I'll just grep this quickly" | Is it exploratory? Dispatch. Is it one targeted command with predictable output? Run it. |
+| "Let me run find real fast" | Known path + expected result → OK. Unknown territory → dispatch. |
+| "It's only one Bash call" | Targeted (≤3 lines expected) → fine. Exploratory → dispatch. |
 | "This is too small to dispatch" | Dispatching 2-line tasks is fine and fast. |
 | "I need to check the codebase first" | Dispatch the check. |
 | "Let me read this file to see what's there" | Dispatch it. You only need the result. |
@@ -45,7 +60,7 @@ These thoughts mean STOP — dispatch instead:
 
 ## Mandatory Habits
 
-1. **Search = Dispatch.** Any "find", "check", "does X exist", "what does file Y contain" → `hmem-dispatch`.
+1. **Search = Dispatch — unless targeted.** Exploratory searches ("find", "where is X", "what does file Y contain") → `hmem-dispatch`. Single targeted command with a predictable result (≤3 lines) → run directly.
 2. **Memory = Tools.** Write insights via `write_memory`. Never rely on conversation history alone.
 3. **Skills override instinct.** If a skill exists for the task, use it — even if you think you remember how it works.
 4. **New project = `hmem-new-project`.** Never create P-entries manually — the skill handles schema, sections, and O-entry linking.

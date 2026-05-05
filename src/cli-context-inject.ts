@@ -56,18 +56,23 @@ export async function contextInject(): Promise<void> {
   try {
     const lines: string[] = [];
 
-    // 1. Compact project overview — one line per P-entry
+    // 1. Compact project overview — 5 most recently edited P-entries
     const allProjects = store.read({ prefix: "P", depth: 1 })
       .filter(e => !e.obsolete && !e.irrelevant);
 
     const activeProject = allProjects.find(e => e.active);
 
-    if (allProjects.length > 0) {
-      lines.push("## Projects:");
-      for (const p of allProjects) {
+    const recentProjects = [...allProjects]
+      .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""))
+      .slice(0, 5);
+
+    if (recentProjects.length > 0) {
+      lines.push("## Projects (5 most recent):");
+      for (const p of recentProjects) {
         const marker = p.active ? " [*]" : "";
         lines.push(`  ${p.id}${marker}  ${p.title}`);
       }
+      lines.push(`  (full list: read_memory({prefix:"P", titles_only:true}))`);
     }
 
     // 2. R-entries (rules) — compact, one line each
