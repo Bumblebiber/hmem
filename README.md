@@ -16,13 +16,13 @@ You've tried workarounds — CLAUDE.md files, custom prompts, manually pasting c
 
 ```
 You:    "Load project hmem"
-Agent:  [calls load_project("P0048") — 700 tokens]
+Agent:  [calls load_project("P0048") — 3000 tokens]
 Agent:  "Got it. v5.0.0, TypeScript/SQLite/npm, 10 source files,
          3 open tasks, 9 ideas. Last session you implemented
          auto-checkpoints via Haiku. What's next?"
 ```
 
-That's it. 700 tokens for a complete project briefing. The agent knows the stack, the architecture, the open bugs, the recent decisions, and exactly where you left off — even if "you" was a different AI on a different machine yesterday.
+That's it. 3000 tokens for a complete project briefing. The agent knows the stack, the architecture, the open bugs, the recent decisions, and exactly where you left off — even if "you" was a different AI on a different machine yesterday.
 
 ---
 
