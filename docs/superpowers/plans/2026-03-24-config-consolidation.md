@@ -42,8 +42,8 @@ The `memory` section stores `maxCharsPerLevel` (the internal array format), not 
   "sync": {
     "serverUrl": "https://bbbee.uber.space/hmem-sync",
     "userId": "bbbee",
-    "salt": "dAfLAQRRkJn0ReiHQ14BeVpMIduDQVV83AbQKnZKAso=",
-    "token": "5bdeff5fc60723206f384b69adb68af582a0c21ac6af5225a613849efe405391",
+    "salt": "YOUR_BASE64_SALT_HERE",
+    "token": "YOUR_AUTH_TOKEN_HERE",
     "syncSecrets": true,
     "lastPushAt": null,
     "lastPullAt": "2026-03-24T12:42:00.037Z"
