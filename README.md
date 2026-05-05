@@ -103,7 +103,7 @@ Sessions are meaningless. Projects are everything.
 | **H** | Human | `User Skill: TypeScript 9, Architecture 9, React 3` |
 | **R** | Rule | `Max one npm publish per day — batch changes` |
 | **O** | Original | Auto-recorded conversation history (every exchange, every device) |
-| **I** | Infra | `Strato Server \| Active \| Linux \| 87.106.22.11` |
+| **I** | Infra | `Strato Server \| Active \| Linux \| Ubuntu 22.04` |
 
 ---
 
