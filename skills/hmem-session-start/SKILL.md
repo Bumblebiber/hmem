@@ -28,8 +28,10 @@ Scan the output for:
 - **✓ DONE items in Roadmap** → `update_memory(id, { irrelevant: true })`
 - **Decommissioned / concept entries in Infrastructure** → `update_memory(id, { irrelevant: true })`
 - **Old status snapshots in Overview** (superseded by newer) → mark obsolete
+- **`[-]` prefix sections** (e.g. `P00XX.10 [-] Bugs`) — orphaned schema artifacts → `update_memory(id, { irrelevant: true })` for each
+- **Duplicate L2 sections** (two nodes with same name) → mark the higher-numbered one irrelevant
 
-Fix noise immediately. Do not note it and defer.
+Fix all of the above immediately. Do not note and defer.
 
 ## STEP 3: Calibrate explanation depth
 

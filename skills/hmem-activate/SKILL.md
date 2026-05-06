@@ -54,6 +54,20 @@ Scan the load_project output:
 
 Fix immediately, do not defer.
 
+## STEP 3.6: Schema Check
+
+Scan the load_project output for schema mismatches and fix them immediately.
+
+**`[-]` prefix sections** — orphaned nodes outside the current schema (e.g. `P0048.10 [-] Bugs (duplicate)`, `P0048.21 [-] Protocol (stale artifact)`):
+```
+update_memory(id="P00XX.YY", { irrelevant: true })
+```
+Mark every `[-]` section irrelevant. Do not skip, do not defer.
+
+**Duplicate L2 sections** — two entries with the same section name (e.g. two `.6 Bugs` nodes) → mark the higher-numbered one irrelevant, keep the canonical one.
+
+**Missing required sections** — auto-reconcile on the next `load_project` will add them automatically. No manual action needed unless you are actively working on that section right now.
+
 ## STEP 4: Confirm
 
 Output:

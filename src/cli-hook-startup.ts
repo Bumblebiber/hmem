@@ -96,7 +96,7 @@ export async function hookStartup(): Promise<void> {
   if (count === 1) {
     const deviceId = getActiveDevice();
     const deviceNote = deviceId
-      ? `\n\nIMPORTANT: Active device is currently set to ${deviceId}. After loading memory, identify which device you are on, find the matching I-entry, and call set_active_device(id='I00XX') if needed. Do this silently alongside the memory load.`
+      ? ""
       : "\n\nIMPORTANT: No active device is set for this machine. After loading memory, identify which device you are on (check hostname, hardware specs, or location), find the matching I-entry via read_memory() or search_memory(), then call set_active_device(id='I00XX'). Do this silently alongside the memory load.";
 
     let humanContext = "";
@@ -117,28 +117,28 @@ export async function hookStartup(): Promise<void> {
               }).join("\n");
           }
 
-          // Active I-entry: body + L2 titles + L3 for Apps
           if (deviceId) {
-            const iRow = db.prepare(
-              "SELECT id, level_1 FROM memories WHERE id=? AND obsolete!=1"
-            ).get(deviceId) as { id: string; level_1: string } | undefined;
-            if (iRow) {
-              let iContext = `\n\n--- Active device (${iRow.id}) ---\n${iRow.level_1 || ""}`;
-              const l2Rows = db.prepare(
-                "SELECT id, title FROM memory_nodes WHERE root_id=? AND depth=2 AND (irrelevant IS NULL OR irrelevant!=1) ORDER BY seq"
-              ).all(deviceId) as Array<{ id: string; title: string }>;
-              for (const l2 of l2Rows) {
-                iContext += `\n  ${l2.id}  ${l2.title || ""}`;
-                if (l2.title === "Apps") {
-                  const l3Rows = db.prepare(
-                    "SELECT title FROM memory_nodes WHERE parent_id=? AND depth=3 AND (irrelevant IS NULL OR irrelevant!=1) ORDER BY seq"
-                  ).all(l2.id) as Array<{ title: string }>;
-                  for (const l3 of l3Rows) {
-                    iContext += `\n    - ${l3.title || ""}`;
-                  }
-                }
+            // Device is known: inject Apps list for this machine only
+            const appsNode = db.prepare(
+              "SELECT id FROM memory_nodes WHERE root_id=? AND depth=2 AND title='Apps' AND (irrelevant IS NULL OR irrelevant!=1) LIMIT 1"
+            ).get(deviceId) as { id: string } | undefined;
+            if (appsNode) {
+              const l3Rows = db.prepare(
+                "SELECT title FROM memory_nodes WHERE parent_id=? AND depth=3 AND (irrelevant IS NULL OR irrelevant!=1) ORDER BY seq"
+              ).all(appsNode.id) as Array<{ title: string }>;
+              if (l3Rows.length > 0) {
+                humanContext += `\n\n--- Active device (${deviceId}) Apps ---\n` +
+                  l3Rows.map(r => `  - ${r.title ?? ""}`).join("\n");
               }
-              humanContext += iContext;
+            }
+          } else {
+            // Device unknown: list known I-entries so agent can identify this machine
+            const iRows = db.prepare(
+              "SELECT id, title FROM memories WHERE prefix='I' AND obsolete!=1 ORDER BY id"
+            ).all() as Array<{ id: string; title: string }>;
+            if (iRows.length > 0) {
+              humanContext += "\n\n--- Known devices (identify this machine) ---\n" +
+                iRows.map(r => `${r.id}  ${r.title ?? ""}`).join("\n");
             }
           }
 
@@ -148,6 +148,24 @@ export async function hookStartup(): Promise<void> {
           if (pRows.length > 0) {
             recentProjects = "\n\n--- Recent projects ---\n" +
               pRows.map((r: { id: string; title: string }) => `${r.id}  ${r.title ?? ""}`).join("\n");
+          }
+
+          // Checkpoint status: count unsummarized sessions in active project's O-entry
+          const activeP = db.prepare(
+            "SELECT id FROM memories WHERE prefix='P' AND active=1 AND obsolete!=1 LIMIT 1"
+          ).get() as { id: string } | undefined;
+          if (activeP) {
+            const seq = parseInt(activeP.id.replace(/\D/g, ""), 10);
+            const oId = `O${String(seq).padStart(4, "0")}`;
+            const unsummarized = db.prepare(
+              `SELECT COUNT(*) as cnt FROM memory_nodes
+               WHERE root_id=? AND depth=2
+               AND (content IS NULL OR content = title)
+               AND (irrelevant IS NULL OR irrelevant != 1)`
+            ).get(oId) as { cnt: number } | undefined;
+            if (unsummarized && unsummarized.cnt > 0) {
+              recentProjects += `\n\n--- Checkpoint status ---\n${unsummarized.cnt} session(s) in ${oId} without summary. Run \`hmem checkpoint\` or wait for auto-checkpoint.`;
+            }
           }
         } finally {
           db.close();

@@ -58,6 +58,19 @@ These thoughts mean STOP — dispatch instead:
 | "I remember how this works" | Skills evolve. Invoke the skill. |
 | "I'll write the P-entry manually with write_memory" | Use `hmem-new-project`. It handles schema, O-entry linking, and section setup. |
 
+## MANDATORY — DO NOT
+
+Hard stops, not guidelines:
+
+| DO NOT | Instead |
+|--------|---------|
+| Read `~/.hmem/*.hmem` directly | Use `read_memory()`, `search_memory()`, or `/hmem-read` |
+| Create O-entries manually | O-entries are auto-managed by Haiku — use `/hmem-session-start` (R0022) |
+| Write to memory during an active task | Finish the task first, then write |
+| Call `search_memory` twice in one turn | Batch into one call, or use `hmem-recall` |
+| Create P-entries with `write_memory` | Use `hmem-new-project` — schema + O-entry linking auto-handled |
+| Call `load_project` mid-session without routing | Always use `/hmem-activate` — it handles exchange misrouting |
+
 ## Mandatory Habits
 
 1. **Search = Dispatch — unless targeted.** Exploratory searches ("find", "where is X", "what does file Y contain") → `hmem-dispatch`. Single targeted command with a predictable result (≤3 lines) → run directly.

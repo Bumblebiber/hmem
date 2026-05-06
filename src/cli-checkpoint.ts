@@ -103,6 +103,30 @@ export async function checkpoint(): Promise<void> {
     const batchExchanges = allExchanges.filter(ex => ex.nodeId.startsWith(batchId + "."));
     if (batchExchanges.length < 2) return;
 
+    // 3b. Find sessions that never got summarized (too short for a full batch)
+    const allSessions = store.getChildNodes(oId)
+      .filter(n => n.depth === 2)
+      .sort((a, b) => a.seq - b.seq);
+    const catchupSessions = allSessions
+      .filter(s => s.id !== sessionId && (!s.content || s.content === s.title))
+      .slice(-3)
+      .map(session => {
+        const exs = store.getOEntryExchangesV2(oId, 5, { sessionScope: [session.id] });
+        const lines = exs
+          .filter(ex => ex.userText || ex.agentText)
+          .map((ex, i) => {
+            let u = ex.userText.replace(/<channel[^>]*>\s*/g, "").replace(/<\/channel>\s*/g, "").trim();
+            let a = (ex.agentText ?? "").replace(/<[^>]+>/g, "").trim();
+            u = u.length > 300 ? u.substring(0, 300) + "…" : u;
+            a = a.length > 500 ? a.substring(0, 500) + "…" : a;
+            return `  [${i + 1}] USER: ${u}\n      AGENT: ${a}`;
+          });
+        return lines.length > 0
+          ? { id: session.id, date: session.created_at.substring(0, 10), title: session.title, body: lines.join("\n") }
+          : null;
+      })
+      .filter((s): s is NonNullable<typeof s> => s !== null);
+
     // 4. Tag skill-dialog exchanges
     const skillMarker = "Base directory for this skill:";
     for (const ex of batchExchanges) {
@@ -164,6 +188,16 @@ export async function checkpoint(): Promise<void> {
       .map(s => `${projectId}.${s.idx} (${s.name})`)
       .join(", ");
 
+    const catchupSection = catchupSessions.length > 0
+      ? `### 0. Catch up on unsummarized sessions
+${catchupSessions.length} prior session(s) completed without a summary. Write a brief summary for each.
+Call: update_memory(id="<id>", content="Short title\\n> 2-5 sentences. Skip if no meaningful content.")
+
+${catchupSessions.map(d => `Session ${d.id} (${d.date}) — "${d.title}":\n${d.body}`).join("\n\n")}
+
+`
+      : "";
+
     const prompt = `You are a checkpoint agent for "${projectName}" (${projectId}).
 Process batch ${batchId} with ${batchExchanges.length} exchanges.
 
@@ -176,7 +210,7 @@ ${prevSummaryText}
 == Batch Exchanges ==
 ${formattedExchanges}
 
-## Tasks (execute ALL in order):
+${catchupSection}## Tasks (execute ALL in order):
 
 ### 1. Title each exchange (REQUIRED)
 Current titles (auto-extracted):
