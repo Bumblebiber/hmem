@@ -1,6 +1,6 @@
 {
   "name": "hmem-mcp",
-  "version": "7.2.5",
+  "version": "7.2.6",
   "description": "Persistent memory and agent lifecycle for Claude Code — because sessions shouldn't start from zero.",
   "author": "Bumblebiber",
   "license": "MIT",

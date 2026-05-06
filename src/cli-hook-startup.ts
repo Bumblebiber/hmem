@@ -142,6 +142,14 @@ export async function hookStartup(): Promise<void> {
             }
           }
 
+          const iFavRows = db.prepare(
+            "SELECT id, title FROM memories WHERE prefix='I' AND favorite=1 AND obsolete!=1 AND (irrelevant IS NULL OR irrelevant!=1) ORDER BY id"
+          ).all() as Array<{ id: string; title: string }>;
+          if (iFavRows.length > 0) {
+            humanContext += "\n\n--- Infrastructure (favorites) ---\n" +
+              iFavRows.map(r => `${r.id}  ${r.title ?? ""}`).join("\n");
+          }
+
           const pRows = db.prepare(
             "SELECT id, title FROM memories WHERE prefix='P' AND obsolete!=1 ORDER BY updated_at DESC LIMIT 5"
           ).all() as Array<{ id: string; title: string }>;
