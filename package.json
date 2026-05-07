@@ -71,6 +71,7 @@
     "persistent-memory"
   ],
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.74.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.2.3",
     "typescript": "^5.9.3",
@@ -82,5 +83,13 @@
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.6.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.74.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
   }
 }
