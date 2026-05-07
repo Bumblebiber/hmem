@@ -1569,6 +1569,7 @@ server.tool(
               if (depth === 0) continue; // skip entirely
 
               const cId = lastSeg(child.id);
+              lines.push("");
               lines.push(`  ${cId}  ${cleanTitle(childTitle, 60)}`);
 
               if (depth === 1) {
@@ -1629,6 +1630,7 @@ server.tool(
               const expandBody = withBody.includes(child.seq);
               const expandChildTitles = withChildren.includes(child.seq);
               const hideChildren = HIDE_CHILDREN_SECTIONS.includes(child.seq);
+              lines.push("");
               lines.push(`  ${cId}  ${cleanTitle(child.title || child.content, 60)}`);
               if (hideChildren) {
                 const childCount = child.children ? child.children.filter((g: any) => !g.irrelevant).length : 0;
@@ -1681,6 +1683,7 @@ server.tool(
         }
         // Links
         if (e.linkedEntries && e.linkedEntries.length > 0) {
+          lines.push("");
           lines.push("  Links:");
           for (const le of e.linkedEntries) {
             lines.push(`    ${le.id}  ${cleanTitle(le.title, 70)}`);
@@ -1694,6 +1697,7 @@ server.tool(
             (r.entry.prefix === "E" || r.entry.prefix === "L") && !r.entry.obsolete && !r.entry.irrelevant
           );
           if (relatedEL.length > 0) {
+            lines.push("");
             lines.push("  Related errors & lessons:");
             for (const r of relatedEL) {
               lines.push(`    ${r.entry.id} [⚡]  ${cleanTitle(r.entry.title, 70)}`);
@@ -1707,6 +1711,7 @@ server.tool(
           depth: 2,
         }).filter(r => !r.obsolete && !r.irrelevant && Array.isArray(r.links) && r.links.includes(id));
         if (ruleEntries.length > 0) {
+          lines.push("");
           lines.push("  Rules:");
           for (const r of ruleEntries) {
             lines.push(`    ${r.id}  ${cleanTitle(r.title)}`);
@@ -1725,6 +1730,7 @@ server.tool(
           if (oExists) {
             const { text: oText, ids } = formatRecentOEntries(hmemStore, 1, 5, id, true);
             if (oText.trim()) {
+              lines.push("");
               lines.push("  --- Recent Session Context ---");
               lines.push("  " + oText.replace(/\n/g, "\n  "));
               sessionCache.registerDelivered(ids);
