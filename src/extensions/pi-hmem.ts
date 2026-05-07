@@ -1,3 +1,4 @@
+import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -25,6 +26,7 @@ function runHmem(args: string[], input = "{}", timeout = 10_000): Promise<string
       resolve(stdout ?? "");
     });
     if (child.stdin) {
+      child.stdin.on("error", () => {}); // suppress EPIPE if child exits early
       child.stdin.write(input);
       child.stdin.end();
     }
@@ -73,8 +75,8 @@ export default async function (pi: ExtensionAPI) {
 
   // ── 3. tool_call: block direct .hmem file reads ───────────────────────────
   pi.on("tool_call", async (event) => {
-    if (event.toolName !== "read") return;
-    const filePath = (event.input as { path?: string }).path ?? "";
+    if (!isToolCallEventType("read", event)) return;
+    const filePath = event.input.path ?? "";
     if (!filePath.endsWith(".hmem")) return;
     return {
       block: true,
