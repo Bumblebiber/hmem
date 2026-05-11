@@ -280,8 +280,11 @@ function buildExcerpt(lines: string[], matchedLines: number[], contextLines: num
 // ---- Main export ----
 
 /**
- * Searches the knowledge base across agent memories (.hmem), personalities,
- * project docs, and skills.
+ * Full-text search across agent memories (`.hmem`), personalities, project docs, and skills.
+ * @param projectDir Directory that contains the `.hmem` files and related assets.
+ * @param query      Keywords to search for.
+ * @param options    Scope, result limit, and context line count.
+ * @returns Ranked list of {@link SearchResult} hits.
  */
 export function searchMemory(
   projectDir: string,

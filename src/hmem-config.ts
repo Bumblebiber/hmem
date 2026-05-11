@@ -291,9 +291,11 @@ export function linearLimits(l1: number, ln: number, depth: number): number[] {
 }
 
 /**
- * Save hmem.config.json in the unified format.
- * Writes maxCharsPerLevel directly (no reverse-computing maxL1Chars/maxLnChars).
- * If a sync token is present, the file is chmod 600 for security.
+ * Persist an {@link HmemConfig} to `hmem.config.json` in `projectDir`.
+ * Writes `maxCharsPerLevel` directly (no reverse-computing from L1/Ln).
+ * If a sync token is present the file is chmod 600.
+ * @param projectDir Directory that contains (or will contain) `hmem.config.json`.
+ * @param config     Configuration to write.
  */
 export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
   const configPath = path.join(projectDir, "hmem.config.json");
@@ -338,8 +340,10 @@ const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "ma
   "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "accessCountTopN", "recentOEntries", "bulkReadOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas", "globalLoad"]);
 
 /**
- * Load hmem.config.json from projectDir.
- * Unknown keys are ignored. Missing keys fall back to defaults.
+ * Load `hmem.config.json` from `projectDir`.
+ * Unknown keys are ignored; missing keys fall back to {@link DEFAULT_CONFIG}.
+ * @param projectDir Directory that contains `hmem.config.json`.
+ * @returns Merged config with all defaults applied.
  */
 export function loadHmemConfig(projectDir: string): HmemConfig {
   const configPath = path.join(projectDir, "hmem.config.json");

@@ -361,6 +361,11 @@ export class HmemStore {
    */
   private static readonly CHAR_LIMIT_TOLERANCE = 1.25;
 
+  /**
+   * Open (or create) a personal agent memory store.
+   * @param hmemPath Absolute path to the `.hmem` SQLite file.
+   * @param config   Optional configuration — falls back to {@link DEFAULT_CONFIG}.
+   */
   constructor(hmemPath: string, config?: HmemConfig) {
     this.dbPath = hmemPath;
     this.cfg = config ?? { ...DEFAULT_CONFIG };
@@ -5208,6 +5213,11 @@ function safeHomedir(): string {
   return os.homedir();
 }
 
+/**
+ * Resolve the `.hmem` file path for the current agent.
+ * Priority: `HMEM_PATH` env var → CWD discovery → `~/.hmem/agent.hmem`.
+ * @param cwdOverride Override working directory for CWD discovery step.
+ */
 export function resolveHmemPath(cwdOverride?: string): string {
   // Priority 1: HMEM_PATH env var
   const hmemPath = process.env.HMEM_PATH;
@@ -5251,7 +5261,9 @@ export function resolveHmemPath(cwdOverride?: string): string {
 }
 
 /**
- * Open (or create) the shared company knowledge store (company.hmem).
+ * Open (or create) the shared company knowledge store (`company.hmem`).
+ * @param projectDir Directory that contains (or will contain) `company.hmem`.
+ * @param config     Optional configuration — falls back to {@link DEFAULT_CONFIG}.
  */
 export function openCompanyMemory(projectDir: string, config?: HmemConfig): HmemStore {
   const hmemPath = path.join(projectDir, "company.hmem");

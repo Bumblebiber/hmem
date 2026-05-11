@@ -1,6 +1,6 @@
 {
   "name": "its-over-9k",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Persistent memory and agent lifecycle for Claude Code — because sessions shouldn't start from zero.",
   "author": "Bumblebiber",
   "license": "MIT",

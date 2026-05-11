@@ -458,13 +458,14 @@ server.tool(
 // ---- Tool: rename_id ----
 server.tool(
   "rename_id",
-  "Atomically rename an entry ID and update ALL references across the database. " +
+  "Atomically rename a memory entry or node ID and update ALL references across the database. " +
+    "Works for root entries (e.g. 'P0099' → 'P0100') and sub-nodes (e.g. 'P0054.19' → 'P0054.6'). " +
     "Renames: root entry, all child nodes, tags, FTS index, links in other entries, obsolete markers. " +
-    "Use to resolve ID conflicts after sync-push detects a collision. " +
+    "Use for schema corrections (misplaced sections), ID collisions, or post-sync conflict resolution. " +
     "Example: rename_id({ old_id: 'P0048', new_id: 'P0052' })",
   {
-    old_id: z.string().describe("Current entry ID to rename, e.g. 'P0048'"),
-    new_id: z.string().describe("New entry ID, e.g. 'P0052' — must have same prefix and not exist yet"),
+    old_id: z.string().min(1).describe("Current entry ID to rename, e.g. 'P0048' or 'P0054.19'"),
+    new_id: z.string().min(1).describe("New entry ID, e.g. 'P0052' — must have same prefix and not exist yet"),
     store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
   },
   async ({ old_id, new_id, store }) => {
@@ -477,6 +478,7 @@ server.tool(
         if (!result.ok) {
           return { content: [{ type: "text" as const, text: `ERROR: ${result.error}` }], isError: true };
         }
+        if (store === "personal") syncPush(HMEM_PATH);
         log(`rename_id: ${old_id} → ${new_id} (${result.affected} rows affected)`);
         return {
           content: [{
