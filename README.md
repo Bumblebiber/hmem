@@ -96,7 +96,7 @@ Sessions are meaningless. Projects are everything.
 
 | Prefix | Category | Example |
 |--------|----------|---------|
-| **P** | Project | `its-over-9000 \| Active \| TS/SQLite/npm \| Persistent AI memory` |
+| **P** | Project | `o9k \| Active \| TS/SQLite/npm \| Persistent AI memory` |
 | **L** | Lesson | `HMEM_AGENT_ID must be set in hooks — resolveHmemPath falls back to wrong DB` |
 | **E** | Error | `158 spurious O-entries created when Haiku MCP lacked HMEM_NO_SESSION guard` |
 | **D** | Decision | `Project-based O-entries over session-based — sessions are meaningless` |
@@ -112,7 +112,7 @@ Sessions are meaningless. Projects are everything.
 ### 1. Install
 
 ```bash
-npm install -g its-over-9000
+npm install -g o9k
 ```
 
 ### 2. Run the interactive installer
@@ -152,7 +152,7 @@ If you prefer manual configuration over `hmem init`:
   "mcpServers": {
     "hmem": {
       "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/its-over-9000/dist/mcp-server.js"],
+      "args": ["/absolute/path/to/o9k/dist/mcp-server.js"],
       "env": {
         "HMEM_PROJECT_DIR": "/home/yourname/.hmem",
         "HMEM_AGENT_ID": "DEVELOPER"
@@ -165,7 +165,7 @@ If you prefer manual configuration over `hmem init`:
 Find the paths:
 ```bash
 echo "Node: $(which node)"
-echo "Server: $(npm root -g)/its-over-9000/dist/mcp-server.js"
+echo "Server: $(npm root -g)/o9k/dist/mcp-server.js"
 ```
 </details>
 
@@ -177,7 +177,7 @@ echo "Server: $(npm root -g)/its-over-9000/dist/mcp-server.js"
   "mcp": {
     "hmem": {
       "type": "local",
-      "command": ["/absolute/path/to/node", "/absolute/path/to/its-over-9000/dist/mcp-server.js"],
+      "command": ["/absolute/path/to/node", "/absolute/path/to/o9k/dist/mcp-server.js"],
       "environment": { "HMEM_PROJECT_DIR": "/home/yourname/.hmem" },
       "enabled": true
     }
@@ -196,7 +196,7 @@ Edit `~/.cursor/mcp.json`, `~/.codeium/windsurf/mcp_config.json`, or `.vscode/mc
   "mcpServers": {
     "hmem": {
       "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/its-over-9000/dist/mcp-server.js"],
+      "args": ["/absolute/path/to/o9k/dist/mcp-server.js"],
       "env": { "HMEM_PROJECT_DIR": "/home/yourname/.hmem" }
     }
   }
@@ -289,14 +289,14 @@ See [`settings.windows.example.json`](settings.windows.example.json) for the ful
       "matcher": "",
       "hooks": [{
         "type": "command",
-        "command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/its-over-9000/dist/cli.js log-exchange",
+        "command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/o9k/dist/cli.js log-exchange",
         "shell": "powershell"
       }]
     }]
   },
   "statusLine": {
     "type": "command",
-    "command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/its-over-9000/dist/cli.js statusline",
+    "command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/o9k/dist/cli.js statusline",
     "shell": "powershell"
   }
 }
@@ -322,7 +322,7 @@ Run `npm root -g` to get the correct `node_modules` path for your machine.
 ## Updating
 
 ```bash
-npm update -g its-over-9000        # MCP server
+npm update -g o9k        # MCP server
 npm update -g hmem-sync       # Sync (if installed)
 npx hmem update-skills         # Refresh skill files
 ```

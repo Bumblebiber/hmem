@@ -1,22 +1,22 @@
 {
-  "name": "its-over-9000",
-  "version": "8.0.0",
+  "name": "o9k",
+  "version": "1.0.0",
   "description": "Persistent memory and agent lifecycle for Claude Code — because sessions shouldn't start from zero.",
   "author": "Bumblebiber",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Bumblebiber/its-over-9000.git"
+    "url": "git+https://github.com/Bumblebiber/its-over-9k.git"
   },
-  "homepage": "https://github.com/Bumblebiber/its-over-9000#readme",
+  "homepage": "https://github.com/Bumblebiber/its-over-9k#readme",
   "bugs": {
-    "url": "https://github.com/Bumblebiber/its-over-9000/issues"
+    "url": "https://github.com/Bumblebiber/its-over-9k/issues"
   },
   "funding": {
     "type": "ko-fi",
     "url": "https://ko-fi.com/bumblebiber"
   },
-  "mcpName": "io.github.Bumblebiber/its-over-9000",
+  "mcpName": "io.github.Bumblebiber/o9k",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
