@@ -1,22 +1,22 @@
 {
-  "name": "hmem-mcp",
-  "version": "7.4.1",
+  "name": "its-over-9000",
+  "version": "8.0.0",
   "description": "Persistent memory and agent lifecycle for Claude Code — because sessions shouldn't start from zero.",
   "author": "Bumblebiber",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Bumblebiber/hmem.git"
+    "url": "git+https://github.com/Bumblebiber/its-over-9000.git"
   },
-  "homepage": "https://github.com/Bumblebiber/hmem#readme",
+  "homepage": "https://github.com/Bumblebiber/its-over-9000#readme",
   "bugs": {
-    "url": "https://github.com/Bumblebiber/hmem/issues"
+    "url": "https://github.com/Bumblebiber/its-over-9000/issues"
   },
   "funding": {
     "type": "ko-fi",
     "url": "https://ko-fi.com/bumblebiber"
   },
-  "mcpName": "io.github.Bumblebiber/hmem-mcp",
+  "mcpName": "io.github.Bumblebiber/its-over-9000",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {

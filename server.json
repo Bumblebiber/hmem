@@ -1,12 +1,12 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.Bumblebiber/hmem-mcp",
+  "name": "io.github.Bumblebiber/its-over-9000",
   "title": "hmem — Humanlike Memory for AI Agents",
   "description": "Persistent 5-level hierarchical memory for AI agents. SQLite-backed, lazy-loaded.",
   "version": "1.6.7",
-  "websiteUrl": "https://github.com/Bumblebiber/hmem#readme",
+  "websiteUrl": "https://github.com/Bumblebiber/its-over-9000#readme",
   "repository": {
-    "url": "https://github.com/Bumblebiber/hmem",
+    "url": "https://github.com/Bumblebiber/its-over-9000",
     "source": "github",
     "id": "1161506670"
   },
@@ -14,7 +14,7 @@
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "hmem-mcp",
+      "identifier": "its-over-9000",
       "version": "1.6.7",
       "runtimeHint": "npx",
       "transport": {

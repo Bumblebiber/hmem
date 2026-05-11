@@ -1,5 +1,18 @@
 # Changelog
 
+## [8.0.0] — 2026-05-11
+
+### Breaking Changes
+- Package renamed from `hmem-mcp` to `its-over-9000` on npm
+- GitHub repo renamed from `Bumblebiber/hmem` to `Bumblebiber/its-over-9000`
+- `hmem-mcp` is now deprecated — migrate: `npm uninstall -g hmem-mcp && npm install -g its-over-9000`
+- MCP config path update required (see README)
+
+### What stays the same
+- CLI binary names: `hmem`, `hmem-curate`
+- All MCP tool names and signatures
+- All existing memory files — no migration needed
+
 ## 7.4.1 — 2026-05-11
 
 ### Changed
