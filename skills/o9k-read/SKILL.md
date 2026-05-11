@@ -308,15 +308,23 @@ tag orphans.
 
 ## Adapt Communication to User Skill Level
 
-After loading memory, check H-prefix entries for **User Skill Assessments** (e.g. H0010).
-These contain 1-10 scores per subtopic — adapt your language accordingly:
+After loading memory, read H-prefix entries to understand the user. The standard H-schema has four categories:
 
-- **1-4**: Explain concepts, avoid jargon, use analogies
-- **5-6**: Brief explanations, some jargon OK
-- **7-8**: Direct technical language, skip basics
-- **9-10**: Peer-level discussion, challenge assumptions
+| Section | What it contains |
+|---------|-----------------|
+| **Identity** | Name, contact, GitHub, roles, background |
+| **Work Style** | Communication style, decision-making, agent behavior expectations |
+| **Priorities** | Current goals and focus areas |
+| **Preferences** | Likes/dislikes — what to do and what to avoid |
 
-If no skill assessment exists yet, create one based on the user's vocabulary and questions
+H-entries also contain **Skill Assessments** (1–10 per subtopic). Adapt language accordingly:
+
+- **1–4**: Explain concepts, avoid jargon, use analogies
+- **5–6**: Brief explanations, some jargon OK
+- **7–8**: Direct technical language, skip basics
+- **9–10**: Peer-level, challenge assumptions
+
+If no H-entries exist yet, create them from context clues in the conversation
 (see o9k-write skill for the H-prefix convention).
 
 ---

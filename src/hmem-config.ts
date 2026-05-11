@@ -271,7 +271,10 @@ export const DEFAULT_CONFIG: HmemConfig = {
     },
     H: {
       sections: [
-        { name: "Directive", loadDepth: 1, description: "Agent directives derived from this context category — how to adapt communication and behavior. Main content goes directly as flat L2 sub-nodes (one item per node, e.g. skill level, preference, trait)." },
+        { name: "Identity",    loadDepth: 1, description: "Who the user is — name, contact, GitHub, roles, background. Flat L2 sub-nodes, one fact per node." },
+        { name: "Work Style",  loadDepth: 1, description: "How the user works — communication style, decision-making, iteration preferences, agent behavior expectations." },
+        { name: "Priorities",  loadDepth: 1, description: "Current goals, focus areas, what to optimize for." },
+        { name: "Preferences", loadDepth: 1, description: "Likes and dislikes — what works, what doesn't, what to avoid. Directly actionable for agent behavior." },
       ],
     },
     I: {
