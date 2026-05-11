@@ -3915,6 +3915,20 @@ export class HmemStore {
           this.db.prepare("UPDATE hmem_fts_rowid_map SET node_id = ? WHERE fts_rowid = ?")
             .run(fn.node_id.replace(oldId, newId), fn.fts_rowid);
         }
+        // Rewrite links in other entries that reference oldId
+        const linkRows = this.db.prepare(
+          "SELECT id, links FROM memories WHERE links IS NOT NULL AND links LIKE ?"
+        ).all(`%${oldId}%`) as { id: string; links: string }[];
+        for (const lr of linkRows) {
+          try {
+            const links = JSON.parse(lr.links) as string[];
+            const updated = links.map(l => (l === oldId || l.startsWith(oldId + ".")) ? l.replace(oldId, newId) : l);
+            if (JSON.stringify(links) !== JSON.stringify(updated)) {
+              this.db.prepare("UPDATE memories SET links = ? WHERE id = ?").run(JSON.stringify(updated), lr.id);
+              affected++;
+            }
+          } catch { /* skip malformed links */ }
+        }
       })();
       return { ok: true, affected };
     }
