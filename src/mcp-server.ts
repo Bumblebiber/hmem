@@ -2103,6 +2103,40 @@ server.tool(
   }
 );
 
+// ---- Tool: rename_id ----
+
+server.tool(
+  "rename_id",
+  "Rename a memory entry or node ID. Works for both root entries (e.g. 'P0054.19' → 'P0054.6') " +
+    "and root-level IDs (e.g. 'P0099' → 'P0100'). Updates all children and internal references. " +
+    "Use for schema corrections (misplaced sections) or ID collisions.\n\n" +
+    "Example: rename_id({ old_id: 'P0054.19', new_id: 'P0054.6' })",
+  {
+    old_id: z.string().min(1).describe("Current ID, e.g. 'P0054.19'"),
+    new_id: z.string().min(1).describe("Target ID, e.g. 'P0054.6'"),
+    store: z.enum(["personal", "company"]).default("personal").describe("Target store"),
+  },
+  async ({ old_id, new_id, store }) => {
+    try {
+      const hmemStore = store === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : new HmemStore(HMEM_PATH, hmemConfig);
+      try {
+        const result = hmemStore.renameId(old_id, new_id);
+        if (!result.ok) {
+          return { content: [{ type: "text" as const, text: `ERROR: ${result.error}` }], isError: true };
+        }
+        if (store === "personal") syncPush(HMEM_PATH);
+        return { content: [{ type: "text" as const, text: `Renamed ${old_id} → ${new_id} (${result.affected} rows affected)` }] };
+      } finally {
+        hmemStore.close();
+      }
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
+    }
+  }
+);
+
 // ---- Tool: set_active_device ----
 
 server.tool(
