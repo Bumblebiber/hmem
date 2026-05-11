@@ -269,6 +269,17 @@ export const DEFAULT_CONFIG: HmemConfig = {
         { name: "Key Learnings",   loadDepth: 1, description: "Generalizable insight for future work. Tag #open / #solved" },
       ],
     },
+    I: {
+      sections: [
+        { name: "Specs",    loadDepth: 2, description: "Hardware or service description. L1 body: Name | Status | Type | Host" },
+        { name: "Access",   loadDepth: 1, description: "Connection methods, ports, credentials location (never store credentials inline)" },
+        { name: "Services", loadDepth: 1, description: "Running services / provided functions" },
+        { name: "Apps",     loadDepth: 1, description: "Installed software and tools" },
+        { name: "Config",   loadDepth: 1, description: "Important config file paths and settings" },
+        { name: "Notes",    loadDepth: 1, description: "Caveats, quirks, known issues" },
+        { name: "Rules",    loadDepth: 1, description: "Agent rules for working with this resource" },
+      ],
+    },
   },
 };
 
