@@ -1,5 +1,12 @@
 # Changelog
 
+## 7.4.1 — 2026-05-11
+
+### Changed
+
+- **Removed dead fallback code in `create_project`.** The hardcoded R0009 section list that ran when no schema was configured is gone — `DEFAULT_CONFIG.schemas.P` makes it unreachable. No behaviour change.
+- **Skills updated:** `hmem-config`, `hmem-write`, `hmem-curate`, `hmem-wipe` — `"Protocol"` corrected to `"History"`, `"Open tasks"` updated to `"Roadmap"`.
+
 ## 7.4.0 — 2026-05-11
 
 ### Breaking changes

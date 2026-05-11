@@ -4870,7 +4870,9 @@ export class HmemStore {
     for (const entry of entriesWithLinks) {
       let links: string[];
       try { links = JSON.parse(entry.links) || []; } catch { links = []; }
-      const broken = links.filter((lid: string) => !this.db.prepare("SELECT 1 FROM memories WHERE id = ?").get(lid));
+      const broken = links.filter((lid: string) =>
+        !this.db.prepare("SELECT 1 FROM memories WHERE id = ?").get(lid) &&
+        !this.db.prepare("SELECT 1 FROM memory_nodes WHERE id = ?").get(lid));
       if (broken.length > 0) {
         result.brokenLinks.push({
           id: entry.id,

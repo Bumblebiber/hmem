@@ -1358,7 +1358,7 @@ server.tool(
           );
           if (oldPEntries.length > 0) {
             migrationHint = `\n⚠ P-ENTRY MIGRATION: ${oldPEntries.length} project(s) use old format: ${oldPEntries.map(e => e.id).join(", ")}.\n` +
-              `Standard schema (R0009): Overview → Codebase → Usage → Context → Deployment → Known issues → Protocol → Open tasks.\n` +
+              `Standard schema (R0009): Overview → Codebase → Usage → Context → Deployment → Bugs → History → Roadmap → Ideas.\n` +
               `Create new entry with write_memory(prefix="P", force=true), then mark old one obsolete.\n\n`;
           }
         }
@@ -1953,7 +1953,7 @@ server.tool(
 server.tool(
   "create_project",
   "Create a new project with the standard R0009 schema. Automatically creates:\n" +
-    "1. P-entry with all 9 L2 sections (Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Open tasks, Ideas)\n" +
+    "1. P-entry with all 9 L2 sections (Overview, Codebase, Usage, Context, Deployment, Bugs, History, Roadmap, Ideas)\n" +
     "2. Matching O-entry for session logging (O00XX ↔ P00XX)\n\n" +
     "Example: create_project({ name: 'Carlo Auftrag', tech: 'Python/SAP', description: 'SAP Freigabe-Automatisierung' })",
   {
@@ -2005,22 +2005,6 @@ server.tool(
               sections.push(`\t\t${deployment}`);
             }
           }
-        } else {
-          // Fallback: hardcoded R0009 schema (backward compat)
-          sections.push(`\tOverview`);
-          sections.push(`\t\tCurrent state: ${status}, ${tech}`);
-          if (goal) sections.push(`\t\tGoals: ${goal}`);
-          if (repo) sections.push(`\t\tEnvironment: ${repo}`);
-          sections.push(`\tCodebase`);
-          sections.push(`\tUsage`);
-          sections.push(`\tContext`);
-          if (audience) sections.push(`\t\tTarget audience: ${audience}`);
-          sections.push(`\tDeployment`);
-          if (deployment) sections.push(`\t\t${deployment}`);
-          sections.push(`\tBugs`);
-          sections.push(`\tProtocol`);
-          sections.push(`\tOpen tasks`);
-          sections.push(`\tIdeas`);
         }
 
         const content = sections.join("\n");
@@ -2069,7 +2053,7 @@ server.tool(
 
         const sectionNames = schema
           ? schema.sections.map(s => s.name).join(", ")
-          : "Overview, Codebase, Usage, Context, Deployment, Bugs, Protocol, Open tasks, Ideas";
+          : "Overview, Codebase, Usage, Context, Deployment, Bugs, History, Roadmap, Ideas";
 
         return trackTokens({
           content: [{

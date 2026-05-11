@@ -48,7 +48,7 @@ describe("schema parsing", () => {
     expect(cfg.schemas).toBeDefined();
     expect(cfg.schemas!.P.sections.map(s => s.name)).toEqual([
       "Overview", "Codebase", "Usage", "Context", "Deployment",
-      "Bugs", "Protocol", "Roadmap", "Ideas",
+      "Bugs", "History", "Roadmap", "Ideas",
     ]);
     expect(cfg.schemas!.E.sections.length).toBeGreaterThan(0);
   });
