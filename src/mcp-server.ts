@@ -825,7 +825,7 @@ server.tool(
           text += `\nErrors:\n${result.errors.join("\n")}`;
         }
         if (storeName === "personal") {
-          const retry = syncPushWithRetry(HMEM_PATH);
+          const retry = await syncPushWithRetry(HMEM_PATH);
           if (!retry.resolved)
             text += `\n⚠ unresolved push conflicts after ${retry.attempts} attempts`;
           else if (retry.attempts > 1)

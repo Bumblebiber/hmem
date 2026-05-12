@@ -137,12 +137,12 @@ async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus>
       const { readSessionMarker } = await import("./session-state.js");
       const marker = sessionId ? readSessionMarker(sessionId) : null;
 
-      let projRow: { id: string; title: string } | undefined;
+      let projRow: { id: string; title: string | null; level_1: string | null } | undefined;
       if (marker?.projectId) {
         // Session marker has an explicit project → use it
         projRow = db.prepare(
-          "SELECT id, title FROM memories WHERE id = ? AND prefix='P' AND obsolete!=1 LIMIT 1"
-        ).get(marker.projectId) as { id: string; title: string } | undefined;
+          "SELECT id, title, level_1 FROM memories WHERE id = ? AND prefix='P' AND obsolete!=1 LIMIT 1"
+        ).get(marker.projectId) as typeof projRow;
       } else if (marker?.deactivated) {
         // Explicitly deactivated after /clear → show "no project", skip all fallbacks
         projRow = undefined;
@@ -156,20 +156,20 @@ async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus>
         const activeFromFile = readActiveProjectForCurrentProcess();
         if (activeFromFile) {
           projRow = db.prepare(
-            "SELECT id, title FROM memories WHERE id = ? AND prefix='P' AND obsolete!=1 LIMIT 1"
-          ).get(activeFromFile) as { id: string; title: string } | undefined;
+            "SELECT id, title, level_1 FROM memories WHERE id = ? AND prefix='P' AND obsolete!=1 LIMIT 1"
+          ).get(activeFromFile) as typeof projRow;
         }
         if (!projRow) {
           // Fallback 2: shared DB active flag (legacy — unreliable in multi-session setups)
           projRow = db.prepare(
-            "SELECT id, title FROM memories WHERE prefix='P' AND active=1 AND obsolete!=1 LIMIT 1"
-          ).get() as { id: string; title: string } | undefined;
+            "SELECT id, title, level_1 FROM memories WHERE prefix='P' AND active=1 AND obsolete!=1 LIMIT 1"
+          ).get() as typeof projRow;
         }
       }
 
       let project = "";
       if (projRow) {
-        const name = (projRow.title ?? projRow.id).split("|")[0].trim();
+        const name = (projRow.title ?? projRow.level_1 ?? projRow.id).split("|")[0].trim();
         project = `${projRow.id} ${name}`;
       }
 
@@ -178,10 +178,10 @@ async function getHmemStatus(sessionId: string | undefined): Promise<HmemStatus>
       const deviceId = getActiveDevice();
       if (deviceId) {
         const devRow = db.prepare(
-          "SELECT id, title FROM memories WHERE id = ? AND prefix='I' AND obsolete!=1 LIMIT 1"
-        ).get(deviceId) as { id: string; title: string } | undefined;
+          "SELECT id, title, level_1 FROM memories WHERE id = ? AND prefix='I' AND obsolete!=1 LIMIT 1"
+        ).get(deviceId) as { id: string; title: string | null; level_1: string | null } | undefined;
         if (devRow) {
-          device = (devRow.title ?? deviceId).split("|")[0].trim();
+          device = (devRow.title ?? devRow.level_1 ?? deviceId).split("|")[0].trim();
         } else {
           device = deviceId;
         }
