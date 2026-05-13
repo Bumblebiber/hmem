@@ -403,7 +403,7 @@ export async function reserveNextId(hmemPath: string, prefix: string, hmemStore:
 
 // ---- Config ----
 export const hmemConfig = loadHmemConfig(PROJECT_DIR);
-log(`Config: levels=[${hmemConfig.maxCharsPerLevel.join(",")}] depth=${hmemConfig.maxDepth}`);
+log(`Config: l1=${hmemConfig.maxCharsPerLevel[0]} maxNodeChars=${hmemConfig.maxNodeChars} depth=${hmemConfig.maxDepth}`);
 
 // ---- Store resolver ----
 export function resolveStore(

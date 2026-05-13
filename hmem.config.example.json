@@ -3,11 +3,11 @@
 
   "memory": {
 
-    "_comment_chars": "Character limits per depth level. Option A — set endpoints, intermediate levels are interpolated:",
+    "_comment_chars": "L1 title character limit — keeps root entry titles compact (navigation / table of contents).",
     "maxL1Chars": 200,
-    "maxLnChars": 50000,
-    "_comment_chars_b": "Option B — explicit array [L1, L2, L3, L4, L5]. Takes precedence over A:",
-    "_example_explicit": { "maxCharsPerLevel": [200, 2500, 10000, 25000, 50000] },
+
+    "_comment_node": "Flat size limit for any L2–L5 node (title + body combined). Pure sanity-check against bloat — not depth-based.",
+    "maxNodeChars": 100000,
 
     "maxDepth": 5,
     "maxTitleChars": 50,

@@ -480,11 +480,9 @@ export class HmemStore {
       throw new Error(`Level 1 title exceeds ${l1Limit} character limit (${title.length} chars). Keep the title compact and move detail to body lines (> prefix) or L2 children.`);
     }
     for (const node of nodes) {
-      // depth 2-5 → index 1-4
-      const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(node.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
-      if (node.content.length > nodeLimit * t) {
+      if (node.content.length > this.cfg.maxNodeChars * t) {
         throw new Error(
-          `L${node.depth} content exceeds ${nodeLimit} character limit ` +
+          `L${node.depth} content exceeds ${this.cfg.maxNodeChars} character limit ` +
           `(${node.content.length} chars). Split into multiple write_memory calls or use file references.`
         );
       }
@@ -2215,9 +2213,8 @@ export class HmemStore {
       const sets: string[] = [];
       const params: any[] = [];
       if (trimmed) {
-        const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(nodeRow.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
-        if (trimmed.length > nodeLimit * HmemStore.CHAR_LIMIT_TOLERANCE) {
-          throw new Error(`Content exceeds ${nodeLimit} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
+        if (trimmed.length > this.cfg.maxNodeChars * HmemStore.CHAR_LIMIT_TOLERANCE) {
+          throw new Error(`Content exceeds ${this.cfg.maxNodeChars} character limit (${trimmed.length} chars) for L${nodeRow.depth}.`);
         }
         // Parse body: "> " prefix (legacy) or blank-line separator (git-commit style)
         const lines = trimmed.split("\n");
@@ -2474,10 +2471,9 @@ export class HmemStore {
     // Validate char limits before writing (with tolerance buffer)
     const t = HmemStore.CHAR_LIMIT_TOLERANCE;
     for (const node of nodes) {
-      const nodeLimit = this.cfg.maxCharsPerLevel[Math.min(node.depth - 1, this.cfg.maxCharsPerLevel.length - 1)];
-      if (node.content.length > nodeLimit * t) {
+      if (node.content.length > this.cfg.maxNodeChars * t) {
         throw new Error(
-          `L${node.depth} content exceeds ${nodeLimit} character limit ` +
+          `L${node.depth} content exceeds ${this.cfg.maxNodeChars} character limit ` +
           `(${node.content.length} chars). Split into multiple calls or use file references.`
         );
       }

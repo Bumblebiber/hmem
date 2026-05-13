@@ -58,6 +58,12 @@ export interface HmemConfig {
    */
   maxTitleChars: number;
   /**
+   * Max characters for a single L2–L5 node (title + body combined).
+   * A flat sanity-check against bloat — not a depth-based escalation curve.
+   * Default: 100_000.
+   */
+  maxNodeChars: number;
+  /**
    * V2 bulk-read algorithm tuning parameters.
    * Controls how many entries receive expanded treatment in default reads.
    */
@@ -221,6 +227,7 @@ export const DEFAULT_CONFIG: HmemConfig = {
   defaultReadLimit: 100,
   prefixes: { ...DEFAULT_PREFIXES },
   maxTitleChars: 50,
+  maxNodeChars: 100_000,
   accessCountTopN: 5,
   prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
   checkpointInterval: 5,
@@ -324,6 +331,7 @@ export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
     maxDepth: config.maxDepth,
     defaultReadLimit: config.defaultReadLimit,
     maxTitleChars: config.maxTitleChars,
+    maxNodeChars: config.maxNodeChars,
     accessCountTopN: config.accessCountTopN,
     prefixes: config.prefixes,
     prefixDescriptions: config.prefixDescriptions,
@@ -392,6 +400,7 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     if (typeof memoryRaw.defaultReadLimit === "number" && memoryRaw.defaultReadLimit > 0) cfg.defaultReadLimit = memoryRaw.defaultReadLimit;
     if (typeof memoryRaw.accessCountTopN === "number" && memoryRaw.accessCountTopN >= 0) cfg.accessCountTopN = memoryRaw.accessCountTopN;
     if (typeof memoryRaw.maxTitleChars === "number" && memoryRaw.maxTitleChars >= 10 && memoryRaw.maxTitleChars <= 120) cfg.maxTitleChars = memoryRaw.maxTitleChars;
+    if (typeof memoryRaw.maxNodeChars === "number" && memoryRaw.maxNodeChars >= 1000) cfg.maxNodeChars = memoryRaw.maxNodeChars;
     if (typeof memoryRaw.checkpointInterval === "number" && memoryRaw.checkpointInterval >= 0) cfg.checkpointInterval = memoryRaw.checkpointInterval;
     if (memoryRaw.checkpointMode === "remind" || memoryRaw.checkpointMode === "auto") cfg.checkpointMode = memoryRaw.checkpointMode;
     if (typeof memoryRaw.recentOEntries === "number" && memoryRaw.recentOEntries >= 0) cfg.recentOEntries = memoryRaw.recentOEntries;
