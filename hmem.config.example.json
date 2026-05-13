@@ -1,16 +1,88 @@
 {
-  "_comment": "Copy this file to your project root as hmem.config.json and adjust to taste.",
+  "_comment": "Copy to your project root as hmem.config.json. All settings are optional — sensible defaults apply.",
 
-  "maxL1Chars": 500,
-  "maxLnChars": 50000,
+  "memory": {
 
-  "_comment_limits": "Instead of maxL1Chars/maxLnChars you can set all levels explicitly:",
-  "_example_explicit": { "maxCharsPerLevel": [500, 5000, 15000, 30000, 50000] },
+    "_comment_chars": "Character limits per depth level. Option A — set endpoints, intermediate levels are interpolated:",
+    "maxL1Chars": 200,
+    "maxLnChars": 50000,
+    "_comment_chars_b": "Option B — explicit array [L1, L2, L3, L4, L5]. Takes precedence over A:",
+    "_example_explicit": { "maxCharsPerLevel": [200, 2500, 10000, 25000, 50000] },
 
-  "maxDepth": 5,
-  "recentChildrenCount": 10,
-  "defaultReadLimit": 100,
+    "maxDepth": 5,
+    "maxTitleChars": 50,
+    "defaultReadLimit": 100,
 
-  "_comment_access": "Top-N most-accessed entries always show L2 in bulk reads (organic favorites). Set to 0 to disable.",
-  "accessCountTopN": 5
+    "_comment_access": "Top-N most-accessed entries always receive expanded treatment in bulk reads. Set to 0 to disable.",
+    "accessCountTopN": 5,
+
+    "_comment_checkpoint": "Auto-save reminder every N messages (0 = off). checkpointMode: 'remind' injects an additionalContext reminder, 'auto' spawns a Haiku subagent that saves directly.",
+    "checkpointInterval": 5,
+    "checkpointMode": "remind",
+
+    "_comment_o_entries": "O-entries (session logs) injected per load_project and per bulk read. Keep bulkReadOEntries at 0 to avoid noise when selecting a project.",
+    "recentOEntries": 10,
+    "bulkReadOEntries": 0,
+
+    "_comment_token": "When cumulative hmem output exceeds this token count, the agent is told to flush + /clear. Set to 0 to disable.",
+    "contextTokenThreshold": 100000,
+
+    "_comment_load_project": "Which L2 sections load_project expands. withBody: show L3 title+body (e.g. Overview). withChildren: list all L3 titles (e.g. Bugs, Roadmap).",
+    "loadProjectExpand": {
+      "withBody": [1],
+      "withChildren": [6, 8]
+    },
+
+    "_comment_bulk_v2": "Fine-tune which entries get expanded in bulk reads. Percentage settings override fixed counts when set. Remove to use built-in defaults.",
+    "_example_bulkReadV2": {
+      "bulkReadV2": {
+        "newestPercent": 20, "newestMin": 5, "newestMax": 15,
+        "accessPercent": 10, "accessMin": 3, "accessMax": 8,
+        "topObsoleteCount": 3, "topSubnodeCount": 3
+      }
+    },
+
+    "_comment_prefixes": "Add custom prefix letters or override built-in names. Built-ins: P=Project, L=Lesson, T=Task, E=Error, D=Decision, M=Milestone, S=Skill, N=Navigator, H=Human, R=Rule, O=Original, I=Infrastructure, C=Convention.",
+    "_example_prefixes": { "prefixes": { "X": "Experiment" } },
+
+    "_comment_global_load": "Prefixes injected into every load_project response. loadDepth: 1=title only, 2=title+body, 3=full. tagFilter restricts to entries carrying that tag.",
+    "_example_globalLoad": {
+      "globalLoad": [
+        { "prefix": "R", "loadDepth": 2 },
+        { "prefix": "C", "loadDepth": 2, "tagFilter": "#universal" }
+      ]
+    },
+
+    "_comment_schemas": "Per-prefix entry schemas. Controls section names, display depth, and what the checkpoint agent may write. checkpointPolicy: 'readonly', 'pointer', or 'append' (default).",
+    "_example_schemas": {
+      "schemas": {
+        "P": {
+          "sections": [
+            { "name": "Overview",   "loadDepth": 2, "description": "Current state / Goals / Architecture / Environment as L3 (≤4 lines each)" },
+            { "name": "Codebase",   "loadDepth": 1, "description": "L3 = module group, L4 = function signature + purpose" },
+            { "name": "Usage",      "loadDepth": 1, "description": "Installation, CLI/API, common workflows. Commands only" },
+            { "name": "Context",    "loadDepth": 1, "description": "Initiator, audience, business context, dependencies as L3" },
+            { "name": "Deployment", "loadDepth": 1, "description": "Server, build, CI/CD, release process" },
+            { "name": "Bugs",       "loadDepth": 1, "checkpointPolicy": "pointer" },
+            { "name": "History",    "loadDepth": 0, "checkpointPolicy": "append", "defaultChildren": ["Tests", "Code Style", "Commits"] },
+            { "name": "Roadmap",    "loadDepth": 2 },
+            { "name": "Ideas",      "loadDepth": 1 }
+          ]
+        }
+      }
+    }
+
+  },
+
+  "_comment_sync": "Sync server config. Use an array for multi-server redundancy. syncSecrets: false by default — set to true to sync tokens/salts to the server (opt-in).",
+  "_example_sync": {
+    "sync": {
+      "serverUrl": "https://your-hmem-sync.example.com",
+      "userId": "your-user-id",
+      "salt": "random-passphrase",
+      "token": "optional-auth-token",
+      "syncSecrets": false
+    }
+  }
+
 }
