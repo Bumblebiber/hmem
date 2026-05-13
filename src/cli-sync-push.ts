@@ -1,4 +1,4 @@
-import { loadSyncConfig, configDir } from './sync/config.js'
+import { loadSyncConfig, saveSyncConfig, configDir } from './sync/config.js'
 import { HmemSyncClient, SyncApiError } from './sync/api.js'
 import { deriveKey, encrypt } from './sync/crypto.js'
 import { getPassphrase } from './sync/passphrase.js'
@@ -69,5 +69,9 @@ export async function syncPush() {
   }
 
   if (encoded.length > BATCH) process.stdout.write('\n')
+
+  config.files[fileId] = { ...fileCfg, last_sync: new Date().toISOString() }
+  await saveSyncConfig(config)
+
   console.log(`✓ Pushed ${total} blobs`)
 }

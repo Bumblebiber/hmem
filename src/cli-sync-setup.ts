@@ -42,7 +42,8 @@ export async function runSetup(opts: { join?: boolean }) {
   const serverAnswer = await ask(`[1/4] Sync server [${config.server}]: `)
   const server = serverAnswer.trim() || config.server
 
-  console.log(`\n  Get your API key at: ${server}/settings/api-keys`)
+  console.log(`\n[2/4] API key`)
+  console.log(`  Get your API key at: ${server}/settings/api-keys`)
   let apiKey = (await ask('  API key: ')).trim()
   if (!apiKey && config.api_key) {
     console.log('  (using existing API key from config)')
