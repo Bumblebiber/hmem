@@ -1,14 +1,45 @@
 import { createInterface } from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
-import { readdirSync, readFileSync, existsSync } from 'node:fs'
+import { readdirSync, readFileSync, existsSync, copyFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir, hostname } from 'node:os'
+import Database from 'better-sqlite3'
 import { loadSyncConfig, saveSyncConfig, configDir } from './sync/config.js'
 import { HmemSyncClient, SyncApiError } from './sync/api.js'
 import { generateKeyMaterial, deriveKey, encrypt } from './sync/crypto.js'
 import { exportToStaging } from './sync-bridge.js'
+import { syncPull } from './cli-sync-pull.js'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+
+export function countLocalEntries(hmemPath: string): number {
+  if (!existsSync(hmemPath)) return 0
+  try {
+    const db = new Database(hmemPath, { readonly: true })
+    try {
+      const row = db.prepare('SELECT COUNT(*) as c FROM memories WHERE seq > 0').get() as { c: number }
+      return row.c
+    } finally {
+      db.close()
+    }
+  } catch {
+    return 0
+  }
+}
+
+export function clearLocalTables(hmemPath: string): void {
+  const db = new Database(hmemPath)
+  try {
+    db.exec(`
+      DELETE FROM memories;
+      DELETE FROM memory_nodes;
+      INSERT INTO hmem_fts(hmem_fts) VALUES('delete-all');
+      DELETE FROM hmem_fts_rowid_map;
+    `)
+  } finally {
+    db.close()
+  }
+}
 
 function isSQLite(filePath: string): boolean {
   try {
@@ -115,32 +146,64 @@ export async function runSetup(opts: { join?: boolean }) {
   config.files[fileId] = { ...config.files[fileId], salt, hmem_path: hmemPath }
   await saveSyncConfig(config)
 
-  if (hmemPath && !opts.join) {
+  const joiningExistingFile = existingFiles.length > 0
+  const localCount = hmemPath ? countLocalEntries(hmemPath) : 0
+
+  const uploadLocal = async (): Promise<void> => {
+    if (!hmemPath) return
+    console.log('  Exporting...')
+    const stagingPath = join(configDir(), `${fileId}.hmem`)
+    await exportToStaging(hmemPath, stagingPath)
+
+    const blobsRaw = JSON.parse(await readFile(stagingPath, 'utf8')) as Array<{
+      id?: number; client_proposed_id?: string; data: string; updated_at?: string
+    }>
+    const key = deriveKey(passphraseAnswer, salt)
+    const BATCH = 500
+    let total = 0
+
+    for (let i = 0; i < blobsRaw.length; i += BATCH) {
+      const batch = blobsRaw.slice(i, i + BATCH).map((b) => ({
+        proposed_id: b.client_proposed_id ?? String(b.id ?? randomUUID()),
+        data: encrypt(b.data, key),
+        device_id: hostname(),
+        updated_at: b.updated_at ?? new Date().toISOString(),
+      }))
+      const res = await client.push({ file_id: fileId, idempotency_key: randomUUID(), blobs: batch })
+      total += res.mappings.length
+      process.stdout.write(`\r  ${total}/${blobsRaw.length} blobs uploaded...`)
+    }
+    console.log(`\n  ✓ Uploaded ${total} blobs`)
+  }
+
+  if (hmemPath && localCount > 0 && joiningExistingFile && !opts.join) {
+    console.log(`\n  ⚠ Server file "${fileId}" already exists and may contain entries from another device.`)
+    console.log(`  Your local memory has ${localCount} entries.`)
+    console.log('\n  Choose how to reconcile:')
+    console.log('    [1] Replace local with server data (safe; local backed up to *.before-sync.*.hmem)')
+    console.log('    [2] Merge: pull server first, then upload local on top (may overwrite older server entries via timestamp-LWW)')
+    console.log('    [3] Cancel setup')
+    const choice = ((await ask('  Choice [1]: ')).trim() || '1')
+
+    if (choice === '3') {
+      console.log('  Setup cancelled.')
+      rl.close()
+      process.exit(0)
+    } else if (choice === '1') {
+      const backup = `${hmemPath}.before-sync.${Date.now()}.hmem`
+      copyFileSync(hmemPath, backup)
+      console.log(`  ✓ Backed up local memory to ${backup}`)
+      clearLocalTables(hmemPath)
+      await syncPull({ passphrase: passphraseAnswer })
+      console.log('  ✓ Local replaced with server data')
+    } else {
+      await syncPull({ passphrase: passphraseAnswer })
+      await uploadLocal()
+    }
+  } else if (hmemPath && !opts.join) {
     const upload = (await ask('\n  Upload existing memory to server? [Y/n]: ')).trim().toLowerCase()
     if (upload !== 'n') {
-      console.log('  Exporting...')
-      const stagingPath = join(configDir(), `${fileId}.hmem`)
-      await exportToStaging(hmemPath, stagingPath)
-
-      const blobsRaw = JSON.parse(await readFile(stagingPath, 'utf8')) as Array<{
-        id?: number; client_proposed_id?: string; data: string; updated_at?: string
-      }>
-      const key = deriveKey(passphraseAnswer, salt)
-      const BATCH = 500
-      let total = 0
-
-      for (let i = 0; i < blobsRaw.length; i += BATCH) {
-        const batch = blobsRaw.slice(i, i + BATCH).map((b) => ({
-          proposed_id: b.client_proposed_id ?? String(b.id ?? randomUUID()),
-          data: encrypt(b.data, key),
-          device_id: hostname(),
-          updated_at: b.updated_at ?? new Date().toISOString(),
-        }))
-        const res = await client.push({ file_id: fileId, idempotency_key: randomUUID(), blobs: batch })
-        total += res.mappings.length
-        process.stdout.write(`\r  ${total}/${blobsRaw.length} blobs uploaded...`)
-      }
-      console.log(`\n  ✓ Uploaded ${total} blobs`)
+      await uploadLocal()
     }
   }
 

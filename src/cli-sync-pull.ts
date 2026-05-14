@@ -7,7 +7,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-export async function syncPull() {
+export async function syncPull(opts: { passphrase?: string } = {}) {
   const config = await loadSyncConfig()
   if (!config.api_key) { console.error('Not configured. Run: hmem setup'); process.exit(1) }
 
@@ -31,7 +31,7 @@ export async function syncPull() {
   const salt = response.salt ?? fileCfg.salt
   if (!salt) { console.error('No salt available. Run: hmem setup'); process.exit(1) }
 
-  const passphrase = await getPassphrase(fileCfg.passphrase_hint)
+  const passphrase = opts.passphrase ?? await getPassphrase(fileCfg.passphrase_hint)
   const key = deriveKey(passphrase, salt)
 
   type RawBlob = { id: number; client_proposed_id?: string; data: string; deleted_at?: string | null; updated_at: string }

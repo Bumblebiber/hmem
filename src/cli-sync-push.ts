@@ -3,13 +3,18 @@ import { HmemSyncClient, SyncApiError } from './sync/api.js'
 import { deriveKey, encrypt } from './sync/crypto.js'
 import { getPassphrase } from './sync/passphrase.js'
 import { exportToStaging } from './sync-bridge.js'
+import { syncPull } from './cli-sync-pull.js'
 import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { hostname } from 'node:os'
 import { randomUUID } from 'node:crypto'
 
-export async function syncPush() {
+export async function syncPush(opts: { skipPull?: boolean; passphrase?: string } = {}) {
+  if (!opts.skipPull) {
+    await syncPull({ passphrase: opts.passphrase })
+  }
+
   const config = await loadSyncConfig()
   if (!config.api_key) { console.error('Not configured. Run: hmem setup'); process.exit(1) }
 
@@ -40,7 +45,7 @@ export async function syncPush() {
 
   if (blobs.length === 0) { console.log('Nothing to push.'); return }
 
-  const passphrase = await getPassphrase(fileCfg.passphrase_hint)
+  const passphrase = opts.passphrase ?? await getPassphrase(fileCfg.passphrase_hint)
   const key = deriveKey(passphrase, salt)
   const client = new HmemSyncClient(config.server, config.api_key)
 

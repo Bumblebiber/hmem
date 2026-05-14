@@ -13,6 +13,12 @@ interface StagingBlob {
 
 type MemoryRow = Record<string, unknown> & { id: string; updated_at?: string; created_at?: string }
 
+function toIso(ts: string | undefined): string {
+  if (!ts) return new Date().toISOString()
+  if (ts.endsWith('Z') || ts.includes('+')) return ts
+  return ts.replace(' ', 'T') + 'Z'
+}
+
 export async function exportToStaging(hmemPath: string, stagingPath: string): Promise<void> {
   const db = new Database(hmemPath, { readonly: true })
   try {
@@ -23,12 +29,12 @@ export async function exportToStaging(hmemPath: string, stagingPath: string): Pr
       ...memories.map((row) => ({
         client_proposed_id: row.id,
         data: JSON.stringify({ _table: 'memories', ...row }),
-        updated_at: row.updated_at ?? row.created_at ?? new Date().toISOString(),
+        updated_at: toIso(row.updated_at ?? row.created_at),
       })),
       ...nodes.map((row) => ({
         client_proposed_id: row.id,
         data: JSON.stringify({ _table: 'memory_nodes', ...row }),
-        updated_at: row.updated_at ?? row.created_at ?? new Date().toISOString(),
+        updated_at: toIso(row.updated_at ?? row.created_at),
       })),
     ]
 
@@ -84,6 +90,7 @@ export async function importFromStaging(stagingPath: string, hmemPath: string): 
         obsolete=excluded.obsolete, favorite=excluded.favorite, irrelevant=excluded.irrelevant,
         title=excluded.title, pinned=excluded.pinned, updated_at=excluded.updated_at,
         active=excluded.active
+      WHERE excluded.updated_at > coalesce(memories.updated_at, '')
     `)
 
     const upsertNode = db.prepare(`
@@ -96,6 +103,7 @@ export async function importFromStaging(stagingPath: string, hmemPath: string): 
       ) ON CONFLICT(id) DO UPDATE SET
         content=excluded.content, title=excluded.title, favorite=excluded.favorite,
         irrelevant=excluded.irrelevant, updated_at=excluded.updated_at
+      WHERE excluded.updated_at > coalesce(memory_nodes.updated_at, '')
     `)
 
     const transaction = db.transaction((rows: StagingBlob[]) => {
