@@ -13,6 +13,46 @@ description: >
 
 Follow these steps in order.
 
+## Step 0: Abort if repos touched this session have uncommitted changes
+
+**Hard gate — must complete before any other step.** Wiping context with
+unfinished local work risks losing track of why those changes exist. The
+post-clear session has no memory of the chat that produced them.
+
+Scope this check to **only the repos the session actually touched** — not
+every repo on the machine. Unrelated work on other projects is not your
+concern here.
+
+1. Look back over this session's tool history and identify every file path
+   you've modified (Edit, Write, NotebookEdit, or any Bash commands that
+   wrote to a tracked file). If no files were modified at all, skip Step 0
+   entirely and proceed to Step 1.
+
+2. For each unique path, resolve its git repo root:
+   ```bash
+   git -C <path> rev-parse --show-toplevel 2>/dev/null
+   ```
+   Dedupe to a set of repo roots. Drop any path that isn't inside a repo.
+
+3. For each repo root, check status:
+   ```bash
+   git -C <repo-root> status --porcelain
+   ```
+
+4. If **any** repo has non-empty status output:
+   - **Do not proceed to Step 1 or beyond. Do not tell the user to `/clear`.**
+   - Print the dirty file list per repo so the user sees exactly what's at risk.
+   - Reply with:
+     > Wipe aborted — uncommitted changes in repo(s) you worked on this session. Commit, stash, or discard the listed files first, then re-run /wipe. (If the changes are intentional WIP you want to keep across the wipe, stash them with a clear message: `git stash push -m "WIP: <what + why>"`.)
+   - End the skill.
+
+Only proceed to Step 1 when every session-touched repo is clean.
+
+**Why session-scoped, not whole-machine:** other repos may have intentional
+WIP unrelated to this conversation — those aren't your responsibility to
+gate on. The risk this guard prevents is losing the *why* behind changes
+you just helped make.
+
 ## Step 1: Optionally save high-value knowledge
 
 Check `checkpointMode` in hmem.config.json to decide what to do:
