@@ -280,12 +280,44 @@ Edit `~/.cursor/mcp.json`, `~/.codeium/windsurf/mcp_config.json`, or `.vscode/mc
 
 | Key | Default | What it does |
 |-----|---------|-------------|
-| `checkpointMode` | `"remind"` | `"auto"` = Haiku writes L/D/E in background. `"remind"` = prompts the main agent |
+| `checkpointMode` | `"remind"` | `"auto"` = background agent writes L/D/E. `"remind"` = prompts the main agent |
 | `checkpointInterval` | `5` | Exchanges between checkpoints. `0` = disabled |
+| `checkpointProvider` | `"anthropic"` | `"anthropic"` or `"openai"` (any OpenAI-compatible: DeepSeek, Groq, …) |
+| `checkpointModel` | `"claude-haiku-4-5-20251001"` | Model name for the configured provider |
+| `checkpointBaseUrl` | — | OpenAI-compatible base URL (e.g. `https://api.deepseek.com/v1`) |
+| `checkpointApiKeyEnv` | provider default | Env var holding the API key. Defaults: `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` |
 | `recentOEntries` | `10` | How many recent sessions to show in `load_project` |
 | `prefixes` | built-in | Add custom entry types |
 
 All keys are optional. Missing keys use defaults.
+
+### Checkpoint setup per harness
+
+The auto-checkpoint agent runs in the background after every Nth exchange. It needs an LLM call — three paths, picked automatically:
+
+1. **API key in environment** (any harness) → direct provider API loop. Configure `checkpointProvider` + `checkpointModel` + `checkpointApiKeyEnv` in `hmem.config.json`. Works from Pi, Hermes, OpenCode, and Claude Code.
+2. **No API key, but `claude` CLI in PATH** → subprocess fallback (`claude -p`). Zero-config for Claude Code / Claude Max users.
+3. **Neither** → checkpoint fails with a config-hint error.
+
+**Recommended cheap setup (DeepSeek, ~10× cheaper than Haiku):**
+
+```json
+{
+  "memory": {
+    "checkpointMode": "auto",
+    "checkpointProvider": "openai",
+    "checkpointModel": "deepseek-chat",
+    "checkpointBaseUrl": "https://api.deepseek.com/v1",
+    "checkpointApiKeyEnv": "DEEPSEEK_API_KEY"
+  }
+}
+```
+
+Then `export DEEPSEEK_API_KEY=sk-...` in your shell profile. Works for any harness.
+
+**Claude Code / Claude Max (zero-config):** no provider settings needed — the subprocess fallback uses your existing `claude` login.
+
+**Per-harness exchange logging:** Claude Code uses `Stop` hooks (installed by `npx hmem init`). Pi uses the built-in extension (`src/extensions/pi-hmem.ts`). Hermes needs the `hermes-hmem` plugin (see `plugins/hermes-hmem/README.md`). OpenCode uses the same hook system as Claude Code.
 
 ---
 
