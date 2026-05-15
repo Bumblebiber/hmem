@@ -481,6 +481,24 @@ The `MIGRATIONS` array of `ALTER TABLE` statements is now tracked in `schema_ver
 
 ---
 
+## Step 2m: v1.2.3 — hmem-sync link status in session-start context
+
+**Only relevant when upgrading from < v1.2.3**
+
+`hmem hook-startup` now reads `~/.hmem/config.json` on the first message of every session and appends a one-line `--- hmem-sync ---` block to the agent's `additionalContext`:
+
+- `✓ Linked to <server> | active_file: <id> | last sync: <ago>` — writes propagate to other devices on next `hmem-sync push`
+- `⚠ Linked … never synced` — run `hmem-sync pull` to fetch
+- `⚠ Authenticated … no active file` — run `hmem-sync setup`
+- `✗ Not linked` — writes stay local; run `hmem-sync login`
+- Silent if `config.json` doesn't exist (hmem-sync never configured)
+
+The `o9k-session-start` skill maps this block to a visible 🟢/🟡/🔴 indicator in the `[CORTEX READY]` output, so the user sees connection state at a glance.
+
+No action required — automatic on next session start.
+
+---
+
 ## Step 3: Entry Migration
 
 Some versions introduce new data formats. Check if migration is needed:

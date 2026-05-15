@@ -48,7 +48,7 @@ hmem init --global --tools claude-code --dir ~/.hmem --no-example
 
 Script: `~/.claude/hooks/o9k-startup.sh`
 
-- **First message**: injects `additionalContext` telling the agent to call `read_memory()` silently.
+- **First message**: injects `additionalContext` telling the agent to call `read_memory()` silently. Also injects H-entries, active device apps, infrastructure favorites, recent projects, checkpoint status, and — if `~/.hmem/config.json` exists — an `--- hmem-sync ---` line showing link state (✓ linked / ⚠ never synced / ✗ not linked).
 - **Every Nth message** (N = `checkpointInterval`, default 20): injects a checkpoint reminder.
   - `checkpointMode: "remind"` — adds an `additionalContext` nudge; the agent decides what to save.
   - `checkpointMode: "auto"` — checkpoint is handled by the Stop hook instead (no reminder injected).
