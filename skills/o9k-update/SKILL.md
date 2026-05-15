@@ -1,11 +1,14 @@
 ---
 name: o9k-update
-description: "Post-update checklist for its-over-9k (formerly o9k-mcp) and o9k-sync. Run after npm update or when hmem detects a version change. Covers skill sync, entry migration, schema enforcement, O-entry curation, and smoke tests. Use when the user says 'update hmem', 'hmem updaten', or when the startup version-check detects a new version."
+description: "End-to-end update routine for its-over-9k (formerly o9k-mcp) and o9k-sync. Drives the full update: runs `npm update -g`, syncs skill files, applies schema/entry migrations, verifies hooks and configs, runs the smoke test. Use when the user says 'update hmem', 'hmem updaten', 'check for updates', or when the startup version-check detects a new version. Initiates the update itself — do not assume the user has already run npm update."
 ---
 
-# /o9k-update — Post-Update Checklist
+# /o9k-update — Update Routine
 
-Run this after updating its-over-9k or o9k-sync. Every step is important — do not skip steps.
+Drives the full update flow for its-over-9k and o9k-sync: detects the current
+version, runs `npm update -g` if outdated, syncs skill files, applies any
+migrations, verifies hooks and configs, runs the smoke test. Every step is
+important — do not skip steps.
 
 > **Package naming note:** The npm package is `its-over-9k` (formerly `o9k-mcp`,
 > formerly `hmem`). The installed CLI is still `hmem`, the MCP server tools still
@@ -28,12 +31,12 @@ Run this after updating its-over-9k or o9k-sync. Every step is important — do 
 
 ## Step 1: Version Check
 
-Determine what changed:
+Determine the current and latest version:
 
 ```bash
 hmem --version                            # current installed version (e.g. "hmem 1.2.1")
 npm view its-over-9k version              # latest on npm
-npm view its-over-9k versions --json      # all versions
+npm view its-over-9k versions --json      # all versions (for changelog range)
 ```
 
 Read the changelog for the version range:
@@ -44,6 +47,30 @@ cd ~/projects/hmem && git log --oneline <old-tag>..HEAD  # if local repo exists
 Or check GitHub releases: `gh release list -R Bumblebiber/its-over-9k --limit 5`
 
 **If already on latest:** Tell the user and skip to Step 7 (smoke test).
+
+---
+
+## Step 1b: Run the Update
+
+If the installed version is older than the latest on npm, run the update now:
+
+```bash
+npm update -g its-over-9k
+```
+
+If the user installed via the deprecated `o9k-mcp` package name, uninstall it
+first to avoid two parallel installs:
+
+```bash
+npm list -g --depth=0 | grep -E 'o9k-mcp|its-over-9k'   # check what's installed
+npm uninstall -g o9k-mcp                                # only if listed
+npm install -g its-over-9k                              # fresh install
+```
+
+After the update, **the MCP server is still running the OLD version** —
+it's loaded into the host process (Claude Code, Gemini CLI, etc.) and
+won't pick up the new code until restart. Continue with Steps 2–6 first;
+the restart happens in Step 7.
 
 ---
 
