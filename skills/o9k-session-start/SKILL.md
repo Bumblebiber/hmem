@@ -153,6 +153,7 @@ The UserPromptSubmit hook injects the following into every session start:
 - **Active device apps** — Apps list of the current I-entry (if device is set)
 - **Infrastructure favorites** — any I-entry with `favorite: true` (e.g. reMarkable, shared server). Mark with `update_memory(id="I00XX", favorite=true)`.
 - **Recent projects** — 5 most recently updated P-entries
+- **hmem-sync status** — `--- hmem-sync ---` block with link state. Only present if `~/.hmem/config.json` exists.
 
 ## OUTPUT
 
@@ -160,7 +161,15 @@ After all steps, output exactly:
 
 [CORTEX READY]
 Project: <name from load_project>
+Sync: <dot> <status line>
 Context loaded. Ready.
 [/CORTEX READY]
+
+**Sync line — read from the auto-injected `--- hmem-sync ---` block and map:**
+- `✓ Linked …` → `🟢 connected (<server>, last sync <ago>)`
+- `⚠ Linked … never synced` → `🟡 linked, never synced — run \`hmem-sync pull\``
+- `⚠ Authenticated … no active file` → `🟡 no active file — run \`hmem-sync setup\``
+- `✗ Not linked` → `🔴 not connected — writes stay local`
+- No `--- hmem-sync ---` block present → omit the `Sync:` line entirely
 
 Then wait for the user's first message.

@@ -25,6 +25,42 @@ import { resolveEnvDefaults } from "./cli-env.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { writeSessionMarker, purgeStaleSessionMarkers, readSessionMarker, writePpidMapping, getParentPid, getActiveDevice } from "./session-state.js";
 
+function formatAgo(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "unknown";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+function buildSyncStatus(): string {
+  const configPath = path.join(os.homedir(), ".hmem", "config.json");
+  if (!fs.existsSync(configPath)) return "";
+  let cfg: any;
+  try { cfg = JSON.parse(fs.readFileSync(configPath, "utf8")); } catch { return ""; }
+
+  const server = cfg.server || "https://hmem-sync.io";
+  const linked = !!(cfg.session_token || cfg.api_key);
+  const activeFile = cfg.active_file;
+
+  if (!linked) {
+    return "\n\n--- hmem-sync ---\n✗ Not linked — writes stay local. Run `hmem-sync login` to enable cross-device sync.";
+  }
+  if (!activeFile) {
+    return `\n\n--- hmem-sync ---\n⚠ Authenticated to ${server} but no active file. Run \`hmem-sync setup\` to link one.`;
+  }
+  const fileCfg = cfg.files?.[activeFile];
+  if (!fileCfg?.last_sync) {
+    return `\n\n--- hmem-sync ---\n⚠ Linked to ${server} (active_file: ${activeFile}) but never synced. Run \`hmem-sync pull\` to fetch.`;
+  }
+  const ago = formatAgo(Date.now() - new Date(fileCfg.last_sync).getTime());
+  return `\n\n--- hmem-sync ---\n✓ Linked to ${server} | active_file: ${activeFile} | last sync: ${ago} — writes propagate to other devices on next \`hmem-sync push\`.`;
+}
+
 export async function hookStartup(): Promise<void> {
   // Read hook JSON from stdin. When invoked from a TTY (manual run),
   // sync-reading fd 0 blocks forever — bail out.
@@ -181,6 +217,8 @@ export async function hookStartup(): Promise<void> {
       } catch { /* ignore */ }
     }
 
+    const syncStatus = buildSyncStatus();
+
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
@@ -189,7 +227,8 @@ export async function hookStartup(): Promise<void> {
           "- Otherwise: call read_memory() (no parameters) to get the full L1 overview, then decide." +
           deviceNote +
           humanContext +
-          recentProjects,
+          recentProjects +
+          syncStatus,
       },
     }));
   } else if (mode === "remind" && interval > 0 && count % interval === 0) {
