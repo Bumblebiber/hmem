@@ -481,6 +481,20 @@ The `MIGRATIONS` array of `ALTER TABLE` statements is now tracked in `schema_ver
 
 ---
 
+## Step 2o: v1.2.5 — Pull from hmem-sync before first-message context
+
+**Only relevant when upgrading from < v1.2.5**
+
+`hmem hook-startup` now calls `syncPull(HMEM_PATH)` before reading local SQLite for the greeting/project list. Closes the gap where entries written on another device weren't visible until the agent's first MCP `read_memory` call triggered the existing pull.
+
+- Bounded to 3 seconds — falls back to stale local data if the server is slow or unreachable
+- No-op if hmem-sync isn't configured / no `HMEM_SYNC_PASSPHRASE` env var
+- 30s cooldown is per-process and won't double-pull with MCP
+
+Typical added latency: ~0ms (no sync) to ~1s (cross-region pull). No action required.
+
+---
+
 ## Step 2n: v1.2.4 — Natural session-start greeting
 
 **Only relevant when upgrading from < v1.2.4**

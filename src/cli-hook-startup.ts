@@ -137,6 +137,23 @@ export async function hookStartup(): Promise<void> {
 
   // First message: load memory + H-entries + recent projects + device check
   if (count === 1) {
+    // Pull latest from hmem-sync BEFORE reading local SQLite, so greeting and
+    // project list reflect entries written on other devices since the last
+    // session. Bounded to 3s — if the pull is slow or the server is unreachable,
+    // fall back to stale local data rather than blocking the hook timeout.
+    if (hmemPath) {
+      try {
+        const { syncPull } = await import("./mcp-shared.js");
+        await Promise.race([
+          syncPull(hmemPath).catch(() => undefined),
+          new Promise<void>((resolve) => {
+            const t = setTimeout(resolve, 3000);
+            t.unref();
+          }),
+        ]);
+      } catch { /* sync module unavailable or pull rejected — proceed offline */ }
+    }
+
     const deviceId = getActiveDevice();
     const deviceNote = deviceId
       ? ""

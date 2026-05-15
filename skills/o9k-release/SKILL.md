@@ -117,6 +117,35 @@ git push
 
 ---
 
+## Step 8b: Release Notes (always — including patches)
+
+**Every release gets release notes — no exceptions for "trivial" patches.** The GitHub release page is the canonical "what changed in vX.Y.Z" that users check when something behaves differently after an update.
+
+```bash
+cd ~/projects/hmem
+VERSION=$(node -p "require('./package.json').version")
+gh release create "v$VERSION" \
+  --title "v$VERSION — <short summary>" \
+  --notes "$(cat <<'EOF'
+## Changes
+- <bullet 1>
+- <bullet 2>
+
+## Impact / Migration
+<paragraph — or omit if obvious>
+EOF
+)"
+```
+
+Sizing:
+- **Patch**: 1–3 bullets, no migration section needed if behavior is purely additive
+- **Minor**: bullets per feature, brief migration paragraph if any config touched
+- **Major**: full breaking-changes list, before/after examples, migration steps
+
+Never skip with "it's just a tiny patch" — undocumented patches are exactly the ones that surprise users later.
+
+---
+
 ## Step 9: Post-Publish
 
 1. Verify on npm: `npm view its-over-9k version`
