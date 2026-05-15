@@ -74,6 +74,48 @@ the restart happens in Step 7.
 
 ---
 
+## Step 1c: Present the changelog to the user
+
+**Always — even for a single-patch jump.** Right after the update is installed, fetch the GitHub release notes for every version in the gap (`<old>` exclusive → `<new>` inclusive) and present a tidy summary to the user. They just installed something; they deserve to know what it does.
+
+```bash
+OLD=<previously-installed version>   # e.g. 1.2.3
+NEW=$(node -p "require('/path/to/its-over-9k/package.json').version")  # e.g. 1.2.5
+gh release list -R Bumblebiber/its-over-9k --limit 20 \
+  | awk -v o="v$OLD" -v n="v$NEW" '$1 > o && $1 <= n {print $1}' \
+  | while read tag; do
+      echo "=== $tag ==="
+      gh release view "$tag" -R Bumblebiber/its-over-9k --json body -q .body
+    done
+```
+
+Present to the user in this shape (German if user speaks German, English otherwise):
+
+```
+📦 its-over-9k v1.2.3 → v1.2.5 — Was sich geändert hat:
+
+v1.2.5 — Pull from hmem-sync before first-message context
+  • Hook-startup pulls latest entries before building greeting/project list
+  • New /o9k-release rule: release notes for every release
+
+v1.2.4 — Natural session-start greeting
+  • One-line greeting with name + 🟢/🟡/🔴 sync dot
+  • Conditional project list if no project named in opening message
+
+v1.2.3 — hmem-sync link status in session-start context
+  • New --- hmem-sync --- block shows whether writes propagate
+```
+
+Keep each release to 2–4 bullets. Skip the "Impact / Migration" section unless it requires user action — flag those separately as 🛠 actions after the summary.
+
+If `gh` is not available or the user is offline, fall back to:
+```bash
+cd ~/projects/hmem && git log --oneline "v$OLD..v$NEW"
+```
+and present commit titles instead.
+
+---
+
 ## Step 2: Update Skills
 
 ```bash
