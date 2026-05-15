@@ -1,0 +1,12 @@
+{
+  "eval_id": 1,
+  "eval_name": "document-new-helper",
+  "prompt": "Du wurdest beauftragt: Im Projekt P0048 (its-over-9k) wurde gerade eine neue Hilfsfunktion `truncateText(s: str, maxLen: int) -> str` zur Datei `plugins/hermes-hmem/__init__.py` hinzugefügt. Die Implementierung liegt schon im Code. Sorge dafür, dass künftige Agents, die in diesem Projekt arbeiten, über die Existenz und Signatur dieser Funktion Bescheid wissen. Tag jeden hmem-Write mit `#eval-i2-subagent-2026-05-15`.",
+  "assertions": [
+    { "id": "result_tags_only", "description": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]" },
+    { "id": "word_limit_200", "description": "Body inside [RESULT]...[/RESULT] is at most 200 words" },
+    { "id": "targets_codebase_section", "description": "Agent writes to the project's Codebase section (P0048.2.*) — not Roadmap, Ideas, or any other section" },
+    { "id": "captures_signature", "description": "The hmem entry includes the function signature truncateText(s, maxLen) and the file path plugins/hermes-hmem/__init__.py" },
+    { "id": "sentinel_tag_present", "description": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15" }
+  ]
+}

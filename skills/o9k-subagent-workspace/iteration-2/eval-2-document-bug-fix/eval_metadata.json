@@ -1,0 +1,13 @@
+{
+  "eval_id": 2,
+  "eval_name": "document-bug-fix",
+  "prompt": "Du wurdest beauftragt: Im Projekt P0048 (its-over-9k) wurde gerade ein Bug behoben — `hmem-sync v1.0.1 schlägt fehl, wenn HMEM_PATH Leerzeichen enthält`. Der Fix ist gepusht. Stelle sicher, dass künftige Agents von diesem Bug und seinem Fix wissen, damit sie nicht denselben Pfad nochmal beschreiten. Tag jeden hmem-Write mit `#eval-i2-subagent-2026-05-15`.",
+  "assertions": [
+    { "id": "result_tags_only", "description": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]" },
+    { "id": "word_limit_200", "description": "Body inside [RESULT]...[/RESULT] is at most 200 words" },
+    { "id": "targets_bugs_or_eentry", "description": "Agent writes to project's Bugs section (P0048.6.*) OR creates a new E-entry linked to P0048" },
+    { "id": "captures_bug_specifics", "description": "The hmem entry mentions HMEM_PATH with spaces (the specific failure condition) and hmem-sync v1.0.1" },
+    { "id": "marked_solved", "description": "Bug status reflects 'fixed/solved' — via #solved tag, [✓] marker, or solution-text node, not left as an open issue" },
+    { "id": "sentinel_tag_present", "description": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15" }
+  ]
+}

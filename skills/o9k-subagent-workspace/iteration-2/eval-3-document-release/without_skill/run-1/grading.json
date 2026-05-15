@@ -1,0 +1,36 @@
+{
+  "run_id": "eval-3-document-release-without_skill",
+  "expectations": [
+    {
+      "text": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]",
+      "passed": false,
+      "evidence": "Response is a free-form markdown report ('v1.2.1 release of its-over-9k (P0048) is now documented...') — no [RESULT] tags anywhere."
+    },
+    {
+      "text": "Body inside [RESULT]...[/RESULT] is at most 200 words",
+      "passed": false,
+      "evidence": "No [RESULT] block exists. Full markdown response is ~140 words across paragraphs and a 'Changes' bullet list — but criterion specifically requires the body to be inside [RESULT] tags."
+    },
+    {
+      "text": "Agent writes to Overview (P0048.1.*) and/or Deployment (P0048.5.*) — release info goes there, not Roadmap or Ideas",
+      "passed": false,
+      "evidence": "Primary write was to History (P0048.7.77). Agent noted P0048.1.5 Overview already existed from a previous run but did not create that themselves — they did not target the canonical release sections this run."
+    },
+    {
+      "text": "The hmem entry explicitly mentions v1.2.1",
+      "passed": true,
+      "evidence": "Version v1.2.1 explicitly mentioned in P0048.7.77 title body."
+    },
+    {
+      "text": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15",
+      "passed": true,
+      "evidence": "Sentinel tag carried inline in title of P0048.7.77."
+    }
+  ],
+  "summary": {
+    "pass_rate": 0.4,
+    "passed": 2,
+    "failed": 3,
+    "total": 5
+  }
+}

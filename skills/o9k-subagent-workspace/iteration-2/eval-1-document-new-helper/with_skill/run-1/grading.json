@@ -1,0 +1,36 @@
+{
+  "run_id": "eval-1-document-new-helper-with_skill",
+  "expectations": [
+    {
+      "text": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]",
+      "passed": true,
+      "evidence": "response.md is exactly 3 lines: opening [RESULT], one content line, closing [/RESULT]. No preamble, no postamble."
+    },
+    {
+      "text": "Body inside [RESULT]...[/RESULT] is at most 200 words",
+      "passed": true,
+      "evidence": "Body is ~32 words — single sentence covering node ID, file path, signature, purpose, tag."
+    },
+    {
+      "text": "Agent writes to the project's Codebase section (P0048.2.*) — not Roadmap, Ideas, or any other section",
+      "passed": true,
+      "evidence": "Result explicitly states 'Documented in P0048.2.13' — node .2.13 is under .2 Codebase."
+    },
+    {
+      "text": "The hmem entry includes the function signature truncateText(s, maxLen) and the file path plugins/hermes-hmem/__init__.py",
+      "passed": true,
+      "evidence": "Signature 'truncateText(s: str, maxLen: int) -> str' and path 'plugins/hermes-hmem/__init__.py' both appear in the result."
+    },
+    {
+      "text": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15",
+      "passed": true,
+      "evidence": "Result states 'Tagged #eval-i2-subagent-2026-05-15' for the single write performed."
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 5,
+    "failed": 0,
+    "total": 5
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "run_id": "eval-3-document-release-with_skill",
+  "expectations": [
+    {
+      "text": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]",
+      "passed": true,
+      "evidence": "Response opens with [RESULT] and closes with [/RESULT]; no extra text outside."
+    },
+    {
+      "text": "Body inside [RESULT]...[/RESULT] is at most 200 words",
+      "passed": true,
+      "evidence": "Body is ~63 words covering Overview + Deployment writes and the agent-handoff note."
+    },
+    {
+      "text": "Agent writes to Overview (P0048.1.*) and/or Deployment (P0048.5.*) — release info goes there, not Roadmap or Ideas",
+      "passed": true,
+      "evidence": "Wrote both: P0048.1.5 (Overview) and P0048.5.3 (Deployment) — both correct sections per release-info schema."
+    },
+    {
+      "text": "The hmem entry explicitly mentions v1.2.1",
+      "passed": true,
+      "evidence": "Version 'v1.2.1' appears in both written node titles and in the body of the result."
+    },
+    {
+      "text": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15",
+      "passed": true,
+      "evidence": "Result states 'Both entries tagged #eval-i2-subagent-2026-05-15'."
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 5,
+    "failed": 0,
+    "total": 5
+  }
+}

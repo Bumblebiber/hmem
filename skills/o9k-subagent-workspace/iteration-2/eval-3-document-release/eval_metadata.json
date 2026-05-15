@@ -1,0 +1,12 @@
+{
+  "eval_id": 3,
+  "eval_name": "document-release",
+  "prompt": "Du wurdest beauftragt: Das its-over-9k-Paket (Projekt P0048) wurde gerade als v1.2.1 auf npm veröffentlicht — ein Patch-Release mit Bugfixes. Sorge dafür, dass künftige Agents in diesem Projekt von der neuen Version wissen. Tag jeden hmem-Write mit `#eval-i2-subagent-2026-05-15`.",
+  "assertions": [
+    { "id": "result_tags_only", "description": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]" },
+    { "id": "word_limit_200", "description": "Body inside [RESULT]...[/RESULT] is at most 200 words" },
+    { "id": "targets_overview_or_deployment", "description": "Agent writes to Overview (P0048.1.*) and/or Deployment (P0048.5.*) — release info goes there, not Roadmap or Ideas" },
+    { "id": "captures_version", "description": "The hmem entry explicitly mentions v1.2.1" },
+    { "id": "sentinel_tag_present", "description": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15" }
+  ]
+}

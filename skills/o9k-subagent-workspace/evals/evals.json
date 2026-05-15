@@ -1,0 +1,46 @@
+{
+  "skill_name": "o9k-subagent",
+  "iteration_note": "Iteration 2: prompts deliberately omit node IDs (P0048.X) — iteration 1 showed that explicit IDs erased the difference between with/without-skill. These prompts force the agent to discover the correct section from project context alone.",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Du wurdest beauftragt: Im Projekt P0048 (its-over-9k) wurde gerade eine neue Hilfsfunktion `truncateText(s: str, maxLen: int) -> str` zur Datei `plugins/hermes-hmem/__init__.py` hinzugefügt. Die Implementierung liegt schon im Code. Sorge dafür, dass künftige Agents, die in diesem Projekt arbeiten, über die Existenz und Signatur dieser Funktion Bescheid wissen. Tag jeden hmem-Write mit `#eval-i2-subagent-2026-05-15`.",
+      "expected_output": "Subagent identifies Codebase as the correct section, calls append_memory or update_memory to record the function signature + file path + one-line purpose, returns [RESULT]…[/RESULT] under 200 words.",
+      "files": [],
+      "assertions": [
+        { "id": "result_tags_only", "description": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]" },
+        { "id": "word_limit_200", "description": "Body inside [RESULT]...[/RESULT] is at most 200 words" },
+        { "id": "targets_codebase_section", "description": "Agent writes to the project's Codebase section (P0048.2.*) — not Roadmap, Ideas, or any other section" },
+        { "id": "captures_signature", "description": "The hmem entry includes the function signature truncateText(s, maxLen) and the file path plugins/hermes-hmem/__init__.py" },
+        { "id": "sentinel_tag_present", "description": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15" }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Du wurdest beauftragt: Im Projekt P0048 (its-over-9k) wurde gerade ein Bug behoben — `hmem-sync v1.0.1 schlägt fehl, wenn HMEM_PATH Leerzeichen enthält`. Der Fix ist gepusht. Stelle sicher, dass künftige Agents von diesem Bug und seinem Fix wissen, damit sie nicht denselben Pfad nochmal beschreiten. Tag jeden hmem-Write mit `#eval-i2-subagent-2026-05-15`.",
+      "expected_output": "Subagent identifies Bugs section / creates an E-entry, records the bug, marks it #solved (or similar), returns [RESULT]…[/RESULT] under 200 words.",
+      "files": [],
+      "assertions": [
+        { "id": "result_tags_only", "description": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]" },
+        { "id": "word_limit_200", "description": "Body inside [RESULT]...[/RESULT] is at most 200 words" },
+        { "id": "targets_bugs_or_eentry", "description": "Agent writes to project's Bugs section (P0048.6.*) OR creates a new E-entry linked to P0048" },
+        { "id": "captures_bug_specifics", "description": "The hmem entry mentions HMEM_PATH with spaces (the specific failure condition) and hmem-sync v1.0.1" },
+        { "id": "marked_solved", "description": "Bug status reflects 'fixed/solved' — via #solved tag, [✓] marker, or solution-text node, not left as an open issue" },
+        { "id": "sentinel_tag_present", "description": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15" }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Du wurdest beauftragt: Das its-over-9k-Paket (Projekt P0048) wurde gerade als v1.2.1 auf npm veröffentlicht — ein Patch-Release mit Bugfixes. Sorge dafür, dass künftige Agents in diesem Projekt von der neuen Version wissen. Tag jeden hmem-Write mit `#eval-i2-subagent-2026-05-15`.",
+      "expected_output": "Subagent updates Overview (current version) or Deployment (release log), records the v1.2.1 release with date, returns [RESULT]…[/RESULT] under 200 words.",
+      "files": [],
+      "assertions": [
+        { "id": "result_tags_only", "description": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]" },
+        { "id": "word_limit_200", "description": "Body inside [RESULT]...[/RESULT] is at most 200 words" },
+        { "id": "targets_overview_or_deployment", "description": "Agent writes to Overview (P0048.1.*) and/or Deployment (P0048.5.*) — release info goes there, not Roadmap or Ideas" },
+        { "id": "captures_version", "description": "The hmem entry explicitly mentions v1.2.1" },
+        { "id": "sentinel_tag_present", "description": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15" }
+      ]
+    }
+  ]
+}

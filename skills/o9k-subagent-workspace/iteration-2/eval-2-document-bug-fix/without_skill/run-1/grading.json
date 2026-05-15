@@ -1,0 +1,41 @@
+{
+  "run_id": "eval-2-document-bug-fix-without_skill",
+  "expectations": [
+    {
+      "text": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]",
+      "passed": false,
+      "evidence": "Response is a multi-section markdown report starting with '# Bug-Fix dokumentiert: ...' — no [RESULT] tags anywhere."
+    },
+    {
+      "text": "Body inside [RESULT]...[/RESULT] is at most 200 words",
+      "passed": false,
+      "evidence": "No [RESULT] block exists. Full markdown report is ~250+ words across multiple sections (Status, Bestehender Eintrag, Neue Einträge, Tags, Garantie, Nicht getan)."
+    },
+    {
+      "text": "Agent writes to project's Bugs section (P0048.6.*) OR creates a new E-entry linked to P0048",
+      "passed": true,
+      "evidence": "Extended existing E0166 (linked to P0048) via E0166.5.2 sub-node and also created L0201 lesson. E-entry condition met."
+    },
+    {
+      "text": "The hmem entry mentions HMEM_PATH with spaces (the specific failure condition) and hmem-sync v1.0.1",
+      "passed": true,
+      "evidence": "Headline mentions 'hmem-sync v1.0.1 HMEM_PATH-mit-Leerzeichen' and L0201 mentions 'path-with-spaces bugs'."
+    },
+    {
+      "text": "Bug status reflects 'fixed/solved' — via #solved tag, [✓] marker, or solution-text node, not left as an open issue",
+      "passed": true,
+      "evidence": "Appended to E0166's .4 Solution section with explicit 'Status SOLVED' confirmation."
+    },
+    {
+      "text": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15",
+      "passed": true,
+      "evidence": "Tag listed on E0166 (via tag_bulk), E0166.5.2, and L0201."
+    }
+  ],
+  "summary": {
+    "pass_rate": 0.6666666666666666,
+    "passed": 4,
+    "failed": 2,
+    "total": 6
+  }
+}

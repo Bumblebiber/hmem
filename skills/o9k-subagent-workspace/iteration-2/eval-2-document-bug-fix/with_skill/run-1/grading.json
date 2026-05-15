@@ -1,0 +1,41 @@
+{
+  "run_id": "eval-2-document-bug-fix-with_skill",
+  "expectations": [
+    {
+      "text": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]",
+      "passed": true,
+      "evidence": "Response is opening [RESULT], one content paragraph, closing [/RESULT]. No surrounding text."
+    },
+    {
+      "text": "Body inside [RESULT]...[/RESULT] is at most 200 words",
+      "passed": true,
+      "evidence": "Body is ~80 words — covers E-entry creation, sub-node fills, Bugs pointer, tags."
+    },
+    {
+      "text": "Agent writes to project's Bugs section (P0048.6.*) OR creates a new E-entry linked to P0048",
+      "passed": true,
+      "evidence": "Created E0166 linked to P0048 AND appended summary at P0048.6.14 (Bugs section). Both conditions met."
+    },
+    {
+      "text": "The hmem entry mentions HMEM_PATH with spaces (the specific failure condition) and hmem-sync v1.0.1",
+      "passed": true,
+      "evidence": "E0166 title quotes 'hmem-sync v1.0.1 fails when HMEM_PATH contains spaces'."
+    },
+    {
+      "text": "Bug status reflects 'fixed/solved' — via #solved tag, [✓] marker, or solution-text node, not left as an open issue",
+      "passed": true,
+      "evidence": "Title carries #solved, dedicated .4 Solution node filled with fix detail, #solved tag in tags array."
+    },
+    {
+      "text": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15",
+      "passed": true,
+      "evidence": "Result lists sentinel tag on E0166 (tags) and on the P0048.6.14 Bugs pointer."
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 6,
+    "failed": 0,
+    "total": 6
+  }
+}

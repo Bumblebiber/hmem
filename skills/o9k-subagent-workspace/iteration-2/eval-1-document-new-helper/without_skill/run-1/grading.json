@@ -1,0 +1,36 @@
+{
+  "run_id": "eval-1-document-new-helper-without_skill",
+  "expectations": [
+    {
+      "text": "Response contains [RESULT]...[/RESULT] tags exactly, with nothing before [RESULT] and nothing after [/RESULT]",
+      "passed": true,
+      "evidence": "Both [RESULT] and [/RESULT] tags present; nothing precedes or follows the block."
+    },
+    {
+      "text": "Body inside [RESULT]...[/RESULT] is at most 200 words",
+      "passed": true,
+      "evidence": "Body is ~73 words across bulleted writes summary."
+    },
+    {
+      "text": "Agent writes to the project's Codebase section (P0048.2.*) — not Roadmap, Ideas, or any other section",
+      "passed": true,
+      "evidence": "Reports L3 node P0048.2.14 under Codebase. Also created a sidecar C0014 (custom prefix) — over-engineering but not wrong-section."
+    },
+    {
+      "text": "The hmem entry includes the function signature truncateText(s, maxLen) and the file path plugins/hermes-hmem/__init__.py",
+      "passed": true,
+      "evidence": "Signature and path both appear verbatim in the result body."
+    },
+    {
+      "text": "Every hmem write carries the tag #eval-i2-subagent-2026-05-15",
+      "passed": true,
+      "evidence": "Result explicitly states both writes (P0048.2.14 L3+L4 chain, and C0014) carry the sentinel tag."
+    }
+  ],
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 5,
+    "failed": 0,
+    "total": 5
+  }
+}
