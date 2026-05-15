@@ -3255,12 +3255,20 @@ export class HmemStore {
     ).get(prefix);
   }
 
-  /** Return the title of a non-obsolete entry, or undefined if missing or obsolete. */
+  /** Return the title of a non-obsolete entry, or undefined if missing or obsolete.
+   *  Falls back to level_1 (body) when title is NULL or stored as the ID itself —
+   *  some entries created via write_memory put the descriptive content in the body
+   *  while title ends up empty or equal to the ID. */
   getNonObsoleteTitle(id: string): string | undefined {
     const row = this.db.prepare(
-      "SELECT title FROM memories WHERE id = ? AND obsolete != 1 LIMIT 1"
-    ).get(id) as { title: string | null } | undefined;
-    return row ? (row.title ?? id) : undefined;
+      "SELECT title, level_1 FROM memories WHERE id = ? AND obsolete != 1 LIMIT 1"
+    ).get(id) as { title: string | null; level_1: string | null } | undefined;
+    if (!row) return undefined;
+    const title = row.title?.trim();
+    if (title && title !== id) return title;
+    const body = row.level_1?.trim();
+    if (body) return body;
+    return id;
   }
 
   /** Get the display title of any entry or sub-node by ID. Used by update_memory body-only mode. */
