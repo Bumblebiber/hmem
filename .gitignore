@@ -6,3 +6,5 @@ dist/
 .env
 skills/hmem-release/
 .worktrees/
+__pycache__/
+*.pyc
