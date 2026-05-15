@@ -1,6 +1,6 @@
 ---
 name: o9k-update
-description: "End-to-end update routine for its-over-9k (formerly o9k-mcp) and o9k-sync. Drives the full update: runs `npm update -g`, syncs skill files, applies schema/entry migrations, verifies hooks and configs, runs the smoke test. Use when the user says 'update hmem', 'hmem updaten', 'check for updates', or when the startup version-check detects a new version. Initiates the update itself — do not assume the user has already run npm update."
+description: "Drives the FULL update flow for its-over-9k (the npm package powering hmem — formerly o9k-mcp, originally hmem). Handles `npm update -g`, syncs skill files, applies schema/entry migrations, verifies hooks and configs, presents the changelog to the user, and runs the smoke test. ALWAYS invoke this skill whenever the user mentions updating, upgrading, or checking for new versions of hmem / o9k / o9k-mcp / its-over-9k — in any phrasing, German or English, even if the package name is abbreviated or only the concept is implied. Trigger phrases include: 'update o9k', 'update its-over-9k', 'update o9k-mcp', 'update hmem', 'o9k updaten', 'hmem updaten', 'aktualisiere o9k', 'upgrade hmem', 'upgrade o9k', 'check for hmem updates', 'gibt es ein Update für o9k', 'neue Version prüfen', 'is there a new release', 'bring hmem up to date'. Also triggers when the startup version-check detects a new version. Initiates the npm update itself — do not assume the user has already run it."
 ---
 
 # /o9k-update — Update Routine

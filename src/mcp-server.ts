@@ -85,7 +85,7 @@ function checkVersionUpgrade(): string {
     if (lastSeen !== PKG_VERSION) {
       saveLastSeenVersion(configPath, raw);
       autoSyncSkills();
-      return `\n\n⚠ its-over-9k updated: v${lastSeen} → v${PKG_VERSION}. Skills have been auto-synced. Run /hmem-update for full post-update steps (entry migration, schema enforcement, config check).`;
+      return `\n\n⚠ its-over-9k updated: v${lastSeen} → v${PKG_VERSION}. Skills have been auto-synced. Run /o9k-update for full post-update steps (entry migration, schema enforcement, config check).`;
     }
   } catch {}
   return "";
