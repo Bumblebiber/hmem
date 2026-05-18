@@ -3219,6 +3219,22 @@ export class HmemStore {
   }
 
   /**
+   * Heuristic fallback: find the project whose O-entry received the most recent
+   * exchange. Used by cli-checkpoint when session-marker + active=1 flag both miss
+   * (e.g. multi-device sync stripped the marker, or /clear wiped it).
+   */
+  getMostRecentlyActiveProject(): { id: string; title: string } | null {
+    const row = this.db.prepare(
+      `SELECT m.id, m.title
+       FROM memory_nodes n
+       JOIN memories m ON m.id = REPLACE(n.root_id, 'O', 'P')
+       WHERE n.root_id LIKE 'O%' AND n.depth >= 3 AND m.prefix = 'P' AND m.obsolete != 1
+       ORDER BY n.created_at DESC LIMIT 1`
+    ).get() as { id: string; title: string } | undefined;
+    return row ?? null;
+  }
+
+  /**
    * Get the second-to-last session (L2 node) under an O-entry.
    * Used by the SessionStart hook to check if the previous session needs a summary.
    * Returns null if fewer than 2 sessions exist.
@@ -3571,13 +3587,17 @@ export class HmemStore {
   getOrphanedBatches(
     oId: string,
     excludeSessionId: string | null,
-    cap = 2
+    cap = 5
   ): Array<{ batchId: string; sessionId: string; sessionTitle: string; sessionDate: string }> {
     const excludeClause = excludeSessionId ? " AND mn.parent_id != ?" : "";
     const params: (string | number)[] = [oId];
     if (excludeSessionId) params.push(excludeSessionId);
     params.push(cap);
 
+    // Orphan = L3 batch with no rolling summary, regardless of whether its session
+    // has a summary. Earlier the query also required the session to be unsummarized,
+    // which misses the common case: a short session got a catchup-summary but its
+    // batches inside never did. We catch up those batches here.
     return this.db.prepare(
       `SELECT mn.id AS batchId, mn.parent_id AS sessionId,
               s.title AS sessionTitle,
@@ -3586,7 +3606,6 @@ export class HmemStore {
        JOIN memory_nodes s ON s.id = mn.parent_id
        WHERE mn.root_id = ? AND mn.depth = 3
          AND (mn.content IS NULL OR mn.content = '' OR mn.content = mn.title)
-         AND (s.content IS NULL OR s.content = '' OR s.content = s.title)
          ${excludeClause}
          AND (SELECT COUNT(*) FROM memory_nodes c
               WHERE c.parent_id = mn.id AND c.depth = 4) > 0

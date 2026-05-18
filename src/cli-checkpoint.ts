@@ -32,12 +32,36 @@ export async function checkpoint(): Promise<void> {
   const store = new HmemStore(hmemPath, config);
 
   try {
-    // 1. Get active project and its O-entry (prefer env from log-exchange, fallback to DB)
+    // 1. Get active project and its O-entry. Tries in order:
+    //    (a) HMEM_ACTIVE_PROJECT env (set by log-exchange when it knows the project)
+    //    (b) getActiveProject(currentSessionId) — session marker → DB active=1 flag
+    //    (c) getMostRecentlyActiveProject() — newest O-entry exchange (heuristic)
+    // The previous "silent return on null" hid genuine misrouted exchanges; loud
+    // logging + a heuristic fallback prevents the multi-device "session-marker stripped
+    // but exchanges still arrive" failure mode.
     const envProjectId = process.env.HMEM_ACTIVE_PROJECT;
-    const activeProject = envProjectId
+    let activeProject = envProjectId
       ? store.getProjectById(envProjectId)
       : store.getActiveProject(currentSessionId());
-    if (!activeProject) return;
+
+    if (!activeProject) {
+      const recent = store.getMostRecentlyActiveProject();
+      if (recent) {
+        activeProject = recent;
+        console.error(`[hmem checkpoint] No active-project marker — falling back to most recent O-entry activity: ${recent.id}`);
+      }
+    }
+
+    if (!activeProject) {
+      console.error(
+        "[hmem checkpoint] No active project found. Tried: " +
+        `env(HMEM_ACTIVE_PROJECT)=${envProjectId ?? "(unset)"}, ` +
+        `session-marker(sessionId=${currentSessionId() ?? "(none)"})=miss, ` +
+        "DB active=1 flag=miss, recent O-entry activity=none. " +
+        "Skipping checkpoint — exchanges will accumulate without summary until a project is activated."
+      );
+      return;
+    }
 
     const projectSeq = parseInt(activeProject.id.replace(/\D/g, ""), 10);
     const oId = store.resolveProjectO(projectSeq);
@@ -52,44 +76,48 @@ export async function checkpoint(): Promise<void> {
       .sort((a, b) => b.seq - a.seq)[0];
     const currentSessionNodeId = latestFullBatch?.sessionId ?? latestSession?.id ?? null;
 
-    // Find orphaned batches from previous short sessions (cap=2)
+    // Find orphaned batches from previous sessions that never got summarized.
+    // cap=5: catch up backlog without exceeding context budget (~5KB per batch after truncation).
     const orphanedBatches = store.getOrphanedBatches(oId, currentSessionNodeId);
 
     if (!latestFullBatch && orphanedBatches.length === 0) return;
+
+    // Build orphan section text once — used by both the orphan-only path
+    // (when no full batch) and the normal path (as Section 0b alongside the latest batch).
+    // Side effect: tags #skill-dialog on matching exchanges.
+    const orphanSections = orphanedBatches.map((ob, i) => {
+      const exs = store.getOEntryExchangesV2(oId, 20, { sessionScope: [ob.sessionId] });
+      const batchExs = exs.filter(ex => ex.nodeId.startsWith(ob.batchId + "."));
+      if (batchExs.length === 0) return null;
+
+      const formatted = batchExs.map((ex, j) => {
+        let user = ex.userText.replace(/<channel[^>]*>\s*/g, "").replace(/<\/channel>\s*/g, "").trim();
+        let agent = (ex.agentText ?? "").replace(/<[^>]+>/g, "").trim();
+        user = user.length > 800 ? user.substring(0, 800) + "..." : user;
+        agent = agent.length > 1200 ? agent.substring(0, 1200) + "..." : agent;
+        return `--- Exchange ${j + 1} (${ex.nodeId}) ---\nUSER: ${user}\nAGENT: ${agent}`;
+      }).join("\n\n");
+
+      const listing = batchExs.map(ex => `  ${ex.nodeId}: "${ex.title}"`).join("\n");
+
+      for (const ex of batchExs) {
+        if (ex.userText.includes("Base directory for this skill:")) {
+          store.addTag(ex.nodeId, "#skill-dialog");
+        }
+      }
+
+      return `=== Orphan Batch ${i + 1}: ${ob.batchId} | Session ${ob.sessionId} (${ob.sessionDate}) — "${ob.sessionTitle}" ===
+Current exchange titles:
+${listing}
+
+${formatted}`;
+    }).filter((s): s is string => s !== null);
 
     // Orphan-only path: no full batch but orphaned batches exist
     if (!latestFullBatch) {
       const pName = activeProject.title.split("|")[0].trim();
       const pId = activeProject.id;
       const pList = store.listProjects().map(p => `  ${p.id} ${p.title}`).join("\n");
-
-      const orphanSections = orphanedBatches.map((ob, i) => {
-        const exs = store.getOEntryExchangesV2(oId, 20, { sessionScope: [ob.sessionId] });
-        const batchExs = exs.filter(ex => ex.nodeId.startsWith(ob.batchId + "."));
-        if (batchExs.length === 0) return null;
-
-        const formatted = batchExs.map((ex, j) => {
-          let user = ex.userText.replace(/<channel[^>]*>\s*/g, "").replace(/<\/channel>\s*/g, "").trim();
-          let agent = (ex.agentText ?? "").replace(/<[^>]+>/g, "").trim();
-          user = user.length > 800 ? user.substring(0, 800) + "..." : user;
-          agent = agent.length > 1200 ? agent.substring(0, 1200) + "..." : agent;
-          return `--- Exchange ${j + 1} (${ex.nodeId}) ---\nUSER: ${user}\nAGENT: ${agent}`;
-        }).join("\n\n");
-
-        const listing = batchExs.map(ex => `  ${ex.nodeId}: "${ex.title}"`).join("\n");
-
-        for (const ex of batchExs) {
-          if (ex.userText.includes("Base directory for this skill:")) {
-            store.addTag(ex.nodeId, "#skill-dialog");
-          }
-        }
-
-        return `=== Batch ${i + 1}: ${ob.batchId} | Session ${ob.sessionId} (${ob.sessionDate}) — "${ob.sessionTitle}" ===
-Current exchange titles:
-${listing}
-
-${formatted}`;
-      }).filter(Boolean);
 
       if (orphanSections.length === 0) return;
 
@@ -226,6 +254,17 @@ ${catchupSessions.map(d => `Session ${d.id} (${d.date}) — "${d.title}":\n${d.b
 `
       : "";
 
+    // Section 0b: orphan batches from previous sessions that never got summarized.
+    // Applies Tasks 1, 2, 5 to each (title, batch summary, tag) — NOT P-entry updates or knowledge extraction.
+    const orphanCatchupSection = orphanSections.length > 0
+      ? `### 0b. Catch up unsummarized batches from past sessions
+${orphanSections.length} prior batch(es) were never summarized — likely because a newer full batch arrived first. Apply Tasks 1, 2, and 5 to EACH batch below (titles, rolling summary on the batch node, exchange tags). Do NOT extract L/E/D entries from orphans (Task 3) and do NOT update the P-entry (Task 4) from them.
+
+${orphanSections.join("\n\n")}
+
+`
+      : "";
+
     const prompt = `You are a checkpoint agent for "${projectName}" (${projectId}).
 Process batch ${batchId} with ${batchExchanges.length} exchanges.
 
@@ -238,7 +277,7 @@ ${prevSummaryText}
 == Batch Exchanges ==
 ${formattedExchanges}
 
-${catchupSection}## Tasks (execute ALL in order):
+${catchupSection}${orphanCatchupSection}## Tasks (execute ALL in order):
 
 ### 1. Title each exchange (REQUIRED)
 Current titles (auto-extracted):
@@ -330,9 +369,9 @@ This body is injected verbatim into every load_project briefing.
 - Tags: 3-5 per entry, lowercase with #
 - Only save what's valuable in 6 months`;
 
-    // 8. Run checkpoint agent
+    // 8. Run checkpoint agent (actual provider chosen by runCheckpointAgent based on harness — see its diagnostic logs)
     await runCheckpointAgent(prompt, store, config, hmemPath);
-    console.log(`[hmem checkpoint] Done (${config.checkpointProvider}/${config.checkpointModel})`);
+    console.log(`[hmem checkpoint] Done (batch ${batchId}, ${batchExchanges.length} exchanges)`);
 
   } catch (e) {
     console.error(`[hmem checkpoint] ${e}`);
