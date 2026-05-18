@@ -291,8 +291,10 @@ v6.0.0 replaced `HMEM_PROJECT_DIR` + `HMEM_AGENT_ID` with a single `HMEM_PATH` e
 v7.0.0 moves 11 curation/maintenance tools into a separate `o9k-curate` binary.
 The daily server now only exposes the 11 daily-use tools — less context noise, no accidental curation.
 
-Tools that moved to `o9k-curate`: `update_many`, `reset_memory_cache`, `export_memory`, `import_memory`,
+Tools that moved to `o9k-curate`: `update_many`, `export_memory`, `import_memory`,
 `memory_stats`, `memory_health`, `tag_bulk`, `tag_rename`, `move_memory`, `rename_id`, `move_nodes`
+
+> **Note (v1.3.0+):** `reset_memory_cache` is now available in **both** the main server and o9k-curate — no curate server needed to reset the session cache.
 
 **1. Add o9k-curate to MCP config**
 
@@ -520,6 +522,19 @@ If you wrote third-party code that called `store.db.prepare(...)`, prefer the ne
 ### Internal: migration tracking via schema_version
 
 The `MIGRATIONS` array of `ALTER TABLE` statements is now tracked in `schema_version` (`alter_vN`). Genuine errors are logged instead of silently swallowed. No action needed; first open after upgrade marks all known migrations as applied.
+
+---
+
+## Step 2p: v1.3.0 — reset_memory_cache in main server + harness-aware checkpoint
+
+**Only relevant when upgrading from < v1.3.0**
+
+- **`reset_memory_cache` now in main server** — call it directly without needing the o9k-curate server. Useful when `load_project` returns "already active (loaded recently)" and you need a forced reload.
+- **Harness-aware checkpoint routing** — Claude Code → Haiku via `claude -p` (Max OAuth), Codex → gpt-5.4-mini, others → configured provider. No config change needed.
+- **Orphan-batch catchup** — checkpoint agent now processes up to 5 unsummarized past batches per run. Run `hmem checkpoint` manually to catch up a backlog.
+- **Pi hooks known issue** — hook-based exchange logging is currently broken in the Pi runtime. Workaround: run `hmem checkpoint` manually.
+
+No migration required.
 
 ---
 
