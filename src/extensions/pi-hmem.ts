@@ -88,15 +88,70 @@ function readCheckpointConfig(hmemPath: string): { interval: number; mode: strin
   }
 }
 
+// ── Sync status ────────────────────────────────────────────────────────────
+
+function formatAgo(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "unknown";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+function buildSyncStatus(): string {
+  const configPath = join(homedir(), ".hmem", "config.json");
+  if (!existsSync(configPath)) {
+    return "\n\n--- hmem-sync ---\n✗ Not configured on this device — memories stay local, no cross-device sync. Run `hmem-sync login` then `hmem-sync setup` to enable.";
+  }
+  let cfg: any;
+  try { cfg = JSON.parse(readFileSync(configPath, "utf8")); } catch {
+    return "\n\n--- hmem-sync ---\n✗ Config file unreadable — sync inactive. Check ~/.hmem/config.json.";
+  }
+
+  const server = cfg.server || "https://hmem-sync.io";
+  const linked = !!(cfg.session_token || cfg.api_key);
+  const activeFile = cfg.active_file;
+
+  if (!linked) {
+    return "\n\n--- hmem-sync ---\n✗ Not linked — writes stay local. Run `hmem-sync login` to enable cross-device sync.";
+  }
+  if (!activeFile) {
+    return `\n\n--- hmem-sync ---\n⚠ Authenticated to ${server} but no active file. Run \`hmem-sync setup\` to link one.`;
+  }
+  const fileCfg = cfg.files?.[activeFile];
+  if (!fileCfg?.last_sync) {
+    return `\n\n--- hmem-sync ---\n⚠ Linked to ${server} (active_file: ${activeFile}) but never synced. Run \`hmem-sync pull\` to fetch.`;
+  }
+  const ago = formatAgo(Date.now() - new Date(fileCfg.last_sync).getTime());
+  return `\n\n--- hmem-sync ---\n✓ Linked to ${server} | active_file: ${activeFile} | last sync: ${ago} — writes propagate to other devices on next \`hmem-sync push\`.`;
+}
+
 // ── Startup context builder ────────────────────────────────────────────────
 
 /**
  * Build the "first-message" context that Claude Code's hmem hook-startup
- * would normally inject. Queries the hmem DB directly (read-only).
+ * would normally inject. Mirrors cli-hook-startup.ts behavior exactly:
+ * sync pull → query DB → assemble greetingDirective + data blocks.
  */
 async function buildStartupContext(): Promise<string> {
   const hmemPath = resolveHmemPath();
   if (!existsSync(hmemPath)) return "";
+
+  // ── Sync pull before reading (3s timeout, best-effort) ──
+  try {
+    const { syncPull } = await import("../mcp-shared.js");
+    await Promise.race([
+      syncPull(hmemPath).catch(() => undefined),
+      new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, 3000);
+        t.unref();
+      }),
+    ]);
+  } catch { /* sync module unavailable or pull rejected — proceed offline */ }
 
   let Database: any;
   try {
@@ -107,7 +162,6 @@ async function buildStartupContext(): Promise<string> {
   }
 
   let db: any;
-  let context = "";
 
   try {
     db = new Database(hmemPath, { readonly: true });
@@ -219,16 +273,33 @@ async function buildStartupContext(): Promise<string> {
       // ignore
     }
 
-    // ── Assemble ──
-    context =
-      "IMPORTANT: This is the first message of the session. Load your memory context silently — do not mention it to the user.\n\n" +
-      "- If the user's message names a specific project (e.g. \"lade Projekt hmem\", \"work on P0048\"): call ONLY load_project(id=\"P00XX\"). Do NOT also call read_memory() — load_project already includes everything you need.\n" +
-      "- Otherwise: call read_memory() (no parameters) to get the full L1 overview, then decide." +
+    // ── Sync status ──
+    const syncStatus = buildSyncStatus();
+
+    // ── Assemble: full greetingDirective matching cli-hook-startup.ts ──
+    // The directive tells the agent EXACTLY what to do on session start:
+    // STEP 1: load_project or read_memory (silently)
+    // STEP 2: invoke o9k-session-start skill (silently)
+    // STEP 3: handle user's actual message
+    //
+    // When the user already named a project, the agent sees recentProjects
+    // and can skip the "which project?" question. When they didn't, the
+    // agent lists the 5 recent projects and asks.
+    const greetingDirective =
+      "IMPORTANT: This is the first message of the session.\n\n" +
+      "STEP 1 (silent — no output yet): Load context.\n" +
+      "  - If the user's message names a specific project (e.g. \"lade Projekt hmem\", \"work on P0048\"): call ONLY load_project(id=\"P00XX\"). Do NOT also call read_memory().\n" +
+      "  - Otherwise: call read_memory() (no parameters).\n\n" +
+      "STEP 2 (silent — no output yet): Invoke the `o9k-session-start` skill via the Skill tool. The skill handles the full session-start workflow: pending git work check (uncommitted, stashes, worktrees, unmerged branches), Next Steps + open T-tasks surfacing from the project's Roadmap, O-entry routing check, noise check, explanation-depth calibration, and the greeting format itself (one short line with sync-state dot from the `--- hmem-sync ---` block). The project is already loaded — the skill detects this and skips its activation step.\n\n" +
+      "  - If the user named a project above: proceed straight to the task after the skill's output.\n" +
+      "  - If the user did NOT name a project: the skill will list the 5 entries from `--- Recent projects ---` below as bullet points and ask which one to continue with.\n\n" +
+      "STEP 3: Handle the user's actual message (or, if step 2 ended with a question, wait for their answer).";
+
+    return greetingDirective +
       deviceNote +
       humanContext +
-      recentProjects;
-
-    return context;
+      recentProjects +
+      syncStatus;
   } catch {
     return "";
   } finally {
@@ -431,6 +502,7 @@ export default async function (pi: ExtensionAPI) {
 
   // ── 1. Session start: capture session identity + build startup context ──
   pi.on("session_start", async (event, ctx) => {
+    console.error(`[pi-hmem] session_start fired, reason=${event.reason}`);
     if (event.reason !== "startup") return;
     turnCount = 0;
     startupContext = "";
@@ -446,11 +518,22 @@ export default async function (pi: ExtensionAPI) {
     } catch {
       piSessionKey = `pi:${randomUUID()}`;
     }
+    console.error(`[pi-hmem] session_start piSessionKey=${piSessionKey}`);
 
     try {
       startupContext = await buildStartupContext();
-    } catch {
-      // hmem DB not available — skip silently
+      console.error(`[pi-hmem] session_start startupContext built, length=${startupContext.length}`);
+    } catch (e) {
+      console.error(`[pi-hmem] session_start buildStartupContext FAILED: ${e}`);
+    }
+    
+    // Write session marker so log-exchange doesn't fall back to legacy DB flag
+    try {
+      const { writeSessionMarker } = await import("../session-state.js");
+      writeSessionMarker(piSessionKey, { projectId: null, hmemPath: resolveHmemPath() });
+      console.error(`[pi-hmem] session_start wrote session marker for ${piSessionKey}`);
+    } catch (e) {
+      console.error(`[pi-hmem] session_start writeSessionMarker FAILED: ${e}`);
     }
   });
 
@@ -518,8 +601,12 @@ export default async function (pi: ExtensionAPI) {
 
   // ── 5. agent_end: log exchange after every agent response ──────────────
   pi.on("agent_end", async (event) => {
+    console.error(`[pi-hmem] agent_end fired, piSessionKey=${piSessionKey}`);
     // Debounce: skip if session_before_compact just ran
-    if (Date.now() - lastLogTime < 5_000) return;
+    if (Date.now() - lastLogTime < 5_000) {
+      console.error(`[pi-hmem] agent_end SKIPPED: debounce (lastLogTime=${lastLogTime})`);
+      return;
+    }
     lastLogTime = Date.now();
 
     const messages = event.messages;
@@ -530,25 +617,47 @@ export default async function (pi: ExtensionAPI) {
     const userText = extractText(lastUser?.content ?? "");
     const assistantText = extractText(lastAssistant?.content ?? "");
 
-    if (!userText || !assistantText) return;
+    console.error(`[pi-hmem] agent_end: userText.length=${userText.length}, assistantText.length=${assistantText.length}`);
+
+    if (!userText || !assistantText) {
+      console.error(`[pi-hmem] agent_end SKIPPED: missing user or assistant text`);
+      return;
+    }
 
     // Skip internal hook/manual commands (shouldn't happen in pi, but be safe)
-    if (userText.length < 2) return;
+    if (userText.length < 2) {
+      console.error(`[pi-hmem] agent_end SKIPPED: userText too short`);
+      return;
+    }
+
+    const input = JSON.stringify({
+      last_user_message: userText,
+      last_assistant_message: assistantText,
+      session_id: piSessionKey,
+    });
+    console.error(`[pi-hmem] agent_end calling hmem log-exchange with session_id=${piSessionKey}`);
 
     const result = await runHmem(
       ["log-exchange"],
-      JSON.stringify({
-        last_user_message: userText,
-        last_assistant_message: assistantText,
-        session_id: piSessionKey,
-      }),
+      input,
       10_000
-    ).catch(() => "");
+    ).catch((e) => {
+      console.error(`[pi-hmem] agent_end runHmem FAILED: ${e}`);
+      return "";
+    });
+
+    console.error(`[pi-hmem] agent_end result: "${result.substring(0, 100)}"`);
 
     // If batch is full, spawn checkpoint subagent (matching Claude Code auto mode)
     if (result.includes('"decision":"block"') || result.includes("Batch")) {
+      console.error(`[pi-hmem] agent_end spawning checkpoint`);
       spawnCheckpoint(piSessionKey);
     }
+  });
+
+  // ── 5b. turn_end: debug probe to verify the event fires ──
+  pi.on("turn_end", async (event) => {
+    console.error(`[pi-hmem] turn_end fired, turnIndex=${event.turnIndex}, hasMessage=${!!event.message}`);
   });
 
   // ── 6. session_shutdown: title untitled O-entries ─────────────────────
