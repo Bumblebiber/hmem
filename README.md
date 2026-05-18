@@ -438,6 +438,8 @@ Then `export DEEPSEEK_API_KEY=sk-...` in your shell profile. Works for any harne
 
 **Per-harness exchange logging:** Claude Code uses `Stop` hooks (installed by `npx hmem init`). Pi uses the built-in extension (`src/extensions/pi-hmem.ts`). Hermes needs the `hermes-hmem` plugin (see `plugins/hermes-hmem/README.md`). OpenCode uses the same hook system as Claude Code.
 
+> **⚠ Pi users:** Hook-based exchange logging is currently not working in the Pi runtime. Exchanges are not saved to O-entries automatically. Manual checkpointing via `hmem checkpoint` is the workaround until this is resolved.
+
 ---
 
 ## Cross-Device Sync
@@ -515,7 +517,8 @@ Run `npm root -g` to get the correct `node_modules` path for your machine.
 |---------|-----|
 | `read_memory()` fails | Check `HMEM_PROJECT_DIR` is absolute path and directory exists |
 | nvm: `node not found` | Use absolute path: `which node` → use as `"command"` |
-| Hooks not firing | Restart Claude Code. Check `~/.claude/settings.json` has all 4 hooks |
+| Hooks not firing (Claude Code) | Restart Claude Code. Check `~/.claude/settings.json` has all 4 hooks |
+| Hooks not firing (Pi) | Known issue — Pi hook integration is currently broken. Use `hmem checkpoint` manually as a workaround |
 | Exchanges not logged | Check `HMEM_AGENT_ID` matches your `Agents/` directory name |
 | Sync fails | Run `npx hmem-sync connect` to re-authenticate |
 
