@@ -56,6 +56,10 @@ function spawnCheckpoint(sessionFile: string | null): void {
     // Mark the harness so cli-checkpoint-agent routes to the configured provider
     // (DeepSeek/OpenAI) rather than the Claude Code `claude -p` path.
     env.HMEM_HARNESS = "pi";
+    // cli-checkpoint.ts reads HMEM_PROJECT_DIR to find hmem.config.json.
+    // Derive it from the .hmem file directory (config lives alongside the DB).
+    const hmemPath = env.HMEM_PATH || DEFAULT_HMEM_PATH;
+    env.HMEM_PROJECT_DIR = dirname(hmemPath);
     // Use explicit any-typed options to bypass Node v24 execFile overload issue
     const opts: any = { detached: true, stdio: "ignore", env };
     const child = execFile("hmem", ["checkpoint"], opts);
@@ -629,8 +633,9 @@ export default async function (pi: ExtensionAPI) {
       10_000
     ).catch(() => {});
 
-    // If batch is full, spawn checkpoint subagent (every 5 turns)
-    if (turnCount > 0 && turnCount % 5 === 0) {
+    // If batch is full, spawn checkpoint subagent (every N turns, from config)
+    const { interval } = readCheckpointConfig(resolveHmemPath());
+    if (turnCount > 0 && interval > 0 && turnCount % interval === 0) {
       spawnCheckpoint(piSessionKey);
     }
   });
