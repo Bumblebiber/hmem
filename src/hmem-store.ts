@@ -2197,6 +2197,36 @@ export class HmemStore {
   }
 
   /**
+   * Delete a single sub-node and all its descendants by ID.
+   * Updates FTS index via existing BEFORE DELETE trigger on memory_nodes.
+   */
+  deleteNode(id: string): boolean {
+    this.guardCorrupted();
+    if (!id.includes(".")) {
+      throw new Error(`deleteNode requires a sub-node ID (e.g. "P0048.10"), got root entry "${id}"`);
+    }
+    // Collect all descendant IDs (recursive)
+    const ids: string[] = [id];
+    let i = 0;
+    while (i < ids.length) {
+      const rows = this.db.prepare(
+        "SELECT id FROM memory_nodes WHERE parent_id = ?"
+      ).all(ids[i]) as { id: string }[];
+      ids.push(...rows.map(r => r.id));
+      i++;
+    }
+    // Delete tags for the node and all descendants
+    for (const nid of ids) {
+      this.db.prepare("DELETE FROM memory_tags WHERE entry_id = ?").run(nid);
+    }
+    // Delete nodes (BEFORE DELETE trigger handles FTS)
+    const result = this.db.prepare(
+      `DELETE FROM memory_nodes WHERE id IN (${ids.map(() => "?").join(",")})`
+    ).run(...ids);
+    return result.changes > 0;
+  }
+
+  /**
    * Update the text content of an existing root entry or sub-node.
    * For root entries: updates level_1, optionally updates links.
    * For sub-nodes: updates node content only.
