@@ -542,16 +542,19 @@ server.tool(
     id: z.string().describe(
       "ID to delete, e.g. 'L0042' (root entry) or 'P0048.10' (sub-node)"
     ),
+    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
   },
-  async ({ id }) => {
+  async ({ id, store: storeName }) => {
     try {
-      const store = new HmemStore(HMEM_PATH, hmemConfig);
+      const hmemStore = storeName === "company"
+        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
+        : new HmemStore(HMEM_PATH, hmemConfig);
       try {
         let deleted: boolean;
         if (id.includes(".")) {
-          deleted = store.deleteNode(id);
+          deleted = hmemStore.deleteNode(id);
         } else {
-          deleted = store.delete(id);
+          deleted = hmemStore.delete(id);
         }
         if (!deleted) {
           return {
@@ -559,11 +562,12 @@ server.tool(
             isError: true,
           };
         }
+        if (storeName === "personal") syncPush(HMEM_PATH);
         return {
           content: [{ type: "text" as const, text: `Deleted: ${id}` }],
         };
       } finally {
-        store.close();
+        hmemStore.close();
       }
     } catch (e) {
       return {
