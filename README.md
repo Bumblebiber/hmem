@@ -194,7 +194,13 @@ its-over-9k ships **two** MCP servers:
 | `rename_id` | Rename an entry's ID; rewrites all inbound links |
 | `reset_memory_cache` | Invalidate the in-memory L1 cache (after raw SQL writes) |
 
-Register both servers in your MCP client config to use them. See [Manual setup](#manual-setup).
+The daily `hmem` server is registered automatically by `hmem init`. `hmem-curate` is opt-in because its tools are destructive — register it when you need to curate:
+
+```
+npx hmem mcp-add-curate          # adds the curate server to Claude Code (user scope)
+```
+
+Then toggle it via `/mcp` only during curation sessions. For other MCP clients, see [Manual setup](#manual-setup).
 
 ---
 
@@ -208,6 +214,7 @@ After `npm install -g its-over-9k`, the `hmem` binary is on PATH.
 |---------|---------|
 | `hmem init` | Interactive installer for AI tools (Claude Code, OpenCode, Gemini CLI, Cursor, Windsurf, Cline). Flags: `--global` / `--local` / `--tools <list>` / `--dir <path>` / `--no-example` |
 | `hmem update-skills` | Copy/sync bundled skill files to detected AI tools (called automatically on `npm install`) |
+| `hmem mcp-add-curate` | Register the `hmem-curate` MCP server with Claude Code (opt-in; toggle via `/mcp` when curating) |
 | `hmem doctor` | Detect stale or deprecated hmem MCP entries in host configs |
 | `hmem stats` | Memory statistics + per-project token estimates + 🔴 4k threshold flagging |
 | `hmem setup-hook` | Re-add the SessionStart hook to Claude Code settings (if removed) |

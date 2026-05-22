@@ -23,6 +23,7 @@ Usage:
   hmem serve                          Start the MCP server (stdio transport)
   hmem init                           Install hmem for AI coding tools (interactive or with flags)
   hmem update-skills                  Copy/update skill files to detected AI tools
+  hmem mcp-add-curate                 Register the hmem-curate MCP server with Claude Code (opt-in)
   hmem setup-hook                     Add hmem SessionStart hook to Claude Code settings
   hmem doctor                         Detect stale or deprecated hmem MCP entries in host configs
   hmem stats                          Show memory statistics + per-project token estimates
@@ -95,8 +96,8 @@ function printHelp(): void {
        → marks entry as [P] pinned, L2 content injected at session start.
 
   🧹 Curate / delete entries?
-     claude mcp add hmem-curate -s user -- npx hmem-curate
-       → adds the maintenance MCP (bulk edits, delete, merge, stats).
+     hmem mcp-add-curate
+       → registers the maintenance MCP (bulk edits, delete, merge, stats).
          Activate via /mcp only when curating, deactivate when done.
 `);
   printUsageTable();
@@ -116,6 +117,12 @@ switch (command) {
   case "update-skills": {
     const { updateSkills } = await import("./cli-init.js");
     updateSkills();
+    break;
+  }
+
+  case "mcp-add-curate": {
+    const { runMcpAddCurate } = await import("./cli-mcp-add-curate.js");
+    runMcpAddCurate();
     break;
   }
 

@@ -796,6 +796,9 @@ export async function runInit(args: string[] = []): Promise<void> {
     console.log(`    /hmem-read     — Load your memory at session start`);
     console.log(`    /save          — Save session learnings to memory`);
     console.log(`    /hmem-config   — View and adjust memory settings\n`);
+    console.log(`  Need curation later? (bulk obsolete, delete, merge)\n`);
+    console.log(`    npx hmem mcp-add-curate\n`);
+    console.log(`  Registers the destructive-ops MCP server as opt-in — toggle via /mcp.\n`);
     console.log(`  Update hmem (always use -g for global packages, NOT inside a project):\n`);
     console.log(`    npm update -g hmem-mcp          # update MCP server`);
     console.log(`    npm update -g hmem-sync          # update sync (if installed)`);

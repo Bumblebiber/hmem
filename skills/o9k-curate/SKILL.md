@@ -15,11 +15,12 @@ available by default; curation cannot start until the user enables them.
 Check the available tools first. If `memory_health` is not callable, tell the user:
 
 > "I need the `hmem-curate` MCP server to be active. It is not enabled by default because curation
-> writes destructively. To enable for this project:
+> writes destructively. To register it once:
 > ```
-> claude mcp add hmem-curate -s user -- npx hmem-curate
+> npx hmem mcp-add-curate
 > ```
-> Then run `/mcp` to confirm it loaded, and come back."
+> Then run `/mcp` to enable it, and come back. (Fallback if the `hmem` CLI isn't on PATH:
+> `claude mcp add hmem-curate -s user -- npx hmem-curate`.)"
 
 Wait for confirmation before proceeding. Do not attempt curation calls until the tools are available —
 they will fail silently or with cryptic errors. Once confirmed, continue with Step 0 below.
