@@ -733,14 +733,26 @@ export async function runInit(args: string[] = []): Promise<void> {
           changed = true;
         }
 
-        // SessionStart[clear] — context inject
+        // SessionStart[startup|resume|clear|compact] — context inject (clear|compact)
+        // + auto-summarize the previous session (all sources, issue #31).
         if (!settings.hooks.SessionStart) settings.hooks.SessionStart = [];
+        const sessionStartMatcher = "startup|resume|clear|compact";
         if (!hasHookCmd("SessionStart", "hmem context-inject")) {
           settings.hooks.SessionStart.push({
-            matcher: "clear",
+            matcher: sessionStartMatcher,
             hooks: [{ type: "command", command: `hmem ${pathFlag} context-inject`, timeout: 10 }],
           });
           changed = true;
+        } else {
+          // Migration: widen the matcher on existing context-inject hooks so
+          // summarize-session also fires on startup/resume (issue #31).
+          for (const entry of settings.hooks.SessionStart) {
+            const hasContextInject = entry.hooks?.some((h: any) => h.command?.includes("hmem context-inject"));
+            if (hasContextInject && entry.matcher !== sessionStartMatcher) {
+              entry.matcher = sessionStartMatcher;
+              changed = true;
+            }
+          }
         }
 
         if (changed) {
