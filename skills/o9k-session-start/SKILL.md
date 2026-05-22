@@ -18,6 +18,8 @@ read_memory(mode='essentials')
 
 This returns H-entries (user identity, preferences), recent projects, device info, and pinned content. The `--- hmem-sync ---` status line is already in your context from the hook.
 
+**Fallback when essentials read fails**: If the read fails with "Tool output too large" (common with >700 entries), skip it silently. The hook already injects H-entries (H0008 Identität, H0005 Arbeitsstil, etc.) and recent project IDs into context. Proceed directly to STEP 1 — you have enough to identify the user and activate a project.
+
 ## STEP 1: Activate project
 
 **If you already see a project briefing in context** (from a prior load_project in this session), skip to STEP 2.
@@ -121,6 +123,9 @@ Scan the output for:
 - **Old status snapshots in Overview** (superseded by newer) → mark obsolete
 - **`[-]` prefix sections** (e.g. `P00XX.10 [-] Bugs`) — orphaned schema artifacts → `update_memory(id, { irrelevant: true })` for each
 - **Duplicate L2 sections** (two nodes with same name) → mark the higher-numbered one irrelevant
+- **Non-standard L2 sections** (sections not in R0009 schema: Overview, Codebase, Dependencies, Usage, Context, Deployment, Security, Performance, Bugs, History, Roadmap, Ideas, Rules, Next Steps) → evaluate: move useful children to standard sections, then mark the non-standard section irrelevant
+
+**Batch when possible**: If multiple items need the same treatment (e.g. 3+ items to mark irrelevant), use `update_many(ids=[...], irrelevant=true)` instead of individual calls. Same for favorites or other flags.
 
 Fix all of the above immediately. Do not note and defer.
 
