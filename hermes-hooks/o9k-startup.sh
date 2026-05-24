@@ -29,6 +29,30 @@ cache_dir="${HMEM_PROJECT_DIR}"
 mkdir -p "$cache_dir"
 echo "{\"session_id\":\"$session_id\"}" > "${cache_dir}/.session-cache"
 
+# --- PPID bridge: map Hermes Agent PID → session_id ---
+# MCP server reads ~/.hmem/sessions/ppid-<ppid>.json to discover its
+# session ID. Without this, currentSessionId() returns undefined and
+# getActiveProject() falls back to the global active=1 SQLite flag —
+# which parallel sessions (Claude Code) can overwrite.
+#
+# Like hmem hook-startup, write bridges for BOTH the parent AND
+# grandparent. Hermes Agent runs the hook via `bash script.sh` so
+# the script's $PPID IS the Hermes Agent PID. The grandparent is the
+# terminal or parent process — writing both covers edge cases.
+bridge_dir="${HOME}/.hmem/sessions"
+mkdir -p "$bridge_dir"
+bridge_json=$(jq -n --arg sid "$session_id" --arg hp "$HMEM_PATH" --arg now "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+    '{sessionId: $sid, hmemPath: $hp, updatedAt: $now}')
+# Parent (Hermes Agent PID — what the MCP server sees as its PPID)
+if [[ -n "$PPID" && "$PPID" -gt 1 ]]; then
+    echo "$bridge_json" > "${bridge_dir}/ppid-${PPID}.json"
+fi
+# Grandparent (terminal or parent process)
+grandparent_pid=$(awk '/^PPid:/{print $2}' /proc/$PPID/status 2>/dev/null || echo "")
+if [[ -n "$grandparent_pid" && "$grandparent_pid" -gt 1 && "$grandparent_pid" != "$PPID" ]]; then
+    echo "$bridge_json" > "${bridge_dir}/ppid-${grandparent_pid}.json"
+fi
+
 # ============================================================
 # FIRST TURN: pre-inject all stable context — no more
 # expensive MCP read_memory(mode='essentials') roundtrip.
