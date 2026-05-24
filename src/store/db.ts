@@ -1,0 +1,69 @@
+/**
+ * hmem v2 — database connection, schema bootstrap, and migrations runner.
+ *
+ * Opens a better-sqlite3 handle in WAL mode, instantiates the locked v2 schema
+ * (`schema-v2.sql`) on first open, stamps `schema_version.schema_major = '2'`
+ * (Phase 6 sync gates push/pull on this value), and runs an append-only list of
+ * forward migrations idempotently (mirrors v1's `schema_version`-keyed pattern).
+ */
+import Database from 'better-sqlite3';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'schema-v2.sql');
+
+/**
+ * Append-only forward migrations applied after the base schema. NEVER reorder or
+ * delete an entry — each is keyed `v2_alter_<index>` in schema_version and only
+ * runs once. Idempotent: duplicate-column / already-exists errors are tolerated.
+ */
+const MIGRATIONS: string[] = [
+  // (none yet — the base schema is current)
+];
+
+export function openDb(path: string): Database.Database {
+  const db = new Database(path);
+  db.pragma('journal_mode = WAL');
+  db.pragma('busy_timeout = 5000');
+
+  const hasSchema = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entries'")
+    .get();
+  if (!hasSchema) {
+    db.exec(readFileSync(SCHEMA_PATH, 'utf8'));
+  }
+
+  db.prepare(
+    "INSERT OR IGNORE INTO schema_version(key, value) VALUES('schema_major', '2')",
+  ).run();
+
+  runMigrations(db);
+  return db;
+}
+
+export function getSchemaMajor(db: Database.Database): string | null {
+  const row = db
+    .prepare("SELECT value FROM schema_version WHERE key='schema_major'")
+    .get() as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function runMigrations(db: Database.Database): void {
+  const applied = (key: string) =>
+    db.prepare('SELECT 1 FROM schema_version WHERE key=?').get(key) !== undefined;
+  const mark = db.prepare('INSERT OR IGNORE INTO schema_version(key, value) VALUES(?, ?)');
+
+  for (let i = 0; i < MIGRATIONS.length; i++) {
+    const key = `v2_alter_${i + 1}`;
+    if (applied(key)) continue;
+    try {
+      db.exec(MIGRATIONS[i]);
+    } catch (err) {
+      const msg = String((err as Error).message ?? err);
+      // Tolerate idempotent re-runs (column/index already present).
+      if (!/duplicate column|already exists/i.test(msg)) throw err;
+    }
+    mark.run(key, new Date().toISOString());
+  }
+}

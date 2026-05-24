@@ -96,4 +96,47 @@ CREATE TABLE schema_version (         -- holds schema_major='2' + applied migrat
 -- FTS5 over curated text. Events get their own optional index in Phase 2
 -- (volume decision — see Phase 2 acceptance).
 CREATE VIRTUAL TABLE fts USING fts5(level_1, node_content, tokenize='unicode61');
--- + rowid→uid map table, as in v1 (L0095 pattern) — added in Phase 1 fts.ts.
+
+-- rowid→uid map (L0095 contentless pattern): FTS5 owns only an integer rowid,
+-- so we map each indexed row back to its source entry/node uid.
+CREATE TABLE fts_rowid_map (
+  fts_rowid INTEGER PRIMARY KEY,
+  root_uid  TEXT NOT NULL,             -- → entries.uid
+  node_uid  TEXT                       -- → nodes.uid, NULL for the entry's own level_1
+);
+CREATE INDEX idx_fts_rm_root ON fts_rowid_map(root_uid);
+CREATE INDEX idx_fts_rm_node ON fts_rowid_map(node_uid);
+
+-- Triggers keep the index in sync. Soft-delete is a column update (deleted_at),
+-- NOT a row DELETE, so soft-deleted rows stay indexed and fts.ts filters them at
+-- query time. Hard DELETE (tests / future GC) is handled by the *_bd triggers.
+CREATE TRIGGER fts_entry_ai AFTER INSERT ON entries BEGIN
+  INSERT INTO fts(level_1, node_content) VALUES (coalesce(new.level_1, ''), '');
+  INSERT INTO fts_rowid_map(fts_rowid, root_uid, node_uid) VALUES (last_insert_rowid(), new.uid, NULL);
+END;
+CREATE TRIGGER fts_node_ai AFTER INSERT ON nodes BEGIN
+  INSERT INTO fts(level_1, node_content) VALUES ('', coalesce(new.content, ''));
+  INSERT INTO fts_rowid_map(fts_rowid, root_uid, node_uid) VALUES (last_insert_rowid(), new.root_uid, new.uid);
+END;
+CREATE TRIGGER fts_entry_au AFTER UPDATE OF level_1 ON entries BEGIN
+  INSERT INTO fts(fts, rowid, level_1, node_content)
+    VALUES ('delete', (SELECT fts_rowid FROM fts_rowid_map WHERE root_uid = old.uid AND node_uid IS NULL), old.level_1, '');
+  INSERT INTO fts(level_1, node_content) VALUES (coalesce(new.level_1, ''), '');
+  UPDATE fts_rowid_map SET fts_rowid = last_insert_rowid() WHERE root_uid = new.uid AND node_uid IS NULL;
+END;
+CREATE TRIGGER fts_node_au AFTER UPDATE OF content ON nodes BEGIN
+  INSERT INTO fts(fts, rowid, level_1, node_content)
+    VALUES ('delete', (SELECT fts_rowid FROM fts_rowid_map WHERE node_uid = old.uid), '', old.content);
+  INSERT INTO fts(level_1, node_content) VALUES ('', coalesce(new.content, ''));
+  UPDATE fts_rowid_map SET fts_rowid = last_insert_rowid() WHERE node_uid = new.uid;
+END;
+CREATE TRIGGER fts_entry_bd BEFORE DELETE ON entries BEGIN
+  INSERT INTO fts(fts, rowid, level_1, node_content)
+    VALUES ('delete', (SELECT fts_rowid FROM fts_rowid_map WHERE root_uid = old.uid AND node_uid IS NULL), old.level_1, '');
+  DELETE FROM fts_rowid_map WHERE root_uid = old.uid;
+END;
+CREATE TRIGGER fts_node_bd BEFORE DELETE ON nodes BEGIN
+  INSERT INTO fts(fts, rowid, level_1, node_content)
+    VALUES ('delete', (SELECT fts_rowid FROM fts_rowid_map WHERE node_uid = old.uid), '', old.content);
+  DELETE FROM fts_rowid_map WHERE node_uid = old.uid;
+END;
