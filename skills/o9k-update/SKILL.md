@@ -494,7 +494,39 @@ The `--- Recent projects ---` block in the first-message injection now shows 5 m
 
 ---
 
-## Step 2s: v1.3.7 — Hermes Agent `o9k-startup.sh` rewrite + Symlink deployment option
+## Step 2t: v1.3.8 — Pre-injected session context + checkpointMode fix
+
+**Only relevant for Hermes Agent users.**
+
+### `o9k-startup.sh`: stable context pre-injected — no more MCP roundtrip
+
+The hook now calls `hmem hook-startup` (with explicit stdin pipe) on the first turn and
+injects ~3.7k chars of stable context directly: H-entries, recent projects, device info,
+sync status, infrastructure favorites, checkpoint status. The `o9k-session-start` skill
+starts at STEP 1 (project activation) — the expensive `read_memory(mode='essentials')`
+call is eliminated. Session-start time drops from ~20s to ~4s.
+
+### `o9k-startup.sh`: `checkpointMode` respected
+
+The hook now reads `checkpointMode` from `hmem.config.json` and only shows checkpoint
+reminders when set to `"remind"`. In `"auto"` mode (default), reminders are suppressed —
+checkpoints fire silently in the background.
+
+### `o9k-session-start` skill: STEP 0 removed, H-node detection expanded
+
+- STEP 0 (`read_memory(mode='essentials')`) removed — context is pre-injected
+- STEP 5b expanded: full table of 7 required H-slots with detection guide (empty node =
+  no `•` children), procedure for asking the user when H0008 is empty, and opportunistic
+  fill for other slots
+
+**Action (Hermes hosts):**
+```bash
+cp ~/projects/hmem/hermes-hooks/o9k-startup.sh ~/.hermes/agent-hooks/o9k-startup.sh
+chmod +x ~/.hermes/agent-hooks/o9k-startup.sh
+```
+(or keep the symlink — no redeploy needed)
+
+No TypeScript changes. No npm behavior change. Hook scripts + skill only.
 
 **Only relevant for Hermes Agent users.**
 

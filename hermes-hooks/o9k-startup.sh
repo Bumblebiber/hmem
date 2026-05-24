@@ -30,7 +30,10 @@ mkdir -p "$cache_dir"
 echo "{\"session_id\":\"$session_id\"}" > "${cache_dir}/.session-cache"
 
 # ============================================================
-# FIRST TURN: minimal bootstrap — sync + skill directive
+# FIRST TURN: pre-inject all stable context — no more
+# expensive MCP read_memory(mode='essentials') roundtrip.
+# hmem hook-startup does H-entries, projects, device, sync —
+# everything the session-start skill needed from STEP 0.
 # ============================================================
 if [[ "$is_first" == "true" ]]; then
     # Sync-Pull (3s timeout, silent)
@@ -38,34 +41,28 @@ if [[ "$is_first" == "true" ]]; then
         timeout 3 hmem sync pull </dev/null >/dev/null 2>/dev/null || true
     fi
 
-    # Sync-Status
-    sync_block=""
+    # Pre-injected context from hmem hook-startup.
+    # Must pipe a minimal payload on stdin — parent script already
+    # consumed its own stdin with cat - earlier.
+    pre_context=""
     if command -v hmem &>/dev/null; then
-        config_file="$HOME/.hmem/config.json"
-        if [[ ! -f "$config_file" ]]; then
-            sync_block="--- hmem-sync ---\n✗ Not configured"
-        else
-            server=$(jq -r '.server // "unknown"' "$config_file" 2>/dev/null)
-            linked=$(jq -r 'if .session_token or .api_key then "yes" else "" end' "$config_file" 2>/dev/null)
-            active_file=$(jq -r '.active_file // ""' "$config_file" 2>/dev/null)
-            sync_status_raw=$(HMEM_PATH="$HMEM_PATH" timeout 3 hmem sync status </dev/null 2>/dev/null || echo "")
-            last_sync=$(echo "$sync_status_raw" | grep "Last sync" | sed 's/Last sync: *//' || echo "")
-            if [[ -z "$linked" ]]; then
-                sync_block="--- hmem-sync ---\n✗ Not linked"
-            elif [[ -z "$active_file" ]]; then
-                sync_block="--- hmem-sync ---\n⚠ Authenticated, no active file"
-            elif [[ -z "$last_sync" ]]; then
-                sync_block="--- hmem-sync ---\n⚠ Linked (${active_file}), never synced"
-            else
-                sync_block="--- hmem-sync ---\n✓ Linked to ${server} | active_file: ${active_file} | last sync: ${last_sync}"
-            fi
-        fi
+        hmem_raw=$(echo "{\"session_id\":\"$session_id\"}" | HMEM_PATH="$HMEM_PATH" timeout 5 hmem hook-startup 2>/dev/null || true)
+        pre_context=$(echo "$hmem_raw" | grep '^{' | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null || true)
     fi
 
-    # Minimal directive — skill handles everything else
-    directive="IMPORTANT: This is the first message of a new session.\n\nYou are a Hermes AI Agent with hmem long-term memory. Load the o9k-session-start skill (skill_view(name='o9k-session-start')) and follow its instructions. The skill handles: project activation, pending git work, Next Steps, greeting, and O-entry routing — do not skip any step.\n\n${sync_block}"
+    # Directive: skill handles STEPS 1-6, STEP 0 is SKIPPED
+    directive="IMPORTANT: This is the first message of a new session.
 
-    jq -n --arg ctx "$directive" '{context: $ctx}'
+Session context is PRE-INJECTED above — H-entries, projects, device info, sync status, infrastructure, checkpoint status. Do NOT call read_memory(mode='essentials') — the data is already in your context.
+
+Load the o9k-session-start skill (skill_view(name='o9k-session-start')) and follow its instructions STARTING FROM STEP 1 (project activation). STEP 0 (read_memory essentials) is SKIPPED.
+The skill handles: project activation, pending git work, Next Steps, greeting, O-entry routing — do not skip any step."
+
+    combined="${pre_context}
+
+${directive}"
+
+    jq -n --arg ctx "$combined" '{context: $ctx}'
     exit 0
 fi
 
@@ -82,16 +79,21 @@ echo "$turn_count" > "$counter_file"
 
 # Config lesen
 checkpoint_interval=20
+checkpoint_mode="remind"  # default: remind (hmem hook-startup says so)
 hmem_config="${HMEM_PROJECT_DIR}/hmem.config.json"
 if [[ -f "$hmem_config" ]]; then
     interval_from_config=$(jq -r '.memory.checkpointInterval // empty' "$hmem_config" 2>/dev/null)
     if [[ -n "$interval_from_config" && "$interval_from_config" -gt 0 ]]; then
         checkpoint_interval="$interval_from_config"
     fi
+    mode_from_config=$(jq -r '.memory.checkpointMode // empty' "$hmem_config" 2>/dev/null)
+    if [[ -n "$mode_from_config" ]]; then
+        checkpoint_mode="$mode_from_config"
+    fi
 fi
 
-# Checkpoint Reminder
-if [[ $(( turn_count % checkpoint_interval )) -eq 0 ]]; then
+# Checkpoint Reminder — nur wenn mode=remind (nicht auto)
+if [[ "$checkpoint_mode" == "remind" && $(( turn_count % checkpoint_interval )) -eq 0 ]]; then
     reminder="📝 Checkpoint fällig (Turn $turn_count). Wichtige Erkenntnisse mit write_memory speichern."
     jq -n --arg ctx "$reminder" '{context: $ctx}'
 

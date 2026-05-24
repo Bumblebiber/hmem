@@ -1,64 +1,56 @@
 ---
 name: o9k-session-start
-description: "Mandatory entry point for every Cortex session — invoke at conversation start, after /clear, and after any load_project call, even when the UserPromptSubmit hook already activated a project. Loads the project briefing, then surfaces pending git work (uncommitted changes, stashes, worktrees, unmerged branches), shows Next Steps + open T-tasks from the Roadmap, and runs the O-entry routing check. The user counts on these steps to resurface stale work and open tasks at every session start — skipping them defeats the point of hmem-based session memory. Trigger phrases: 'lade Projekt X', 'load project Y', '/clear', 'bin zurück', 'wo waren wir', 'starte neu bei', any new session with an active P-entry."
+description: "Mandatory entry point for every Cortex session — invoke at conversation start, after /clear, and after any load_project call. All stable context (H-entries, projects, device, sync) is pre-injected by the hook — no read_memory(mode='essentials') needed. Surfaces pending git work, Next Steps + open T-tasks, and runs the O-entry routing check."
 ---
 
 # o9k-session-start
 
 ## TRIGGER
-Run at the beginning of any session where a Cortex project is active.
+Run at the beginning of any session, after /clear, and after any load_project call.
 
-## STEP 0: Load context
+## CONTEXT: Pre-injected by hook
 
-Before anything else, load the memory context that the hook no longer pre-injects:
+All stable context is PRE-INJECTED by the o9k-startup.sh hook:
+- H-entries (H0008 Identität, H0005 Arbeitsstil, H0003 IT-Skills, H0007 Präferenzen, etc.)
+- Recent projects (--- Recent projects --- block)
+- Device info (--- Active device --- block)
+- Sync status (--- hmem-sync --- block)
+- Infrastructure favorites (--- Infrastructure --- block)
+- Checkpoint status
 
-```
-read_memory(mode='essentials')
-```
-
-This returns H-entries (user identity, preferences), recent projects, device info, and pinned content. The `--- hmem-sync ---` status line is already in your context from the hook.
-
-**Fallback when essentials read fails**: If the read fails with "Tool output too large" (common with >700 entries), skip it silently. The hook already injects H-entries (H0008 Identität, H0005 Arbeitsstil, etc.) and recent project IDs into context. Proceed directly to STEP 1 — you have enough to identify the user and activate a project.
+Do NOT call `read_memory(mode='essentials')` — it's redundant and slow.
 
 ## STEP 1: Activate project
 
-**If you already see a project briefing in context** (from a prior load_project in this session), skip to STEP 2.
+**If the user's message names a specific project** (e.g. "lade Projekt hmem", "P0048"): call `load_project(id: "P00XX")`.
 
-**Otherwise:**
+**If the user did NOT name a project:** list the 5 entries from the `--- Recent projects ---` block as bullet points, ask which one. Once picked, call `load_project(id: "P00XX")`.
 
-- If the user's message names a specific project (e.g. "lade Projekt hmem", "P0048", "work on its-over-9k"): call `load_project(id: "P00XX")` with that ID.
-- If the user did NOT name a project: do NOT load anything yet. After the greeting, list the 5 entries from the `--- Recent projects ---` block (always injected by the hook) as bullet points and ask which one to continue with. Once the user picks one, call `load_project(id: "P00XX")`.
-
-`load_project` returns the project brief, recent O-Entry summaries, rules, and lessons. Do NOT call `read_memory` separately. `load_project` is the only activation action.
+`load_project` returns the project brief, recent O-Entry summaries, rules, lessons. `load_project` is the only activation action — no separate `read_memory`.
 
 ## STEP 2: Pending-work check (git repo state)
 
-**Sessions resume after days or weeks.** Work paused on a feature branch, in a worktree, in a stash, or just uncommitted in the tree can silently rot if nobody re-surfaces it. The user is counting on you to remember — that's the entire point of starting from hmem instead of conversation history. Surface pending work *before* you do anything else substantive, so the user can decide whether to resume it or close it out.
+Sessions resume after days or weeks — pending work rots if nobody surfaces it.
 
 ### Find the repo
 
-Look in the load_project output for a filesystem path — usually under `.1.4 Environment` ("Repo /home/.../<name>") or in `.2 Codebase`. If no repo is documented, or the path has no `.git` directory, skip this step silently. Not every project is a code repo (concept projects, document workflows, etc.).
+Look in load_project output for a filesystem path (`.1.4 Environment` / `.2 Codebase`). If no `.git`, skip.
 
-### Run the checks
-
-From the repo root:
+### Run the checks (parallel)
 
 ```bash
-git status --porcelain                                                    # uncommitted/untracked
-git stash list                                                            # WIP stashes
-git worktree list                                                         # worktrees
-git for-each-ref --format='%(refname:short) %(committerdate:relative)' \
-    refs/heads/ | grep -v '^main\b\|^master\b'                            # local branches != main
-git branch --no-merged main 2>/dev/null || git branch --no-merged master  # branches not in main yet
+git status --porcelain
+git stash list
+git worktree list
+git for-each-ref --format='%(refname:short) %(committerdate:relative)' refs/heads/ | grep -v '^main\b\|^master\b'
+git branch --no-merged main 2>/dev/null || git branch --no-merged master
 ```
 
-Run them in parallel. Cross-reference: a branch listed by `for-each-ref` that is *also* in `--no-merged` has real unmerged commits — those matter most.
+Cross-reference: branch in `for-each-ref` AND `--no-merged` = real unmerged commits.
 
-### Surface findings to the user
+### Surface
 
-Only report when something is actually pending. If everything is clean, say nothing — don't pad the output with "no pending work".
-
-Use this format (German when the user speaks German, English otherwise):
+Only when something is pending. German format:
 
 ```
 ⚠ Offene Arbeit im Repo:
@@ -74,135 +66,121 @@ Use this format (German when the user speaks German, English otherwise):
 Weiter dran arbeiten oder aufräumen?
 ```
 
-**Never auto-delete, auto-commit, or auto-merge anything.** The user decides. Your job is to surface, not to clean. A worktree from three weeks ago might be an abandoned experiment, or the half-finished feature the user has been meaning to ship — you can't tell from the outside, so you ask.
-
-If the user's first instruction obviously supersedes pending work (e.g. "ignore the worktree, I'm doing X now"), respect that and don't badger.
+Never auto-delete/commit/merge.
 
 ## STEP 3: Next Steps & offene Tasks
 
-Surface what's on deck so the user doesn't have to hunt for it.
-
-### Next Steps lesen
-
-Suche im load_project-Output unter `.8 Roadmap` nach einem Eintrag mit Titel "Next Steps". Lies ihn:
+Read the "Next Steps" node from load_project output:
 
 ```
-read_memory(id: "P00XX.8.YY")   ← Node mit Titel "Next Steps"
+read_memory(id: "P00XX.8.YY")   ← Node titled "Next Steps"
 ```
 
-Falls kein "Next Steps"-Node existiert, überspringe diesen Schritt stillschweigend.
-
-### T-Entries prüfen
-
-Im load_project-Output sind unter `Links:` die verlinkten T-Entries aufgelistet. Vergleiche: Welche T-Entries tauchen **nicht** im Next-Steps-Inhalt auf? Das sind abweichende offene Tasks.
-
-### Ausgabe
-
-Zeige Next Steps immer (auch wenn leer). Abweichende Tasks nur wenn vorhanden.
+Compare with T-entries under `Links:`. Report ones NOT in Next Steps.
 
 ```
 📋 Next Steps:
   • Item 1
-  • Item 2
 
 📌 Offene Tasks (nicht in Next Steps):
-  T0033: hmem-sync SaaS monetization
-  T0042: Config-Konsolidierung
+  T0033: ...
 ```
 
-**Keine Interpretation, kein Priorisieren** — nur anzeigen, was drin steht.
+No interpretation — just display.
 
 ## STEP 4: Noise Check
 
-**Do this immediately after load_project, before any other work.**
+After load_project, scan for:
+- **>4k tokens** → invoke `o9k-curate`
+- **✓ DONE items** → `update_memory(id, { irrelevant: true })`
+- **`[-]` prefix sections** → `update_memory(id, { irrelevant: true })`
+- **Duplicate L2 sections** → mark higher-numbered one irrelevant
+- **Non-standard L2 sections** → move children, then mark irrelevant
 
-Scan the output for:
-- **>4k tokens** → invoke `o9k-curate` on this project first, then continue
-- **✓ DONE items in Roadmap** → `update_memory(id, { irrelevant: true })`
-- **Decommissioned / concept entries in Infrastructure** → `update_memory(id, { irrelevant: true })`
-- **Old status snapshots in Overview** (superseded by newer) → mark obsolete
-- **`[-]` prefix sections** (e.g. `P00XX.10 [-] Bugs`) — orphaned schema artifacts → `update_memory(id, { irrelevant: true })` for each
-- **Duplicate L2 sections** (two nodes with same name) → mark the higher-numbered one irrelevant
-- **Non-standard L2 sections** (sections not in R0009 schema: Overview, Codebase, Dependencies, Usage, Context, Deployment, Security, Performance, Bugs, History, Roadmap, Ideas, Rules, Next Steps) → evaluate: move useful children to standard sections, then mark the non-standard section irrelevant
-
-**Batch when possible**: If multiple items need the same treatment (e.g. 3+ items to mark irrelevant), use `update_many(ids=[...], irrelevant=true)` instead of individual calls. Same for favorites or other flags.
-
-Fix all of the above immediately. Do not note and defer.
+Batch 3+ items: `update_many(ids=[...], irrelevant=true)`. Fix immediately.
 
 ## STEP 5: Calibrate explanation depth
 
-Read H0003 (IT Skills) — the scale is 1–9:
-- **7–9 = Expert**: use technical language directly, no padding, no basics
-- **4–6 = Proficient**: explain concepts but skip fundamentals
+H0003 (IT Skills, pre-injected). Scale 1–9:
+- **7–9 = Expert**: technical, no padding
+- **4–6 = Proficient**: explain concepts, skip fundamentals
 - **1–3 = Basics**: explain with examples
-
-Apply this calibration for the entire session. When explaining something in a domain, check the matching H0003 skill first.
 
 ## STEP 5b: H-Schema completeness check
 
-H0000 defines the canonical H-Slots (Identität, Online-ID, IT-Skills, Business-Skills, Arbeitsstil, Kontext, Präferenzen). The Identität-Slot is **PFLICHT** — without it the agent doesn't know name, language, or accepted greetings.
+H-entries are pre-injected by the hook. Each H-entry appears as a title line (e.g. `H0008  Identität — Name, Anrede, ...`) followed by `•`-prefixed L2 children when they exist.
 
-**At session start, verify:**
-1. Read H0000 — it lists which H-IDs cover which slots
-2. For each `PFLICHT`-marked slot, check that the entry exists AND has L2 children (not just a stub)
-3. If a Pflicht-Slot is missing or empty: pause the greeting, ask the user the missing questions in one block, then `write_memory(prefix="H", pinned=true, ...)` to fill it
+### Detect empty H-nodes
 
-**Questions to ask when Identität-Slot is empty:**
-- Wie soll ich dich ansprechen?
-- Welche Sprache bevorzugst du (Deutsch / Englisch / andere)?
-- Welche Begrüßungen sind OK, welche stören dich?
+A pre-injected H-entry is **empty** (stub) when it shows only the title line with NO `•` children below it. Example of an empty entry:
 
-Save answers immediately. Only proceed with the greeting after the slot is filled. If H0008 is pinned and has L2 children, the essentials read from STEP 0 already loaded them — you're done.
+```
+H0006  User Kontext: Solo-Entwickler, Gründer, 6 Geräte
+```
+
+Example of a filled entry:
+
+```
+H0008  Identität — Name, Anrede, Sprachen, Begrüßungen
+  • Sprache bevorzugt: Deutsch
+  • Anrede: "Benni"
+```
+
+### Required slots (must have L2 children)
+
+| Slot | Entry | What to ask if empty |
+|---|---|---|
+| Identität **(MANDATORY)** | H0008 | Name, preferred language, acceptable greetings, banned greetings |
+| Online-ID | H0002 | GitHub username, email |
+| IT-Skills | H0003 | Skill areas with 1-9 ratings |
+| Business-Skills | H0004 | Skill areas with 1-9 ratings |
+| Arbeitsstil | H0005 | Communication style, language preference, pet peeves |
+| Lebenskontext | H0006 | Role, devices, company, work hours |
+| Präferenzen | H0007 | Likes, dislikes, preferred interaction patterns |
+
+### Procedure
+
+1. Scan the `--- Human context (H-entries) ---` block in the pre-injected context.
+2. For each entry in the table above, check if `•`-prefixed L2 children are present.
+3. If H0008 is empty: **pause the greeting** — you cannot address the user correctly. Ask all questions in one block:
+   - What should I call you? (name / nickname)
+   - What language do you prefer? (German / English / other)
+   - Which greetings are OK, which should I avoid?
+4. For other empty required slots: note them silently and fill them opportunistically during the session when the relevant information comes up naturally. Do NOT interrogate the user about all empty slots at session start — only H0008 blocks the greeting.
+5. Save answers immediately with `write_memory(prefix="H", title="...", body="...", pinned=true, ...)`.
+6. If every required slot has L2 children: no action needed, proceed to greeting.
 
 ## STEP 6: O-Entry routing check
 
-**This step is critical.** Every `load_project` call changes which O-entry receives session exchanges. If you called `load_project` on any project other than your working project — even briefly, even for administrative reasons (reconcile, curation, migration) — those exchanges were misrouted to the wrong O-entry.
+Every `load_project` changes O-entry routing. If you loaded another project during this session, exchanges were misrouted.
 
-After activating, check for misrouted exchanges:
+Check: `read_memory(id: "O00XX")` — same seq as P00XX. If exchanges are missing, find them in the other project's O-entry and fix:
 
-```
-read_memory(id: "O00XX")   ← the working project's O-entry (same seq as P00XX)
-```
-
-Look at the most recent batch. If exchanges are missing that you know happened (e.g. earlier in this session), they landed in another project's O-entry.
-
-**To find them:** check O-entries for any other project you called `load_project` on during this session. Look for nodes created today with content matching your session.
-
-**To fix:**
 ```
 move_nodes(node_ids: ["O00YY.Z"], target_o_id: "O00XX")
 ```
 
-Move the misrouted session/batch node to the correct O-entry.
-
-**Rule:** Never call `load_project` on a secondary project without immediately re-calling it on your working project. Routing follows the last `load_project` call — always return control explicitly.
-
-## What gets injected automatically (first message)
-
-The hook injects only the `--- hmem-sync ---` status line (link state, active file, last sync). Everything else — H-entries, recent projects, device info — must be loaded via `read_memory` in STEP 0 below.
+Rule: Never `load_project` a secondary project without re-calling on your working project.
 
 ## OUTPUT — natural greeting
 
-**Format (two lines, user's preferred language and name, no padding):**
+Two-line format:
 
-Schema (placeholders shown — never copy literally; pull real values from H-entries):
 ```
 <sync-status-line>
 <greeting> <name> — <action>.                                  ← project named
 <greeting> <name>. <list-intro>:                               ← no project named
   • Pxxxx — <title>
   ...
-<follow-up question>
 ```
 
-**Pulling the right values:**
-- **Language** — H0005 specifies it (German native, English fluent). Match the user's first message.
-- **Address form** — H0008 (Identität, pinned) is canonical: preferred name AND the explicit greeting whitelist/blacklist. Hook injects its L2 content directly, so the rules are visible without extra reads. Follow them literally — using a blacklisted greeting is a session-start failure.
-- **Sync-status line** — read from the `--- hmem-sync ---` block injected by the hook. Always a separate line above the greeting:
+Values from pre-injected H-entries:
+- **Language** — H0005: German native. Match user's first message.
+- **Name/greetings** — H0008: preferred name, whitelist/blacklist.
+- **Sync status** — from `--- hmem-sync ---` block:
   - `✓ Linked …` → `🟢 hmem-sync verbunden.`
-  - `⚠ …` → `🟡 hmem-sync: <kurze Statusbeschreibung>.`
+  - `⚠ …` → `🟡 hmem-sync: <status>.`
   - `✗ Not linked` → `🔴 hmem-sync nicht verbunden.`
   - `✗ Not configured` → `🔴 hmem-sync nicht konfiguriert.`
-  Never inline the colored dot into the greeting itself. The status line is mandatory — the user needs to know whether memories propagate.
 
-**No `[CORTEX READY]` block.** The two-line output IS the ready signal. After it, either proceed with the task (if project named) or wait for the user's answer.
+No `[CORTEX READY]` block. Two lines IS the ready signal.
