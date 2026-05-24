@@ -1,0 +1,32 @@
+{
+  "skill_name": "o9k-handoff",
+  "evals": [
+    {
+      "id": 1,
+      "name": "direct-handoff-with-dirty-repos",
+      "prompt": "/o9k-handoff",
+      "expected_output": "Skill should detect uncommitted changes in repos touched this session, abort with a 'Handoff aborted' message listing the dirty files, and NOT tell the user to type /clear.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "natural-language-handoff-with-dirty-repos",
+      "prompt": "Context is getting too big — let's clear and start fresh.",
+      "expected_output": "Same as #1 — Step 0 must trigger before any 'tell user to /clear' message when the filesystem has uncommitted changes in touched repos.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "handoff-quality-ephemeral-and-partial-fix",
+      "prompt": "/o9k-handoff\n\n[Test scenario — assume this session's history: working on project P0099. This session you (a) found a perf regression and dumped profiling output to /tmp/prof-run.txt, (b) applied a partial fix on branch perf-fix that handles the warm-cache case but NOT the cold-cache path, committed as abc1234, (c) all repos you touched are committed/clean. Produce the o9k-handoff output, especially the Step 2 Next Steps handoff.]",
+      "expected_output": "Step 0 passes (clean repos). The Step 2 Next Steps handoff (1) gives a verify command for the claim (e.g. 'verify with: git log --oneline main..perf-fix' showing abc1234), (2) flags /tmp/prof-run.txt as ephemeral with a regen note OR mirrors its essence into hmem rather than citing it as permanent, (3) explicitly names the cold-cache path as NOT yet fixed. Then Step 3 tells the user to /clear.",
+      "files": [],
+      "assertions": [
+        {"text": "Handoff frames the done-claim as verifiable (includes a git/test/file-check command to confirm it), not a bare assertion"},
+        {"text": "The /tmp/prof-run.txt reference is marked non-durable (ephemeral/cleaned) with a regen path, or its essence is mirrored into hmem — not cited as if permanent"},
+        {"text": "The unfinished cold-cache path is named explicitly as a residual NOT-done gap"},
+        {"text": "Does not instruct /clear until after the Step 2 handoff is complete"}
+      ]
+    }
+  ]
+}

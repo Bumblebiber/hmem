@@ -590,7 +590,7 @@ export default async function (pi: ExtensionAPI) {
     // Context warning (after 60 turns, every 5 turns)
     if (turnCount >= 60 && turnCount % 5 === 0) {
       addition +=
-        "\n\nCONTEXT WARNING: This session has been running for a long time. Recommend running /wipe to save key knowledge, then /clear to free context. Performance degrades significantly in very long sessions.";
+        "\n\nCONTEXT WARNING: This session has been running for a long time. Recommend running /o9k-handoff to save key knowledge, then /clear to free context. Performance degrades significantly in very long sessions.";
     }
 
     if (!addition) return;

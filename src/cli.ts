@@ -76,7 +76,7 @@ function printHelp(): void {
   console.log(`🧠 hmem — Quick Tips
 
   📦 Context full? (>100k tokens)
-     /o9k-wipe  — saves high-value knowledge to hmem, then /clear.
+     /o9k-handoff  — saves high-value knowledge to hmem, then /clear.
                   Run before context compaction kicks in.
 
   🔄 Multiple devices?

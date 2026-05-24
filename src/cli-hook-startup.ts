@@ -292,7 +292,7 @@ export async function hookStartup(): Promise<void> {
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "UserPromptSubmit",
-        additionalContext: "CONTEXT WARNING: This session has been running for a long time. Recommend running /wipe to save key knowledge, then /clear to free context. Performance degrades significantly in very long sessions.",
+        additionalContext: "CONTEXT WARNING: This session has been running for a long time. Recommend running /o9k-handoff to save key knowledge, then /clear to free context. Performance degrades significantly in very long sessions.",
       },
     }));
   }

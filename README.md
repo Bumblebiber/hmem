@@ -115,7 +115,7 @@ Skills are versioned and updated independently. Your agents get smarter without 
 | `o9k-curate` | Cleaning up an .hmem file (mark obsolete, fix titles, consolidate dupes) |
 | `o9k-migrate-o` | Migrating O-entries to the project-bound 5-level structure |
 | `o9k-consolidate` | Merging session checkpoint summaries into one final O-entry summary |
-| `o9k-wipe` | Prep for `/clear` — save high-value knowledge, update Next Steps |
+| `o9k-handoff` | Prep for `/clear` — save high-value knowledge, write a verifiable handoff in Next Steps |
 | `o9k-config` | View/change memory settings, hooks, sync, checkpoints |
 | `o9k-setup` | First-time install of hmem for Claude Code / Gemini CLI / OpenCode |
 | `o9k-sync-setup` | Set up `hmem-sync` for cross-device sync |

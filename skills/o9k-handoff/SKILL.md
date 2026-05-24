@@ -1,15 +1,17 @@
 ---
-name: o9k-wipe
-description: "Prep for /clear: save high-value knowledge and update project Next Steps, then prompt the user to clear. Use on /wipe, 'clear/wipe context', 'context is full', or 'start fresh'. Not for deleting hmem entries, clearing terminal output, or cleaning up nodes."
+name: o9k-handoff
+description: "Prep for /clear: write a verifiable, durable handoff — save high-value knowledge and update the project's Next Steps so the next session starts *better* than this one — then prompt the user to clear. Use on /o9k-handoff, /handoff, 'wipe context', 'clear context', 'context is full', or 'start fresh'. Not for deleting hmem entries, clearing terminal output, or cleaning up nodes."
 ---
 
-# Wipe — Prepare & Clear Context
+# Handoff — Prepare & Clear Context
 
-Follow these steps in order.
+The job of this skill is to leave a handoff good enough that a fresh session —
+which remembers nothing of this conversation — picks up cleanly, ideally
+starting *better* than you did. Follow these steps in order.
 
 ## Step 0: Abort if repos touched this session have uncommitted changes
 
-**Hard gate — must complete before any other step.** Wiping context with
+**Hard gate — must complete before any other step.** Clearing context with
 unfinished local work risks losing track of why those changes exist. The
 post-clear session has no memory of the chat that produced them.
 
@@ -37,7 +39,7 @@ concern here.
    - **Do not proceed to Step 1 or beyond. Do not tell the user to `/clear`.**
    - Print the dirty file list per repo so the user sees exactly what's at risk.
    - Reply with:
-     > Wipe aborted — uncommitted changes in repo(s) you worked on this session. Commit, stash, or discard the listed files first, then re-run /wipe. (If the changes are intentional WIP you want to keep across the wipe, stash them with a clear message: `git stash push -m "WIP: <what + why>"`.)
+     > Handoff aborted — uncommitted changes in repo(s) you worked on this session. Commit, stash, or discard the listed files first, then re-run /o9k-handoff. (If the changes are intentional WIP you want to keep across the clear, stash them with a clear message: `git stash push -m "WIP: <what + why>"`.)
    - End the skill.
 
 Only proceed to Step 1 when every session-touched repo is clean.
@@ -75,13 +77,13 @@ Skip if the last checkpoint was fewer than 5 messages ago.
 
 Redundant writes waste tokens and create duplicates that clutter memory.
 Auto-checkpoints already call `read_memory` to deduplicate before writing —
-manual writes during wipe bypass that check and risk creating noise.
+manual writes during the handoff bypass that check and risk creating noise.
 
-## Step 2: Update Next Steps
+## Step 2: Update Next Steps (the handoff)
 
 Before clearing context, ensure the active project's "Next Steps" section is up to date.
-This is critical for session handoff — after /clear, the next session (or restored context)
-needs to know what to work on next.
+This is the heart of the handoff — after /clear, the next session (or restored context)
+needs to know what to work on next, and acts only on what's written here.
 
 1. Find the "Next Steps" section: `read_memory(id="P00XX")` at depth 2 to list L2 children,
    then identify the "Next Steps" node by title (seq may vary per project).
@@ -95,7 +97,15 @@ needs to know what to work on next.
    each L3 child under Next Steps that has been fully completed. This keeps the section clean
    for the next session — irrelevant nodes are hidden from `load_project` output.
 
-Skip if Next Steps is already current (updated within the last few exchanges).
+Skip the rewrite if Next Steps is already current (updated within the last few exchanges) — but still confirm it clears the quality bar below.
+
+**Before declaring Step 2 done, audit the result against this quality bar — write the handoff so the next session starts *better* than this one, not just *informed* about it.** A fresh session has zero memory of the conversation behind these notes; it acts only on what's written, so a handoff that reads confidently but strands the successor is the failure mode.
+
+- **Verifiable, not asserted.** Don't write "X is done" expecting blind trust — the successor can't see the work behind the claim, and a confidently-wrong "DONE" makes it build on sand. Give the one command that proves the state (`git log --oneline main..<branch>`, a test command, a file check) and frame it as "verify with: …".
+- **Flag non-durable references.** Any path that won't survive — `/tmp/*` (periodically cleaned), gitignored scratch, build artifacts — gets marked ephemeral with a regen command, or — better — its essence gets mirrored into hmem as a child of the handoff node (the way `P0048.15.14.1` mirrored a verified boundary rule when its master plan lived only in gitignored `docs/`). Citing `/tmp/foo` as if permanent strands the successor when it's gone.
+- **Name what's NOT done.** Residual risks, partial fixes, known-broken bits — state them explicitly. A caveat hidden behind "mostly works" costs the successor the exact rediscovery you already paid for.
+
+**Litmus test before you clear:** *"Coming back fresh right now, would this note let me start better than I did today — or trip over the same things?"* If the latter, fix the note first.
 
 ## Step 3: Tell the user to /clear
 
@@ -125,8 +135,8 @@ The hook:
 ## Why this flow works
 
 - **O-entries are covered.** The Stop hook logs every exchange to the active
-  project's O-entry. Wipe does not need to handle conversation history.
+  project's O-entry. The handoff does not need to handle conversation history.
 - **Checkpoints are covered (auto mode).** The Haiku subagent extracts knowledge
-  every 20 exchanges. Wipe only needs to catch the tail end, if anything.
+  every 20 exchanges. The handoff only needs to catch the tail end, if anything.
 - **Context restoration is covered.** The SessionStart[clear] hook handles
   re-injection automatically. The agent just needs the user to type /clear.

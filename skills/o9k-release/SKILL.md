@@ -59,7 +59,7 @@ Every code change can affect skill documentation. Check each skill against the c
 | **o9k-curate** | Curation rules (self + foreign-file), hmem_path param, new node types, new tags | New tagged node types (#checkpoint-summary, #skill-dialog), schema changes, hmem_path-capable tool changes |
 | **o9k-new-project** | P-entry schema (R0009), write_memory format | Changes to P-entry structure or write format |
 | **o9k-setup** | Hook scripts, init flow, MCP config format | Changes to hooks, CLI commands, environment variables |
-| **o9k-wipe** | Checkpoint references, context threshold | Changes to checkpointMode, contextTokenThreshold |
+| **o9k-handoff** | Checkpoint references, context threshold | Changes to checkpointMode, contextTokenThreshold |
 | **o9k-sync-setup** | Sync config format, sync commands | Changes to sync parsing, o9k-sync integration |
 
 **How to check:** For each skill, grep for key terms from the code change:
@@ -238,7 +238,7 @@ Never skip with "it's just a tiny patch" — undocumented patches are exactly th
 | `hermes-hooks/*` | **Step 7b** + o9k-update (deployment instructions) |
 | `plugins/hermes-hmem/*` | **Step 7b** + o9k-update |
 | `scripts/hmem-session-inject.sh`, `scripts/hmem-statusline.sh` | **Step 7b** + o9k-setup |
-| cli-context-inject.ts | o9k-wipe, **o9k-setup**, **o9k-update** |
+| cli-context-inject.ts | o9k-handoff, **o9k-setup**, **o9k-update** |
 | cli-hook-startup.ts | **o9k-setup** (first-message context docs), **o9k-update** (user-visible behavior) |
 | Any new skill added | **o9k-update** (list of skills to sync) |
 | Any new user-visible behavior | **o9k-update** — always |

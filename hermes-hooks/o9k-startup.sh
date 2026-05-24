@@ -123,7 +123,7 @@ if [[ "$checkpoint_mode" == "remind" && $(( turn_count % checkpoint_interval )) 
 
 # Long-Session Warning (ab 60 Turns, alle 5)
 elif [[ "$turn_count" -ge 60 && $(( turn_count % 5 )) -eq 0 ]]; then
-    warning="⚠️ Lange Session (Turn $turn_count). /wipe zum Speichern, dann /clear für frischen Kontext."
+    warning="⚠️ Lange Session (Turn $turn_count). /o9k-handoff zum Speichern, dann /clear für frischen Kontext."
     jq -n --arg ctx "$warning" '{context: $ctx}'
 
 else
