@@ -50,13 +50,14 @@ export function importV2(store: V2Store, staging: V2Staging, pulled: BlobEnvelop
     winners.set(k, prev ? pickWinner(prev, env) : env);
   }
 
+  const toAck: BlobEnvelope[] = [];
   const apply = store.db.transaction(() => {
     for (const [, env] of winners) {
       if (env.table === 'events') {
         // Events are write-once: union semantics, no local comparison needed.
         upsert(store.db, env.table, env.row);
         stats.unioned++;
-        markAcked(staging, env);
+        toAck.push(env);
       } else {
         // Mutable tables: compare against local row to honour LWW.
         const localRow = fetchLocal(store.db, env.table, env.row);
@@ -66,20 +67,23 @@ export function importV2(store: V2Store, staging: V2Staging, pulled: BlobEnvelop
           if (winner === env) {
             upsert(store.db, env.table, env.row);
             stats.updated++;
-            markAcked(staging, env);
+            toAck.push(env);
           } else {
-            // Local wins: no write, but still ack so we don't re-push this remote version.
+            // Local copy is newer: skip the write. Do NOT ack — this device will push its
+            // newer local row on the next push and ack it then (the losing remote version
+            // never enters the store, so there is nothing to echo).
             stats.skipped++;
           }
         } else {
           // Row does not exist locally — insert.
           upsert(store.db, env.table, env.row);
           stats.inserted++;
-          markAcked(staging, env);
+          toAck.push(env);
         }
       }
     }
   });
-  apply();
+  apply(); // on throw: DB rolled back AND no acks applied (toAck discarded), staging untouched
+  for (const env of toAck) markAcked(staging, env);
   return stats;
 }

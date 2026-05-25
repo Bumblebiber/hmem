@@ -79,4 +79,52 @@ describe('importV2', () => {
     expect(staging.acked['entries:01R']).toBeTruthy();
     s.close();
   });
+
+  it('does NOT ack when the local copy wins (skip), so the newer local will still be pushed', () => {
+    const s = fresh();
+    const { uid } = s.entries.createEntry({ prefix: 'P', level_1: 'LocalNew' });
+    const local = s.entries.getEntry(uid)!;
+    const stale = rowToEnvelope('entries', { ...local, level_1: 'StaleRemote', updated_at: ts(0) });
+    const staging = { file_id: 'f', cursor: null, acked: {} as Record<string, unknown> };
+    importV2(s, staging, [stale]);
+    expect(staging.acked[`entries:${uid}`]).toBeUndefined(); // local won → not acked
+    s.close();
+  });
+
+  it('reduces multiple envelopes for the same key to the single LWW winner', () => {
+    const s = fresh();
+    const base = { uid: '01K', label: 'P5', prefix: 'P', seq: 5, created_at: ts(0), access_count: 0, last_accessed: null, obsolete: 0, favorite: 0, irrelevant: 0, pinned: 0, tags: null, deleted_at: null };
+    const older = rowToEnvelope('entries', { ...base, level_1: 'older', updated_at: ts(1) });
+    const newer = rowToEnvelope('entries', { ...base, level_1: 'newer', updated_at: ts(8) });
+    const staging = { file_id: 'f', cursor: null, acked: {} };
+    importV2(s, staging, [older, newer, older]); // order-independent
+    expect(s.entries.getEntry('01K')?.level_1).toBe('newer');
+    s.close();
+  });
+
+  it('reconciles a non-entries mutable table (nodes) by LWW', () => {
+    const s = fresh();
+    const { uid } = s.entries.createEntry({ prefix: 'P', level_1: 'Root' });
+    const n = s.entries.addNode({ root_uid: uid, content: 'A' });
+    const localNode = s.db.prepare('SELECT * FROM nodes WHERE uid=?').get(n.uid) as Record<string, unknown>;
+    const remote = rowToEnvelope('nodes', { ...localNode, content: 'B-wins', updated_at: ts(9) });
+    const staging = { file_id: 'f', cursor: null, acked: {} };
+    importV2(s, staging, [remote]);
+    expect((s.db.prepare('SELECT content FROM nodes WHERE uid=?').get(n.uid) as { content: string }).content).toBe('B-wins');
+    s.close();
+  });
+
+  it('a newer local delete is not clobbered by a stale remote edit', () => {
+    const s = fresh();
+    const { uid } = s.entries.createEntry({ prefix: 'P', level_1: 'X' });
+    const local = s.entries.getEntry(uid)!;
+    // local soft-deletes at a late timestamp
+    s.db.prepare('UPDATE entries SET deleted_at=?, updated_at=? WHERE uid=?').run(ts(9), ts(9), uid);
+    const staleEdit = rowToEnvelope('entries', { ...local, level_1: 'StaleEdit', updated_at: ts(2), deleted_at: null });
+    const staging = { file_id: 'f', cursor: null, acked: {} };
+    importV2(s, staging, [staleEdit]);
+    const raw = s.db.prepare('SELECT deleted_at, level_1 FROM entries WHERE uid=?').get(uid) as { deleted_at: string | null; level_1: string };
+    expect(raw.deleted_at).toBe(ts(9)); // delete preserved
+    s.close();
+  });
 });
