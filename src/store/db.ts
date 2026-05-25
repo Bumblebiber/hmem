@@ -44,6 +44,10 @@ const MIGRATIONS: string[] = [
   // files the column is already in schema-v2.sql, so this ALTER throws
   // "duplicate column" — which runMigrations() already tolerates.
   `ALTER TABLE entries ADD COLUMN tags TEXT`,
+  // Phase 5 (v2_alter_4): sessions.cwd is the workspace key for last-active-for-workspace
+  // binding resolution. On fresh files the column is already in schema-v2.sql, so this
+  // ALTER throws "duplicate column" — which runMigrations() tolerates.
+  `ALTER TABLE sessions ADD COLUMN cwd TEXT`,
 ];
 
 export function openDb(path: string): Database.Database {

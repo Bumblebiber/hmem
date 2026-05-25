@@ -50,6 +50,7 @@ CREATE TABLE sessions (
   session_id       TEXT PRIMARY KEY,  -- ULID, hook-deterministic per session
   device_id        TEXT,              -- → entries.uid of the I-entry
   harness          TEXT,              -- 'claude-code'|'hermes'|'pi'
+  cwd              TEXT,              -- workspace key (Phase 5): last-active-for-workspace binding
   summary          TEXT,              -- one-line rolling state (cheap "Recent Sessions")
   summary_node_uid TEXT,              -- → nodes.uid in bound project's subtree
   started_at       TEXT NOT NULL,
