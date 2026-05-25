@@ -5,7 +5,27 @@ import { getPassphrase } from './sync/passphrase.js'
 import { importFromStaging } from './sync-bridge.js'
 import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { hostname } from 'node:os'
+import Database from 'better-sqlite3'
+import { pullV2 } from './sync/v2/sync.js'
+import { createV2Store } from './v2/store-facade.js'
+import { makeHttpTransport } from './sync/v2/transport.js'
+import { loadHmemConfig } from './hmem-config.js'
+
+/** Peek the schema_major value without mutating the file. Returns null if indeterminate. */
+function peekSchemaMajor(hmemPath: string): string | null {
+  let db: Database.Database | null = null
+  try {
+    db = new Database(hmemPath, { readonly: true })
+    const row = db.prepare("SELECT value FROM schema_version WHERE key='schema_major'").get() as { value: string } | undefined
+    return row?.value ?? null
+  } catch {
+    return null
+  } finally {
+    try { db?.close() } catch { /* ignore */ }
+  }
+}
 
 export async function syncPull(opts: { passphrase?: string } = {}) {
   const config = await loadSyncConfig()
@@ -15,6 +35,28 @@ export async function syncPull(opts: { passphrase?: string } = {}) {
   if (!fileId) { console.error('No active file. Run: hmem setup'); process.exit(1) }
 
   const fileCfg = config.files[fileId] ?? {}
+
+  // --- v2 lane ---
+  if (fileCfg.hmem_path && peekSchemaMajor(fileCfg.hmem_path) === '2') {
+    const salt = fileCfg.salt
+    if (!salt) { console.error(`No salt for "${fileId}". Run: hmem setup`); process.exit(1) }
+    const passphrase = opts.passphrase ?? await getPassphrase(fileCfg.passphrase_hint)
+    const client = new HmemSyncClient(config.server, config.api_key)
+    const transport = makeHttpTransport(client)
+    const hmemConfig = loadHmemConfig(dirname(fileCfg.hmem_path))
+    const store = createV2Store(fileCfg.hmem_path, hmemConfig)
+    try {
+      const result = await pullV2({ store, transport, dir: configDir(), fileId, deviceId: hostname(), passphrase, salt })
+      console.log(`✓ Pulled ${result.applied} updates`)
+    } finally {
+      store.close()
+    }
+    config.files[fileId] = { ...fileCfg, last_sync: new Date().toISOString() }
+    await saveSyncConfig(config)
+    return
+  }
+  // --- end v2 lane ---
+
   const client = new HmemSyncClient(config.server, config.api_key)
 
   let response
