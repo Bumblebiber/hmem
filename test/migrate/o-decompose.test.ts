@@ -53,3 +53,12 @@ test('oNodeToLoc maps original O-node ids to their session+seq', () => {
   expect(res.oNodeToLoc['O0001.1.1.1']).toMatchObject({ seq: expect.any(Number) });
   expect(typeof res.oNodeToLoc['O0001.1.1.1'].session_id).toBe('string');
 });
+
+test('summary detection checks content, not just title (rolling-summary in content under a label title)', () => {
+  const { v2, maps } = setup();
+  const pUid = maps.labelToUid.get('P0001')!;
+  const s = (v2.prepare(`SELECT s.summary FROM sessions s
+    JOIN session_bindings b ON b.session_id=s.session_id
+    WHERE b.project_uid=?`).all(pUid) as any[]).find(x => x.summary.includes('did X and Y'))!;
+  expect(s.summary).toBe('Rolling summary: did X and Y'); // content-based, not the 'Session A\n\n...' fallback
+});

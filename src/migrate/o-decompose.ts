@@ -1,10 +1,11 @@
 import Database from 'better-sqlite3';
 import { newUlid } from '../store/ulid.js';
-import { allRoots, nodesForRoot, parseLinks } from './v1-reader.js';
+import { allRoots, nodesForRoot, parseLinks, V1Node } from './v1-reader.js';
 import { mergeNodeText, MigrateMaps } from './tree.js';
 
 const TWIN = /^O9\d{4}$/;
 const GARBAGE = new Set(['O0000.66']);                 // Phase 0: synthetic stress-test chunk
+const ROLLING_RE = /^(Batch\s+)?Rolling summary/i;
 
 export interface Decomposition {
   sessionsReconstructed: number;
@@ -22,7 +23,7 @@ function pathKey(id: string): number[] {
 function cmpPath(a: string, b: string): number {
   const pa = pathKey(a), pb = pathKey(b);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? -1) - (pb[i] ?? -1);
+    const d = (pa[i] ?? -1) - (pb[i] ?? -1); // missing segment => shorter path sorts first (ancestor before descendant)
     if (d) return d;
   }
   return 0;
@@ -83,13 +84,16 @@ export function decomposeORoots(v1: Database.Database, v2: Database.Database, ma
       if (isUnattributed) out.unattributedSessions++;
 
       // summary: prefer a rolling-summary child, else the chunk's own text
-      const summaryNode = subtree.find(n =>
-        /^(Batch\s+)?Rolling summary/i.test((n.title ?? n.content ?? '')));
+      const isRollingSummary = (n: V1Node) =>
+        [n.title, n.content].some(s => !!s && ROLLING_RE.test(s));
+      const summaryNode = subtree.find(isRollingSummary);
+      // Use the field that carries the rolling-summary marker directly (avoids merging a
+      // short label title into the summary text when content holds the real marker).
       const summary = summaryNode
-        ? mergeNodeText(summaryNode.title, summaryNode.content)
+        ? (ROLLING_RE.test(summaryNode.content ?? '') ? summaryNode.content! : mergeNodeText(summaryNode.title, summaryNode.content))
         : mergeNodeText(c.title, c.content);
 
-      const eventNodes = (maxDepth === 2 ? [] : subtree.filter(n => n.depth === maxDepth))
+      const eventNodes = (maxDepth === 2 ? [] : subtree.filter(n => n.depth === maxDepth && n.id !== summaryNode?.id))
         .sort((a, b) => cmpPath(a.id, b.id));
 
       const lastTs = eventNodes.length ? eventNodes[eventNodes.length - 1].created_at : c.created_at;
