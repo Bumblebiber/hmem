@@ -21,8 +21,14 @@ export function activate(store: V2Store, projectLabel: string, opts: ActivateOpt
   return { session_id: sessionId, project: entry.label, project_uid: uid };
 }
 
-export function getSessionLog(store: V2Store, sessionId: string): string {
-  const events = store.events.getSessionLog(sessionId);
+export function getSessionLog(store: V2Store, sessionId: string, limit?: number): string {
+  let events = store.events.getSessionLog(sessionId);
   if (!events.length) return `‹no events for session ${sessionId}›`;
-  return events.map(e => `#${e.seq} [${e.ts}] ${e.role}: ${e.content}`).join('\n');
+  let truncated = 0;
+  if (limit && limit > 0 && events.length > limit) {
+    truncated = events.length - limit;
+    events = events.slice(-limit); // most recent `limit` events
+  }
+  const body = events.map(e => `#${e.seq} [${e.ts}] ${e.role}: ${e.content}`).join('\n');
+  return truncated > 0 ? `‹${truncated} earlier events truncated›\n${body}` : body;
 }

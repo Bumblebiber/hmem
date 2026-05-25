@@ -548,28 +548,12 @@ server.tool(
     before: z.string().optional().describe("Only entries before this date (ISO format)"),
     search: z.string().optional().describe("Full-text search across all memory levels"),
     limit: z.number().optional().describe("Max results (default: unlimited — all L1 entries are returned)"),
-    time: z.string().optional().describe("Time filter 'HH:MM' — filter entries by time of day"),
-    period: z.string().optional().describe("Time window: '+4h' (after), '-2h' (before), '4h' (±4h symmetric), 'both' (±2h default)"),
-    time_around: z.string().optional().describe("Reference entry ID — find entries created around the same time"),
-    show_obsolete: z.coerce.boolean().optional().describe("Include all obsolete entries (default: only top 3 most-accessed)"),
-    show_obsolete_path: z.coerce.boolean().optional().describe(
-      "When reading an obsolete entry by ID, show the full correction chain instead of just the final valid entry."
-    ),
     titles_only: z.coerce.boolean().optional().describe(
-      "Compact title listing — shows all entries as ID + date + title, without children. Like a table of contents."
-    ),
-    expand: z.coerce.boolean().optional().describe(
-      "Expand full tree with complete node content (ID queries only). depth controls how deep."
-    ),
-    mode: z.enum(["discover", "essentials"]).optional().describe(
-      "Bulk read mode. 'discover' (default for first read): newest-heavy. 'essentials': importance-heavy."
+      "Compact title listing — shows all bulk-read entries as a single title line each, without expansion. Like a table of contents."
     ),
     context_for: z.string().optional().describe(
       "Load entries related to this entry (directly linked OR sharing tags). " +
       "Example: read_memory({ context_for: 'P0029' })."
-    ),
-    min_tag_score: z.number().optional().describe(
-      "Minimum weighted tag score for context_for matches (default: 5)."
     ),
     max_results: z.number().int().min(1).max(50).optional().describe("Max results for search/context (default 20)"),
     why: z.boolean().optional().describe(
@@ -578,23 +562,14 @@ server.tool(
     store: z.enum(["personal", "company"]).default("personal").describe(
       "Source store: 'personal' or 'company'"
     ),
-    curator: z.coerce.boolean().optional().describe(
-      "Set true to show full metadata (access counts, roles, dates). For curators only."
-    ),
-    show_all: z.coerce.boolean().optional().describe(
-      "Curation mode: show ALL entries of the selected prefix. Use with prefix filter for manageable output."
-    ),
     tag: z.string().optional().describe(
-      "Filter by hashtag, e.g. '#hmem'. Only entries with this tag are shown in bulk reads."
-    ),
-    stale_days: z.number().optional().describe(
-      "Show entries not accessed in the last N days. Useful for finding what to curate or review."
+      "Filter bulk reads by hashtag, e.g. '#hmem'. Only entries with this tag are shown."
     ),
     hmem_path: z.string().optional().describe(
       "Curator mode: absolute path to an external .hmem file to read from. Overrides `store`."
     ),
   },
-  async ({ id, depth, prefix, after, before, search, limit, context_for, max_results, why, store: storeName, hmem_path }) => {
+  async ({ id, depth, prefix, after, before, search, limit, titles_only, tag, context_for, max_results, why, store: storeName, hmem_path }) => {
     try {
       const { store, label: storeLabel } = openStore(storeName, hmem_path);
       try {
@@ -615,7 +590,7 @@ server.tool(
               }).join("\n")
             : `No related entries found for ${context_for}.`;
         } else {
-          const res = readBulk(store, { prefix, after, before, limit, why });
+          const res = readBulk(store, { prefix, after, before, limit, titlesOnly: titles_only, tag, why });
           text = res.text || "No memories found.";
           if (why) whyBlock = formatWhy(res.why);
         }
@@ -856,15 +831,9 @@ server.tool(
     try {
       const { store } = openStore("personal");
       try {
-        const full = getSessionLog(store, session_id);
         const cap = limit ?? 500;
-        const lines = full.split("\n");
-        let text = full;
-        if (lines.length > cap) {
-          const kept = lines.slice(lines.length - cap);
-          text = `‹${lines.length - cap} earlier events truncated›\n` + kept.join("\n");
-        }
-        log(`get_session_log: ${session_id} (${lines.length} lines, cap ${cap})`);
+        const text = getSessionLog(store, session_id, cap);
+        log(`get_session_log: ${session_id} (cap ${cap} events)`);
         return capResult({ content: [{ type: "text" as const, text }] });
       } finally {
         store.close();

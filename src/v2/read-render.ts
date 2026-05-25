@@ -76,6 +76,8 @@ export interface ReadBulkOpts {
   before?: string;
   limit?: number;
   why?: boolean;
+  titlesOnly?: boolean;
+  tag?: string;
 }
 
 export interface WhyRow {
@@ -95,6 +97,7 @@ export function readBulk(store: V2Store, opts: ReadBulkOpts = {}): ReadBulkResul
   if (opts.prefix) { where.push('prefix = ?'); args.push(opts.prefix); }
   if (opts.after)  { where.push('created_at >= ?'); args.push(opts.after); }
   if (opts.before) { where.push('created_at <= ?'); args.push(opts.before); }
+  if (opts.tag)    { where.push('tags LIKE ?'); args.push(`%"${opts.tag}"%`); }
 
   const sql =
     `SELECT * FROM entries WHERE ${where.join(' AND ')} ORDER BY created_at DESC, seq DESC` +
@@ -120,6 +123,13 @@ export function readBulk(store: V2Store, opts: ReadBulkOpts = {}): ReadBulkResul
   const out: string[] = [];
 
   for (const r of live) {
+    if (opts.titlesOnly) {
+      const maxNode = store.config.maxNodeChars ?? 600;
+      out.push(`${r.label}  ${cap(store.entries.renderRefs(r.level_1).split('\n')[0], maxNode)}`);
+      whyTrace.push({ label: r.label, shown: 'title', reason: 'titles_only mode' });
+      continue;
+    }
+
     const isFav    = !!r.favorite;
     const isPin    = !!r.pinned;
     const isNewest = newestByPrefix.get(r.prefix)?.has(r.uid) ?? false;

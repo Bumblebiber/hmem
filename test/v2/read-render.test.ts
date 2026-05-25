@@ -59,4 +59,22 @@ describe('readBulk', () => {
     expect(why!.length).toBe(3); // all returned, no LIMIT applied
     s.close();
   });
+
+  it('renders all entries title-only when titlesOnly is set', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    for (let i = 0; i < 3; i++) { const e = s.entries.createEntry({ prefix: 'L', level_1: `L${i}` }); s.entries.addNode({ root_uid: e.uid, content: `body ${i}` }); }
+    const { text, why } = readBulk(s, { prefix: 'L', titlesOnly: true, why: true });
+    expect(why!.every(w => w.shown === 'title')).toBe(true);
+    expect(text).not.toContain('body 0'); // no expansion
+    s.close();
+  });
+  it('filters by tag', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const a = s.entries.createEntry({ prefix: 'L', level_1: 'tagged' });
+    const b = s.entries.createEntry({ prefix: 'L', level_1: 'untagged' });
+    s.db.prepare('UPDATE entries SET tags=? WHERE uid=?').run(JSON.stringify(['#keep']), a.uid);
+    const { why } = readBulk(s, { prefix: 'L', tag: '#keep', why: true });
+    expect(why!.map(w => w.label)).toEqual([a.label]);
+    s.close();
+  });
 });

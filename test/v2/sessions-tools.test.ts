@@ -69,4 +69,17 @@ describe('getSessionLog', () => {
     expect(getSessionLog(s, 'nope')).toMatch(/no events/i);
     s.close();
   });
+
+  it('caps to the most recent N events with an accurate truncation note', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const { session_id } = s.sessions.createSession({});
+    for (let i = 0; i < 5; i++) s.events.appendEvent({ session_id, role: 'user', content: `line A\nline B ${i}` }); // multi-line events
+    const out = getSessionLog(s, session_id, 2);
+    expect(out).toContain('‹3 earlier events truncated›');
+    // only the last 2 events' content present
+    expect(out).toContain('line B 4');
+    expect(out).toContain('line B 3');
+    expect(out).not.toContain('line B 0');
+    s.close();
+  });
 });
