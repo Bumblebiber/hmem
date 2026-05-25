@@ -53,3 +53,25 @@ export interface EventRow {
   role: 'user' | 'assistant';
   content: string;
 }
+
+// ── Phase 2: sessions ──
+
+export interface SessionRow {
+  session_id: string;
+  device_id: string | null;
+  harness: string | null;
+  summary: string | null;
+  summary_node_uid: string | null;
+  started_at: string;
+  last_active_at: string | null;
+  ended_at: string | null;
+  updated_at: string;
+}
+
+/** A binding segment closed by `bind` — handed to the `onSegmentClose` hook. */
+export interface ClosedSegment {
+  session_id: string;
+  project_uid: string;
+  from_seq: number;
+  to_seq: number;
+}
