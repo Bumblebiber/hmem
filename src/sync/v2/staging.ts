@@ -37,3 +37,14 @@ export function markAcked(s: V2Staging, e: BlobEnvelope): void {
 export function setCursor(s: V2Staging, serverTime: string): void {
   s.cursor = serverTime;
 }
+
+/** Prune ack records that are tombstoned AND no longer present in the live store key set
+ *  (i.e. hard-deleted, not merely soft-deleted). Events (write-once union) are never pruned.
+ *  `liveKeys` = `${table}:${key}` for every row currently in the store. The v2 ledger is already
+ *  bounded (one record per entity); this only reclaims records for entities that physically vanished. */
+export function gcStaging(s: V2Staging, liveKeys: Set<string>): void {
+  for (const [k, ack] of Object.entries(s.acked)) {
+    if (ack.table === 'events') continue;
+    if (ack.deleted && !liveKeys.has(k)) delete s.acked[k];
+  }
+}

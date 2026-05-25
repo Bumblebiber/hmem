@@ -1,9 +1,9 @@
 import { join } from 'node:path';
 import type { V2Store } from '../../v2/store-facade.js';
 import type { SyncTransport, PushBlob } from './transport.js';
-import { exportV2 } from './export.js';
+import { exportV2, collectLiveKeys } from './export.js';
 import { importV2 } from './import.js';
-import { loadStaging, saveStaging, markAcked, setCursor } from './staging.js';
+import { loadStaging, saveStaging, markAcked, setCursor, gcStaging } from './staging.js';
 import { loadQueue, enqueue, flushQueue } from './queue.js';
 import { stagingKey } from './envelope.js';
 import type { BlobEnvelope } from './envelope.js';
@@ -56,6 +56,7 @@ export async function pullV2(a: SyncArgs): Promise<{ applied: number }> {
   const envelopes: BlobEnvelope[] = res.blobs.map((b) => JSON.parse(decrypt(b.data, key)) as BlobEnvelope);
   const stats = importV2(a.store, staging, envelopes);
   setCursor(staging, res.server_time);
+  gcStaging(staging, collectLiveKeys(a.store));
   saveStaging(stgPath, staging);
   return { applied: stats.inserted + stats.updated + stats.unioned };
 }
