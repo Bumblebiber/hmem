@@ -42,17 +42,14 @@ server.tool(
     ids: z.array(z.string()).min(1).describe("List of entry/node IDs to update, e.g. ['T0005', 'T0012', 'L0044']"),
     irrelevant: z.coerce.boolean().optional().describe("Mark all as irrelevant [-]"),
     favorite: z.coerce.boolean().optional().describe("Set or clear [♥] favorite on all"),
-    active: z.coerce.boolean().optional().describe("Set or clear [*] active on all"),
     pinned: z.coerce.boolean().optional().describe("Set or clear [P] pinned on all"),
     store: z.enum(["personal", "company"]).default("personal"),
   },
-  async ({ ids, irrelevant, favorite, active, pinned, store: storeName }) => {
+  async ({ ids, irrelevant, favorite, pinned, store: storeName }) => {
     try {
       const { store, label: storeLabel } = resolveStore(storeName, undefined);
       try {
         // v2 sync lands in Phase 6
-        // Note: `active` has no v2 UpdatePatch equivalent — accepted in the schema
-        // for backward compat but not applied.
         const patch = { irrelevant, favorite, pinned };
         let updated = 0;
         let notFound = 0;
@@ -65,7 +62,6 @@ server.tool(
         const flags = [
           irrelevant !== undefined ? `irrelevant=${irrelevant}` : "",
           favorite !== undefined ? `favorite=${favorite}` : "",
-          active !== undefined ? `active=${active}` : "",
           pinned !== undefined ? `pinned=${pinned}` : "",
         ].filter(Boolean).join(", ");
         log(`update_many [${storeLabel}]: ${updated}/${ids.length} updated (${flags})`);
@@ -267,16 +263,13 @@ server.tool(
 // ---- Tool: tag_bulk ----
 server.tool(
   "tag_bulk",
-  "Apply tag changes (add and/or remove) to all entries matching a filter. " +
-    "Filter by prefix, full-text search, or existing tag. " +
+  "Apply tag changes (add and/or remove) to all entries matching a prefix filter. " +
     "Returns the number of entries modified. " +
     "Also use tag_rename to rename a tag across all entries.",
   {
     filter: z.object({
       prefix: z.string().optional().describe("Only entries with this prefix, e.g. 'L'"),
-      search: z.string().optional().describe("FTS5 search term — only matching entries"),
-      tag: z.string().optional().describe("Only entries that already have this tag"),
-    }).describe("At least one filter field required"),
+    }).describe("Prefix filter required"),
     add_tags: z.array(z.string()).optional().describe("Tags to add, e.g. ['#hmem', '#bugfix']"),
     remove_tags: z.array(z.string()).optional().describe("Tags to remove"),
     store: z.enum(["personal", "company"]).default("personal"),
