@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, test, expect } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -66,4 +66,10 @@ describe('db', () => {
       .get() as { root_uid: string } | undefined;
     expect(hit?.root_uid).toBe('u2');
   });
+});
+
+test('entries table has a tags column (v2_alter_3)', () => {
+  const db = openDb(':memory:');
+  const cols = db.prepare(`PRAGMA table_info(entries)`).all() as { name: string }[];
+  expect(cols.map(c => c.name)).toContain('tags');
 });

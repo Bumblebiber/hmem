@@ -14,6 +14,7 @@ CREATE TABLE entries (
   favorite      INTEGER NOT NULL DEFAULT 0,
   irrelevant    INTEGER NOT NULL DEFAULT 0,
   pinned        INTEGER NOT NULL DEFAULT 0,
+  tags          TEXT,                 -- JSON array; mirrors nodes.tags (added Phase 3)
   deleted_at    TEXT                  -- soft-delete (sync tombstone)
   -- NOTE: NO `active` column. "Active project" is per-session = the open
   -- binding segment (see session_bindings). Goal #2: no global mutable state.

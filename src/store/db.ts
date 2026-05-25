@@ -40,6 +40,10 @@ const MIGRATIONS: string[] = [
      INSERT INTO events_fts(content) VALUES (coalesce(new.content, ''));
      INSERT INTO events_fts_map(fts_rowid, event_uid) VALUES (last_insert_rowid(), new.event_uid);
    END`,
+  // Phase 3 (v2_alter_3): entries.tags for lossless v1->v2 tag migration. On fresh
+  // files the column is already in schema-v2.sql, so this ALTER throws
+  // "duplicate column" — which runMigrations() already tolerates.
+  `ALTER TABLE entries ADD COLUMN tags TEXT`,
 ];
 
 export function openDb(path: string): Database.Database {
