@@ -26,5 +26,6 @@ describe('pickWinner (mutable LWW total order)', () => {
     const open = rowToEnvelope('session_bindings', { session_id: 'S', from_seq: 1, to_seq: null, created_at: '2026-05-25T12:00:00.000Z' });
     const closed = rowToEnvelope('session_bindings', { session_id: 'S', from_seq: 1, to_seq: 9, created_at: '2026-05-25T10:00:00.000Z' });
     expect(pickWinner(open, closed).row.to_seq).toBe(9);
+    expect(pickWinner(closed, open).row.to_seq).toBe(9); // symmetric: closed wins in either arg order
   });
 });

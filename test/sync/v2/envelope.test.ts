@@ -25,9 +25,15 @@ describe('rowToEnvelope', () => {
     expect(e.key).toBe('S1|3');
     expect(e.lww).toBe('2026-05-25T09:00:00.000Z');
   });
+  it('keys a node by uid with updated_at as lww', () => {
+    const row = { uid: '01NODE', root_uid: '01ROOT', content: 'x', updated_at: '2026-05-25T10:00:00.000Z', deleted_at: null };
+    const e = rowToEnvelope('nodes', row);
+    expect(e).toMatchObject({ table: 'nodes', key: '01NODE', lww: '2026-05-25T10:00:00.000Z', deleted: false });
+  });
   it('keys an event by event_uid', () => {
     const row = { event_uid: 'EV1', session_id: 'S1', seq: 1, ts: 't', role: 'user', content: 'hi' };
     expect(rowToEnvelope('events', row).key).toBe('EV1');
+    expect(rowToEnvelope('events', { event_uid: 'EV1', session_id: 'S1', seq: 1, ts: 't', role: 'user', content: 'hi' }).deleted).toBe(false);
   });
 });
 
