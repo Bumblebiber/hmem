@@ -74,4 +74,56 @@ describe('session bindings — segment algebra', () => {
       [21, null, 'P_b'],
     ]);
   });
+
+  it('scenario 3: late switch since=11 re-attributes 11..20 to P_b, no event mutated', () => {
+    const db = openDb(':memory:');
+    const s = createSessionsApi(db);
+    const ev = createEventsApi(db);
+    s.createSession({ session_id: 'S' });
+    s.bind('S', 'P_a');
+    const uids: string[] = [];
+    for (let i = 0; i < 20; i++)
+      uids.push(ev.appendEvent({ session_id: 'S', role: 'user', content: 'x' }).event_uid);
+    s.bind('S', 'P_b', 11); // backdate
+    expect(s.projectAt('S', 10)).toBe('P_a');
+    expect(s.projectAt('S', 11)).toBe('P_b');
+    expect(s.projectAt('S', 20)).toBe('P_b');
+    expect(ev.eventsForProject('P_a').map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(ev.eventsForProject('P_b').map((e) => e.seq)).toEqual([
+      11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    ]);
+    // no event row mutated: uids + seqs unchanged
+    expect(ev.getSessionLog('S').map((e) => e.event_uid)).toEqual(uids);
+  });
+
+  it('scenario 4: switch back to P_a yields a third segment; eventsForProject unions segments', () => {
+    const db = openDb(':memory:');
+    const s = createSessionsApi(db);
+    const ev = createEventsApi(db);
+    s.createSession({ session_id: 'S' });
+    s.bind('S', 'P_a');
+    for (let i = 0; i < 20; i++) ev.appendEvent({ session_id: 'S', role: 'user', content: 'x' }); // 1..20 P_a
+    s.bind('S', 'P_b');
+    for (let i = 0; i < 10; i++) ev.appendEvent({ session_id: 'S', role: 'user', content: 'x' }); // 21..30 P_b
+    s.bind('S', 'P_a');
+    ev.appendEvent({ session_id: 'S', role: 'user', content: 'x' }); // 31 P_a
+    expect(ev.eventsForProject('P_a').map((e) => e.seq)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 31,
+    ]);
+    expect(ev.eventsForProject('P_b').map((e) => e.seq)).toEqual([
+      21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+    ]);
+  });
+
+  it('empty-segment retarget: re-bind before any event overwrites the open segment in place', () => {
+    const db = openDb(':memory:');
+    const s = createSessionsApi(db);
+    s.createSession({ session_id: 'S' });
+    s.bind('S', 'P_a'); // open [1,NULL] P_a
+    s.bind('S', 'P_b'); // from = 1 again → delForward drops [1,NULL], opens [1,NULL] P_b
+    expect(s.segmentsForSession('S').map((b) => [b.from_seq, b.to_seq, b.project_uid])).toEqual([
+      [1, null, 'P_b'],
+    ]);
+    expect(s.currentProject('S')).toBe('P_b');
+  });
 });
