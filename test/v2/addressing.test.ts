@@ -38,4 +38,16 @@ describe('resolveAddress', () => {
     expect(nodePathOf(s, b1)).toBe(`${label}.2.1`);
     s.close();
   });
+  it('nodePathOf does not infinite-loop on a corrupt parent cycle', () => {
+    const { s, root } = seed();
+    const x = s.entries.addNode({ root_uid: root, content: 'X' });
+    const y = s.entries.addNode({ root_uid: root, parent_uid: x.uid, content: 'Y' });
+    // Corrupt: make x point to y (cycle x->y->x)
+    s.db.prepare('UPDATE nodes SET parent_uid=? WHERE uid=?').run(y.uid, x.uid);
+    let result: string | null = null;
+    expect(() => { result = nodePathOf(s, y.uid); }).not.toThrow();
+    // Returns *something* (or null) without hanging; we only assert it terminates.
+    expect(result === null || typeof result === 'string').toBe(true);
+    s.close();
+  });
 });

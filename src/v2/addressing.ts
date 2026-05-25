@@ -42,8 +42,11 @@ export function nodePathOf(store: V2Store, nodeUid: string): string | null {
   const node = store.entries.getNode(nodeUid);
   if (!node) return null;
   const parts: number[] = [];
+  const visited = new Set<string>();
   let cur = node;
   while (cur) {
+    if (visited.has(cur.uid)) break; // corrupt cycle guard
+    visited.add(cur.uid);
     parts.unshift(cur.seq);
     if (!cur.parent_uid) break;
     const p = store.entries.getNode(cur.parent_uid);

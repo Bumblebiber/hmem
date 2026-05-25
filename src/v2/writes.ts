@@ -79,6 +79,7 @@ export function appendMemory(store: V2Store, address: string, content: string): 
       stack.push({ depth: c.depth, uid: nUid });
       count++;
     }
+    store.db.prepare('UPDATE entries SET updated_at=? WHERE uid=?').run(new Date().toISOString(), addr.root_uid);
     return { count };
   })();
 }
@@ -95,9 +96,11 @@ export function updateMemory(store: V2Store, address: string, patch: UpdatePatch
     if (patch.delete) {
       return addr.node_uid ? store.entries.softDelete(addr.node_uid) : store.entries.softDelete(addr.root_uid);
     }
+    // Node addresses support content + tags only; entry-only flags
+    // (obsolete/favorite/irrelevant/pinned/newLabel) don't apply to nodes and are ignored.
     if (addr.node_uid) {
       if (patch.content !== undefined) store.entries.updateNodeContent(addr.node_uid, store.links.resolveRefs(patch.content));
-      if (patch.tags) store.db.prepare('UPDATE nodes SET tags=? WHERE uid=?').run(JSON.stringify(patch.tags), addr.node_uid);
+      if (patch.tags) store.db.prepare('UPDATE nodes SET tags=?, updated_at=? WHERE uid=?').run(JSON.stringify(patch.tags), new Date().toISOString(), addr.node_uid);
       return true;
     }
     if (patch.newLabel) store.entries.relabel(addr.root_uid, patch.newLabel);
