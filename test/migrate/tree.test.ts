@@ -58,3 +58,24 @@ test('migrateTree builds a label->uid map for every migrated root', () => {
   expect(labelToUid.has('D0001')).toBe(true);
   expect(labelToUid.has('O0001')).toBe(false);            // O handled in Half B
 });
+
+import { migrateLinks } from '../../src/migrate/tree.js';
+
+test('migrateLinks: resolvable label -> links row; O-id -> deferred; junk -> dangling', () => {
+  const v1 = makeV1Fixture(); const v2 = freshV2();
+  const maps = migrateTree(v1, v2);
+  const res = migrateLinks(v1, v2, maps);
+
+  // D0001 -> P0001 resolves to a links row
+  const d = maps.labelToUid.get('D0001')!, p = maps.labelToUid.get('P0001')!;
+  expect(v2.prepare(`SELECT COUNT(*) c FROM links WHERE src_uid=? AND dst_uid=?`).get(d, p))
+    .toMatchObject({ c: 1 });
+
+  // L0001 -> O0001.1.1 is an O-id ref: deferred, not a links row
+  expect(res.oRefTargets).toContain('O0001.1.1');
+  const l = maps.labelToUid.get('L0001')!;
+  expect(v2.prepare(`SELECT COUNT(*) c FROM links WHERE src_uid=?`).get(l)).toMatchObject({ c: 0 });
+
+  // E0001 -> Z9999 is dangling
+  expect(res.dangling).toContainEqual({ src: 'E0001', dst: 'Z9999' });
+});
