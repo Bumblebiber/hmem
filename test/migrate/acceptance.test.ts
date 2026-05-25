@@ -63,6 +63,13 @@ run('real-data migration: counts match, integrity holds, idempotent', () => {
       LEFT JOIN sessions s ON s.session_id=o.session_id WHERE s.session_id IS NULL`).get() as any).c,
   ).toBe(0);
 
+  // 4d. Link resolution — non-O sub-node targets now resolve (lossless cross-refs, Goal #7)
+  //     Observed post-fix: 597 resolved, 5 dangling (F-tombstone targets / genuinely-deleted refs).
+  //     OLD (pre-fix): 583 resolved, 19 dangling — 14 valid sub-node refs were silently dropped.
+  //     Bounds are intentionally slightly loose to avoid brittleness as the store grows.
+  expect(r.linksResolved).toBeGreaterThan(590);
+  expect(r.linksDangling.length).toBeLessThan(10);
+
   // 5. FTS populated by triggers on raw insert
   expect((v2.prepare(`SELECT COUNT(*) c FROM fts`).get() as any).c).toBeGreaterThan(0);
   expect((v2.prepare(`SELECT COUNT(*) c FROM events_fts`).get() as any).c).toBe(r.eventsWritten);

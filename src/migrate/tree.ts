@@ -82,9 +82,9 @@ export function migrateLinks(v1: Database.Database, v2: Database.Database, maps:
   const out: LinkMigration = { resolved: 0, oRefTargets: [], dangling: [] };
 
   const consider = (srcLabel: string, srcUid: string, dst: string) => {
-    const dstUid = maps.labelToUid.get(dst);
+    const dstUid = maps.labelToUid.get(dst) ?? maps.nodeIdToUid.get(dst);  // root entry OR migrated sub-node
     if (dstUid) { insLink.run(srcUid, dstUid); out.resolved++; return; }
-    if (O_ID.test(dst)) { out.oRefTargets.push(dst); return; }   // defer to o_redirects
+    if (O_ID.test(dst)) { out.oRefTargets.push(dst); return; }   // O-id -> o_redirects (Task 5)
     out.dangling.push({ src: srcLabel, dst });
   };
 

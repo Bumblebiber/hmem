@@ -48,6 +48,7 @@ export function makeV1Fixture(path = ':memory:'): Database.Database {
   R({ id: 'D0001', prefix: 'D', level_1: 'A decision', links: '["P0001"]' });       // resolvable link
   R({ id: 'L0001', prefix: 'L', level_1: 'A lesson', links: '["O0001.1.1"]' });     // link into an O subtree
   R({ id: 'E0001', prefix: 'E', level_1: 'A bug', links: '["Z9999"]' });            // dangling link
+  R({ id: 'D0003', prefix: 'D', level_1: 'links to a sub-node', links: '["P0001.1"]' });  // node-target link
   R({ id: 'F0001', prefix: 'F', level_1: 'Migriert nach L0001' });                  // tombstone -> drop
   tag.run('P0001', '#demo'); tag.run('P0001', '#hmem');                             // entry tags
   tag.run('P0001.1', '#section');                                                   // node tag

@@ -79,3 +79,13 @@ test('migrateLinks: resolvable label -> links row; O-id -> deferred; junk -> dan
   // E0001 -> Z9999 is dangling
   expect(res.dangling).toContainEqual({ src: 'E0001', dst: 'Z9999' });
 });
+
+test('migrateLinks resolves a link to a non-O sub-node (lossless cross-ref)', () => {
+  const v1 = makeV1Fixture(); const v2 = freshV2();
+  const maps = migrateTree(v1, v2);
+  migrateLinks(v1, v2, maps);
+  const d3 = maps.labelToUid.get('D0003')!;
+  const nodeUid = maps.nodeIdToUid.get('P0001.1')!;
+  expect(v2.prepare(`SELECT COUNT(*) c FROM links WHERE src_uid=? AND dst_uid=?`).get(d3, nodeUid))
+    .toMatchObject({ c: 1 });
+});
