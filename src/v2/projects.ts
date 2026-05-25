@@ -55,7 +55,8 @@ export interface CreateProjectInput {
 
 export function createProject(store: V2Store, input: CreateProjectInput): { uid: string; label: string } {
   const status = input.status ?? 'Active';
-  const level_1 = `${input.name} | ${status} | ${input.tech} | ${input.description}`;
+  const base = `${input.name} | ${status} | ${input.tech} | ${input.description}`;
+  const level_1 = input.repo ? `${base} | GH: ${input.repo}` : base;
   const { uid, label } = store.entries.createEntry({ prefix: 'P', level_1 });
   if (input.tags?.length) store.db.prepare('UPDATE entries SET tags=? WHERE uid=?').run(JSON.stringify(input.tags), uid);
 
@@ -64,6 +65,11 @@ export function createProject(store: V2Store, input: CreateProjectInput): { uid:
   for (const section of sections) {
     store.entries.addNode({ root_uid: uid, content: section });
   }
+
+  if (input.goal) store.entries.addNode({ root_uid: uid, content: `Goal: ${input.goal}` });
+  if (input.audience) store.entries.addNode({ root_uid: uid, content: `Audience: ${input.audience}` });
+  if (input.deployment) store.entries.addNode({ root_uid: uid, content: `Deployment: ${input.deployment}` });
+
   return { uid, label };
 }
 

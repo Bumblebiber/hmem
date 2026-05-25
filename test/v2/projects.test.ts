@@ -50,6 +50,39 @@ describe('createProject', () => {
     expect(childCount).toBeGreaterThan(0);
     s.close();
   });
+
+  it('captures repo in level_1 and goal/audience/deployment as nodes', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const { label, uid } = createProject(s, {
+      name: 'Meta', tech: 'TS', description: 'd',
+      repo: 'Bumblebiber/meta', goal: 'ship it', audience: 'devs', deployment: 'vercel',
+    });
+    const e = s.entries.getEntry(uid)!;
+    expect(e.level_1).toContain('GH: Bumblebiber/meta');
+    const contents = (s.db.prepare('SELECT content FROM nodes WHERE root_uid=?').all(uid) as { content: string }[]).map(r => r.content);
+    expect(contents).toContain('Goal: ship it');
+    expect(contents).toContain('Audience: devs');
+    expect(contents).toContain('Deployment: vercel');
+    s.close();
+  });
+
+  it('persists tags when provided', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const { uid } = createProject(s, { name: 'T', tech: 'TS', description: 'd', tags: ['#cool'] });
+    const e = s.entries.getEntry(uid)!;
+    expect(JSON.parse(e.tags ?? '[]')).toContain('#cool');
+    s.close();
+  });
+
+  it('omits metadata nodes when fields are absent', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const { uid, label } = createProject(s, { name: 'Bare', tech: 'TS', description: 'd' });
+    const e = s.entries.getEntry(uid)!;
+    expect(e.level_1).not.toContain('GH:');
+    const contents = (s.db.prepare('SELECT content FROM nodes WHERE root_uid=?').all(uid) as { content: string }[]).map(r => r.content);
+    expect(contents.some(c => c.startsWith('Goal:'))).toBe(false);
+    s.close();
+  });
 });
 
 describe('readProject', () => {
