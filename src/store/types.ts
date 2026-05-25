@@ -22,6 +22,7 @@ export interface EntryRow {
   irrelevant: number;
   pinned: number;
   deleted_at: string | null;
+  tags: string | null;
 }
 
 export interface NodeRow {
