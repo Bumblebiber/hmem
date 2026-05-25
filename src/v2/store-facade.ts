@@ -7,7 +7,7 @@ import { createEventsApi } from '../store/events.js';
 import { createEventsFtsApi } from '../store/events-fts.js';
 import { createSessionsApi } from '../store/sessions.js';
 import { createSummarizer } from '../summarize/loop.js';
-import { fallbackSummarize } from './summarize-adapter.js';
+import { pickSummarizer } from '../hooks/summarizer-pick.js';
 import type { HmemConfig } from '../hmem-config.js';
 
 export interface V2Store {
@@ -39,7 +39,7 @@ export function createV2Store(path: string, config: HmemConfig): V2Store {
   const summarizer = createSummarizer({
     db, entries, events,
     sessions: { updateSessionSummary: (id, summary, nodeUid) => sessions.updateSessionSummary(id, summary, nodeUid) },
-    summarize: fallbackSummarize,
+    summarize: pickSummarizer(config),
     cadence,
   });
   sessions = createSessionsApi(db, { onSegmentClose: (c) => { void summarizer.flushSegment(c); } });
