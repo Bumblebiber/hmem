@@ -1,60 +1,31 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { HmemStore } from "../../src/hmem-store.js";
-import { loadHmemConfig } from "../../src/hmem-config.js";
-import { writeSessionMarker } from "../../src/session-state.js";
+import { describe, it, expect } from 'vitest';
+import { createV2Store } from '../../src/v2/store-facade.js';
+import { DEFAULT_CONFIG } from '../../src/hmem-config.js';
 
-const tmpHome = path.join(os.tmpdir(), `hmem-e2e-${process.pid}`);
-const oldHome = process.env.HOME;
+describe('parallel sessions do not contaminate each other (v2 binding model)', () => {
+  it('each session has its own current project via session_bindings', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const p1 = s.entries.createEntry({ prefix: 'P', level_1: 'Alpha' });
+    const p2 = s.entries.createEntry({ prefix: 'P', level_1: 'Beta' });
+    const a = s.sessions.createSession({}).session_id;
+    const b = s.sessions.createSession({}).session_id;
 
-beforeEach(() => {
-  process.env.HOME = tmpHome;
-  fs.mkdirSync(tmpHome, { recursive: true });
-});
-afterEach(() => {
-  process.env.HOME = oldHome;
-  fs.rmSync(tmpHome, { recursive: true, force: true });
-});
+    s.sessions.bind(a, p1.uid);
+    s.sessions.bind(b, p2.uid);
 
-describe("parallel sessions do not contaminate each other", () => {
-  it("each session sees its own active project via setActiveProject with sessionId", () => {
-    const hmemPath = path.join(tmpHome, "m.hmem");
-    const store = new HmemStore(hmemPath, loadHmemConfig(tmpHome));
-    const idP1 = store.writeLinear("P", { l1: "Alpha" }, ["#project"]).id;
-    const idP2 = store.writeLinear("P", { l1: "Beta" }, ["#project"]).id;
-
-    store.setActiveProject(idP1, "sess-A");
-    store.setActiveProject(idP2, "sess-B");
-
-    // DB flag is now P2 (last writer wins), but each session marker is independent
-    expect(store.getActiveProject("sess-A")?.id).toBe(idP1);
-    expect(store.getActiveProject("sess-B")?.id).toBe(idP2);
-
-    store.close();
+    // No global active flag — attribution is per-session and independent.
+    expect(s.sessions.currentProject(a)).toBe(p1.uid);
+    expect(s.sessions.currentProject(b)).toBe(p2.uid);
+    s.close();
   });
 
-  it("session without marker falls through to DB flag", () => {
-    const hmemPath = path.join(tmpHome, "m.hmem");
-    const store = new HmemStore(hmemPath, loadHmemConfig(tmpHome));
-    const idP1 = store.writeLinear("P", { l1: "Alpha" }, ["#project"]).id;
-
-    store.setActiveProject(idP1);
-    expect(store.getActiveProject("legacy-session")?.id).toBe(idP1);
-
-    store.close();
-  });
-
-  it("marker with projectId=null falls through to DB flag", () => {
-    const hmemPath = path.join(tmpHome, "m.hmem");
-    const store = new HmemStore(hmemPath, loadHmemConfig(tmpHome));
-    const idP1 = store.writeLinear("P", { l1: "Alpha" }, ["#project"]).id;
-
-    store.setActiveProject(idP1);
-    writeSessionMarker("legacy", { projectId: null, hmemPath });
-    expect(store.getActiveProject("legacy")?.id).toBe(idP1);
-
-    store.close();
+  it('a session with no binding has no current project (null), not a leaked global', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const p1 = s.entries.createEntry({ prefix: 'P', level_1: 'Alpha' });
+    const a = s.sessions.createSession({}).session_id;
+    const b = s.sessions.createSession({}).session_id;
+    s.sessions.bind(a, p1.uid);
+    expect(s.sessions.currentProject(b)).toBeNull();
+    s.close();
   });
 });
