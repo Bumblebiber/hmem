@@ -10,4 +10,8 @@ describe('hermes shim parse/format', () => {
   it('formats output as {context}', () => {
     expect(JSON.parse(formatHermesOutput('BRIEF'))).toEqual({ context: 'BRIEF' });
   });
+  it('returns safe defaults and does not throw on malformed stdin', () => {
+    expect(() => parseHermesSessionStartStdin('garbage{{{')).not.toThrow();
+    expect(parseHermesSessionStartStdin('garbage{{{')).toMatchObject({ harness: 'hermes', sessionId: '' });
+  });
 });
