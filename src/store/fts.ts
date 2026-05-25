@@ -23,7 +23,7 @@ export interface FtsApi {
  * quoted phrase (internal double-quotes doubled), joined by spaces → implicit AND.
  * Quoting neutralizes FTS5 operators so arbitrary user input cannot inject syntax.
  */
-function toMatchExpr(query: string): string | null {
+export function toMatchExpr(query: string): string | null {
   const terms = query
     .split(/\s+/)
     .map((t) => t.trim())

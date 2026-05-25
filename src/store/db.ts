@@ -30,6 +30,16 @@ const MIGRATIONS: string[] = [
      last_summarized_seq INTEGER NOT NULL DEFAULT 0,
      PRIMARY KEY (session_id, from_seq)
    )`,
+  // Phase 2 (v2_alter_2): a SEPARATE contentless FTS index for raw events. Events
+  // are ~75% of the store, so keeping them out of the curated `fts` keeps entry/node
+  // search lean — event search is opt-in. Events are immutable, so unlike the
+  // curated index this needs only an AFTER-INSERT trigger (no update/delete sync).
+  `CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(content, content='', contentless_delete=1, tokenize='unicode61');
+   CREATE TABLE IF NOT EXISTS events_fts_map (fts_rowid INTEGER PRIMARY KEY, event_uid TEXT NOT NULL);
+   CREATE TRIGGER IF NOT EXISTS events_fts_ai AFTER INSERT ON events BEGIN
+     INSERT INTO events_fts(content) VALUES (coalesce(new.content, ''));
+     INSERT INTO events_fts_map(fts_rowid, event_uid) VALUES (last_insert_rowid(), new.event_uid);
+   END`,
 ];
 
 export function openDb(path: string): Database.Database {
