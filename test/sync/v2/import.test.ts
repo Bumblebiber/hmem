@@ -24,6 +24,7 @@ describe('importV2', () => {
   it('applies LWW: newer remote update overwrites older local row', () => {
     const s = fresh();
     const { uid } = s.entries.createEntry({ prefix: 'P', level_1: 'Local' });
+    s.db.prepare('UPDATE entries SET updated_at=? WHERE uid=?').run(ts(0), uid); // pin local early (clock-independent)
     const local = s.entries.getEntry(uid)!;
     const remote = rowToEnvelope('entries', { ...local, level_1: 'RemoteWins', updated_at: ts(9) });
     const staging = { file_id: 'f', cursor: null, acked: {} };
@@ -35,6 +36,7 @@ describe('importV2', () => {
   it('ignores an older remote update (local newer wins)', () => {
     const s = fresh();
     const { uid } = s.entries.createEntry({ prefix: 'P', level_1: 'LocalNew' });
+    s.db.prepare('UPDATE entries SET updated_at=? WHERE uid=?').run(ts(9), uid); // pin local late (clock-independent)
     const local = s.entries.getEntry(uid)!;
     const stale = rowToEnvelope('entries', { ...local, level_1: 'StaleRemote', updated_at: ts(0) });
     const staging = { file_id: 'f', cursor: null, acked: {} };
@@ -46,6 +48,7 @@ describe('importV2', () => {
   it('applies a remote tombstone via deleted_at (LWW delete)', () => {
     const s = fresh();
     const { uid } = s.entries.createEntry({ prefix: 'P', level_1: 'ToDelete' });
+    s.db.prepare('UPDATE entries SET updated_at=? WHERE uid=?').run(ts(0), uid); // pin local early
     const local = s.entries.getEntry(uid)!;
     const tomb = rowToEnvelope('entries', { ...local, updated_at: ts(9), deleted_at: ts(9) });
     const staging = { file_id: 'f', cursor: null, acked: {} };
@@ -83,6 +86,7 @@ describe('importV2', () => {
   it('does NOT ack when the local copy wins (skip), so the newer local will still be pushed', () => {
     const s = fresh();
     const { uid } = s.entries.createEntry({ prefix: 'P', level_1: 'LocalNew' });
+    s.db.prepare('UPDATE entries SET updated_at=? WHERE uid=?').run(ts(9), uid); // pin local late
     const local = s.entries.getEntry(uid)!;
     const stale = rowToEnvelope('entries', { ...local, level_1: 'StaleRemote', updated_at: ts(0) });
     const staging = { file_id: 'f', cursor: null, acked: {} as Record<string, unknown> };
@@ -106,6 +110,7 @@ describe('importV2', () => {
     const s = fresh();
     const { uid } = s.entries.createEntry({ prefix: 'P', level_1: 'Root' });
     const n = s.entries.addNode({ root_uid: uid, content: 'A' });
+    s.db.prepare('UPDATE nodes SET updated_at=? WHERE uid=?').run(ts(0), n.uid); // pin local node early
     const localNode = s.db.prepare('SELECT * FROM nodes WHERE uid=?').get(n.uid) as Record<string, unknown>;
     const remote = rowToEnvelope('nodes', { ...localNode, content: 'B-wins', updated_at: ts(9) });
     const staging = { file_id: 'f', cursor: null, acked: {} };
