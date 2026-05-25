@@ -7,7 +7,6 @@
  */
 
 import type { Harness } from './hooks/types.js';
-import { resolveHookRunner } from './hooks/dispatch.js';
 
 // Parse --hmem-path flag (cross-platform alternative to HMEM_PATH=... env prefix)
 const args = process.argv.slice(2);
@@ -164,8 +163,9 @@ switch (command) {
   case 'hook-prompt-submit': {
     const harnessArg = (args.find(a => a.startsWith('--harness='))?.split('=')[1]
       ?? 'claude-code') as Harness;
+    const { resolveHookRunner } = await import('./hooks/dispatch.js');
     const runner = resolveHookRunner(command, harnessArg);
-    if (runner) runner();
+    if (runner) await runner();
     break;
   }
 

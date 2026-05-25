@@ -63,7 +63,7 @@ describe('Phase 5 acceptance — harness parity', () => {
     s.close();
   });
 
-  it('Claude Code and Hermes sessions produce identical binding + event outcomes', () => {
+  it('Claude Code and Hermes sessions produce identical binding + event outcomes', async () => {
     const { s: s1, p: p1 } = seed();
     const { s: s2, p: p2 } = seed();
 
@@ -80,13 +80,13 @@ describe('Phase 5 acceptance — harness parity', () => {
     cc.namedProject = p1.label;
     buildSessionStart(s1, cc, deps);
     const ccStop = parseStopStdin(JSON.stringify({ session_id: 'SID', transcript_path: tx, last_assistant_message: 'did the thing' }));
-    logStop({ store: s1, sessionId: ccStop.sessionId, userText: readLastUserMessage(tx)!, assistantText: ccStop.lastAssistantMessage! });
+    await logStop({ store: s1, sessionId: ccStop.sessionId, userText: readLastUserMessage(tx)!, assistantText: ccStop.lastAssistantMessage! });
 
     // Hermes path (no last_assistant_message → read from transcript)
     const hm = parseHermesSessionStartStdin(JSON.stringify({ session_id: 'SID', cwd: '/repo', project: p2.label }));
     buildSessionStart(s2, hm, deps);
     const hmStop = parseHermesStopStdin(JSON.stringify({ session_id: 'SID', transcript_path: tx }));
-    logStop({ store: s2, sessionId: hmStop.sessionId, userText: readLastUserMessage(tx)!, assistantText: readLastAssistantMessage(tx)! });
+    await logStop({ store: s2, sessionId: hmStop.sessionId, userText: readLastUserMessage(tx)!, assistantText: readLastAssistantMessage(tx)! });
 
     const a = rows(s1, 'SID');
     const b = rows(s2, 'SID');

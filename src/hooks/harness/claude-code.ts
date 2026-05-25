@@ -83,7 +83,7 @@ export function runPromptSubmit(): void {
   } finally { store.close(); }
 }
 
-export function runStop(): void {
+export async function runStop(): Promise<void> {
   const ctx = parseStopStdin(readStdin());
   if (!ctx.sessionId || ctx.stopHookActive) return;
   if (isSubagentTranscript(ctx.transcriptPath)) return;
@@ -93,6 +93,6 @@ export function runStop(): void {
   if (!userText || !assistantText) return;
   const store = openStore();
   if (!store) return;
-  try { logStop({ store, sessionId: ctx.sessionId, userText, assistantText }); }
+  try { await logStop({ store, sessionId: ctx.sessionId, userText, assistantText }); }
   finally { store.close(); }
 }

@@ -54,7 +54,7 @@ function runGenericPromptSubmit(harness: Harness): void {
   try { process.stdout.write(genericFormat(harness, buildPromptSubmit({ store, sessionId: ctx.sessionId }).context)); }
   finally { store.close(); }
 }
-function runGenericStop(harness: Harness): void {
+async function runGenericStop(harness: Harness): Promise<void> {
   const ctx = genericParseStop(harness, readStdinRaw());
   // Note: stopHookActive is intentionally not guarded here — Hermes/Pi protocols don't define that field yet, so the guard would be a no-op.
   if (!ctx.sessionId || isSubagentTranscript(ctx.transcriptPath)) return;
@@ -63,12 +63,12 @@ function runGenericStop(harness: Harness): void {
   if (!userText || !assistantText) return;
   const store = openV2();
   if (!store) return;
-  try { logStop({ store, sessionId: ctx.sessionId, userText, assistantText }); }
+  try { await logStop({ store, sessionId: ctx.sessionId, userText, assistantText }); }
   finally { store.close(); }
 }
 
 /** Pure command+harness → runner map (unit-tested; the actual stdin/stdout lives in the shims). */
-export function resolveHookRunner(command: string, harness: Harness): (() => void) | undefined {
+export function resolveHookRunner(command: string, harness: Harness): (() => void | Promise<void>) | undefined {
   if (command === 'hook-session-start') {
     if (harness === 'claude-code') return ccShim.runSessionStart;
     return () => runGenericSessionStart(harness);
