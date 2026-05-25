@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/store/db.js';
 import { createSessionsApi } from '../../src/store/sessions.js';
+import { createEventsApi } from '../../src/store/events.js';
 
 const api = () => createSessionsApi(openDb(':memory:'));
 
@@ -38,5 +39,39 @@ describe('sessions CRUD', () => {
     const row = s.getSession('S')!;
     expect(row.summary).toBe('did X');
     expect(row.summary_node_uid).toBe('node-uid-1');
+  });
+});
+
+describe('session bindings — segment algebra', () => {
+  it('scenario 1: 20 events under one binding all attribute to P_a', () => {
+    const db = openDb(':memory:');
+    const s = createSessionsApi(db);
+    const ev = createEventsApi(db);
+    s.createSession({ session_id: 'S' });
+    s.bind('S', 'P_a'); // from = 0+1 = 1
+    for (let i = 0; i < 20; i++) ev.appendEvent({ session_id: 'S', role: 'user', content: 'x' });
+    expect(s.currentProject('S')).toBe('P_a');
+    expect(s.projectAt('S', 1)).toBe('P_a');
+    expect(s.projectAt('S', 20)).toBe('P_a');
+  });
+
+  it('scenario 2: bind P_b after 20 events splits at the boundary', () => {
+    const db = openDb(':memory:');
+    const s = createSessionsApi(db);
+    const ev = createEventsApi(db);
+    s.createSession({ session_id: 'S' });
+    s.bind('S', 'P_a');
+    for (let i = 0; i < 20; i++) ev.appendEvent({ session_id: 'S', role: 'user', content: 'x' });
+    s.bind('S', 'P_b'); // from = 21
+    expect(s.projectAt('S', 20)).toBe('P_a');
+    expect(s.projectAt('S', 21)).toBeNull(); // no event 21 yet, but segment opens there
+    ev.appendEvent({ session_id: 'S', role: 'user', content: 'x' }); // seq 21
+    expect(s.projectAt('S', 21)).toBe('P_b');
+    expect(s.currentProject('S')).toBe('P_b');
+    const segs = s.segmentsForSession('S');
+    expect(segs.map((b) => [b.from_seq, b.to_seq, b.project_uid])).toEqual([
+      [1, 20, 'P_a'],
+      [21, null, 'P_b'],
+    ]);
   });
 });

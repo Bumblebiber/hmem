@@ -75,3 +75,13 @@ export interface ClosedSegment {
   from_seq: number;
   to_seq: number;
 }
+
+// ── Phase 2: project-binding segments ──
+
+export interface BindingRow {
+  session_id: string;
+  project_uid: string;
+  from_seq: number;
+  to_seq: number | null;
+  created_at: string;
+}
