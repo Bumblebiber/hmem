@@ -70,7 +70,7 @@ export function makeV1Fixture(path = ':memory:'): Database.Database {
   N({ id: 'O0000.1', parent_id: 'O0000', root_id: 'O0000', depth: 2, seq: 1,
       title: 'Orphan session', content: 'unattributed work' });
   N({ id: 'O0000.1.1', parent_id: 'O0000.1', root_id: 'O0000', depth: 3, seq: 1,
-      title: 'u', content: 'orphan user msg', created_at: '2026-03-02T09:00:00Z' });
+      title: 'o', content: 'orphan user msg', created_at: '2026-03-02T09:00:00Z' });
   N({ id: 'O0000.66', parent_id: 'O0000', root_id: 'O0000', depth: 2, seq: 66,
       title: 'hi', content: 'hello' });
   N({ id: 'O0000.66.1', parent_id: 'O0000.66', root_id: 'O0000', depth: 3, seq: 1,
