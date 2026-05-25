@@ -58,6 +58,7 @@ CREATE TABLE sessions (
   ended_at         TEXT,
   updated_at       TEXT NOT NULL
 );
+CREATE INDEX idx_sessions_cwd ON sessions(cwd);
 
 -- Ordered binding segments → project attribution. A session may belong to
 -- several projects across its lifetime; a project to several segments.

@@ -48,6 +48,10 @@ const MIGRATIONS: string[] = [
   // binding resolution. On fresh files the column is already in schema-v2.sql, so this
   // ALTER throws "duplicate column" — which runMigrations() tolerates.
   `ALTER TABLE sessions ADD COLUMN cwd TEXT`,
+  // Phase 5 (v2_alter_5): index sessions(cwd) for the hot-path workspace-binding query
+  // (lastProjectForWorkspace). On fresh files the index is already in schema-v2.sql, so
+  // IF NOT EXISTS makes this a no-op — belt-and-suspenders over the runner's /already exists/ guard.
+  `CREATE INDEX IF NOT EXISTS idx_sessions_cwd ON sessions(cwd)`,
 ];
 
 export function openDb(path: string): Database.Database {
