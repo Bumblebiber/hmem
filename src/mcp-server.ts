@@ -349,9 +349,6 @@ server.tool(
       "New body text (shown on drill-down). If 'content' is also provided: content=new title, body=new body. " +
       "If only 'body': existing title is preserved, only body is updated."
     ),
-    links: jsonArrayString(z.array(z.string()).optional()).describe(
-      "Optional: update linked entry IDs (root entries only). Replaces existing links."
-    ),
     obsolete: z.coerce.boolean().optional().describe(
       "Mark this root entry as no longer valid (root entries only). " +
       "Requires [✓ID] correction reference in content (e.g. 'Wrong — see [✓E0076]')."
