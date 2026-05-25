@@ -2,7 +2,8 @@ import { describe, it, test, expect } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openDb, getSchemaMajor } from '../../src/store/db.js';
+import Database from 'better-sqlite3';
+import { openDb, getSchemaMajor, runMigrations } from '../../src/store/db.js';
 
 describe('db', () => {
   it('creates all v2 tables + fts shadow + rowid map', () => {
@@ -72,4 +73,28 @@ test('entries table has a tags column (v2_alter_3)', () => {
   const db = openDb(':memory:');
   const cols = db.prepare(`PRAGMA table_info(entries)`).all() as { name: string }[];
   expect(cols.map(c => c.name)).toContain('tags');
+});
+
+test('v2_alter_3 ALTER path: tags column added to a pre-Phase-3 entries table', () => {
+  // Build a synthetic pre-Phase-3 database: entries table WITHOUT tags, and
+  // schema_version marking only v2_alter_1 and v2_alter_2 as applied.
+  const dir = mkdtempSync(join(tmpdir(), 'hmem-alter3-'));
+  const path = join(dir, 'test.hmem');
+  const raw = new Database(path);
+  raw.exec(`
+    CREATE TABLE entries (uid TEXT PRIMARY KEY, label TEXT);
+    CREATE TABLE schema_version (key TEXT PRIMARY KEY, value TEXT);
+    INSERT INTO schema_version(key, value) VALUES ('schema_major', '2');
+    INSERT INTO schema_version(key, value) VALUES ('v2_alter_1', 'applied');
+    INSERT INTO schema_version(key, value) VALUES ('v2_alter_2', 'applied');
+  `);
+  // Confirm tags is absent before migration runs.
+  const colsBefore = raw.prepare('PRAGMA table_info(entries)').all() as { name: string }[];
+  expect(colsBefore.map(c => c.name)).not.toContain('tags');
+  // Run the migration runner — v2_alter_3 must execute the ALTER.
+  runMigrations(raw);
+  // Confirm tags is present after migration.
+  const colsAfter = raw.prepare('PRAGMA table_info(entries)').all() as { name: string }[];
+  expect(colsAfter.map(c => c.name)).toContain('tags');
+  raw.close();
 });
