@@ -50,4 +50,13 @@ describe('readBulk', () => {
     expect(res.why).toBeUndefined();
     s.close();
   });
+
+  it('treats a non-finite limit as "no limit" without crashing', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    for (let i = 0; i < 3; i++) s.entries.createEntry({ prefix: 'L', level_1: `L${i}` });
+    expect(() => readBulk(s, { prefix: 'L', limit: Infinity })).not.toThrow();
+    const { why } = readBulk(s, { prefix: 'L', limit: Infinity, why: true });
+    expect(why!.length).toBe(3); // all returned, no LIMIT applied
+    s.close();
+  });
 });

@@ -80,7 +80,7 @@ export interface ReadBulkOpts {
 
 export interface WhyRow {
   label: string;
-  shown: 'expanded' | 'title' | 'hidden';
+  shown: 'expanded' | 'title';
   reason: string;
 }
 
@@ -98,7 +98,7 @@ export function readBulk(store: V2Store, opts: ReadBulkOpts = {}): ReadBulkResul
 
   const sql =
     `SELECT * FROM entries WHERE ${where.join(' AND ')} ORDER BY created_at DESC, seq DESC` +
-    (opts.limit ? ` LIMIT ${Math.max(1, Math.floor(opts.limit))}` : '');
+    (Number.isFinite(opts.limit) && (opts.limit as number) > 0 ? ` LIMIT ${Math.floor(opts.limit as number)}` : '');
 
   const rows = store.db.prepare(sql).all(...args) as EntryRow[];
 
@@ -132,7 +132,8 @@ export function readBulk(store: V2Store, opts: ReadBulkOpts = {}): ReadBulkResul
         reason: isPin ? 'pinned' : isFav ? 'favorite' : 'newest-in-prefix',
       });
     } else {
-      out.push(`${r.label}  ${store.entries.renderRefs(r.level_1).split('\n')[0]}`);
+      const maxNode = store.config.maxNodeChars ?? 600;
+      out.push(`${r.label}  ${cap(store.entries.renderRefs(r.level_1).split('\n')[0], maxNode)}`);
       whyTrace.push({
         label: r.label,
         shown: 'title',
@@ -142,7 +143,8 @@ export function readBulk(store: V2Store, opts: ReadBulkOpts = {}): ReadBulkResul
   }
 
   for (const r of obsolete) {
-    out.push(`[obsolete] ${r.label}  ${r.level_1.split('\n')[0]}`);
+    const maxNode = store.config.maxNodeChars ?? 600;
+    out.push(`[obsolete] ${r.label}  ${cap(store.entries.renderRefs(r.level_1).split('\n')[0], maxNode)}`);
     whyTrace.push({ label: r.label, shown: 'title', reason: 'obsolete (capped)' });
   }
 
