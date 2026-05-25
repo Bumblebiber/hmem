@@ -59,6 +59,13 @@ test('migrateTree builds a label->uid map for every migrated root', () => {
   expect(labelToUid.has('O0001')).toBe(false);            // O handled in Half B
 });
 
+test('migrateTree preserves a divergent root title by merging it into level_1', () => {
+  const v1 = makeV1Fixture(); const v2 = freshV2();
+  migrateTree(v1, v2);
+  const t = v2.prepare(`SELECT level_1 FROM entries WHERE label='T0001'`).get() as any;
+  expect(t.level_1).toBe('Playwright MCP | Active\n\nBrowser automation for the PM agent');
+});
+
 import { migrateLinks } from '../../src/migrate/tree.js';
 
 test('migrateLinks: resolvable label -> links row; O-id -> deferred; junk -> dangling', () => {

@@ -39,7 +39,11 @@ export function migrateTree(v1: Database.Database, v2: Database.Database): Migra
     const tags = tagsFor(v1, r.id);
     insEntry.run({
       uid, label: r.id, prefix: r.prefix, seq: r.seq,
-      level_1: r.level_1 || r.title || '',
+      // v1 roots carry BOTH title (short handle) and level_1 (description); v2 entries
+      // have one text field. Merge symmetrically with the node path (mergeNodeText) so
+      // neither is lost. title-first: for the truncation case (level_1 startsWith title)
+      // it returns level_1; for divergent case it returns "title\n\nlevel_1".
+      level_1: mergeNodeText(r.title, r.level_1),
       created_at: r.created_at, updated_at: r.updated_at ?? r.created_at,
       access_count: r.access_count, last_accessed: r.last_accessed,
       obsolete: r.obsolete, favorite: r.favorite, irrelevant: r.irrelevant, pinned: r.pinned,

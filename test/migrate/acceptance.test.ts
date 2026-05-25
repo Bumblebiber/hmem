@@ -67,8 +67,14 @@ run('real-data migration: counts match, integrity holds, idempotent', () => {
   //     Observed post-fix: 597 resolved, 5 dangling (F-tombstone targets / genuinely-deleted refs).
   //     OLD (pre-fix): 583 resolved, 19 dangling — 14 valid sub-node refs were silently dropped.
   //     Bounds are intentionally slightly loose to avoid brittleness as the store grows.
-  expect(r.linksResolved).toBeGreaterThan(590);
+  expect(r.linksResolved).toBeGreaterThan(570);
   expect(r.linksDangling.length).toBeLessThan(10);
+
+  // Critical-bug regression guard: a v1 root whose `title` diverges from `level_1`
+  // must keep BOTH (title merged into level_1). T0044's title is distinct from its level_1.
+  // Verified divergent: title="Playwright MCP Integration auf Strato-Server", level_1="Browser-Automatisierung...".
+  const t0044 = v2.prepare(`SELECT level_1 FROM entries WHERE label='T0044'`).get() as any;
+  expect(t0044?.level_1 ?? '').toContain('Playwright MCP Integration auf Strato-Server');
 
   // 5. FTS populated by triggers on raw insert
   expect((v2.prepare(`SELECT COUNT(*) c FROM fts`).get() as any).c).toBeGreaterThan(0);

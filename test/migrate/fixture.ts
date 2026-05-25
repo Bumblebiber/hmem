@@ -46,6 +46,7 @@ export function makeV1Fixture(path = ':memory:'): Database.Database {
   N({ id: 'P0001.1.1', parent_id: 'P0001.1', root_id: 'P0001', depth: 3, seq: 1,
       title: 'Wiki at ~/vault — see', content: 'Wiki at ~/vault — see D0001 fully' }); // truncation-title
   R({ id: 'D0001', prefix: 'D', level_1: 'A decision', links: '["P0001"]' });       // resolvable link
+  R({ id: 'T0001', prefix: 'T', level_1: 'Browser automation for the PM agent', title: 'Playwright MCP | Active' });  // divergent title (not a prefix of level_1)
   R({ id: 'L0001', prefix: 'L', level_1: 'A lesson', links: '["O0001.1.1"]' });     // link into an O subtree
   R({ id: 'E0001', prefix: 'E', level_1: 'A bug', links: '["Z9999"]' });            // dangling link
   R({ id: 'D0003', prefix: 'D', level_1: 'links to a sub-node', links: '["P0001.1"]' });  // node-target link

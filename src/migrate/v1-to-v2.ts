@@ -21,8 +21,6 @@ export interface MigrationReport {
 export interface MigrateOpts { in: string; out: string; dryRun: boolean }
 export interface MigrateResult { skipped?: true; report?: MigrationReport }
 
-const O_REF = /O\d{4}(?:\.\d+)*/g;
-
 function writeORedirects(
   v2: Database.Database, deco: Decomposition, linkORefs: string[],
 ): { written: number; unresolved: string[] } {
@@ -31,7 +29,7 @@ function writeORedirects(
   const entryText = v2.prepare(`SELECT level_1 t FROM entries`).all() as { t: string }[];
   const nodeText = v2.prepare(`SELECT content t FROM nodes`).all() as { t: string }[];
   for (const { t } of [...entryText, ...nodeText]) {
-    for (const m of (t || '').matchAll(O_REF)) refs.add(m[0]);
+    for (const m of (t || '').matchAll(/O\d{4}(?:\.\d+)*/g)) refs.add(m[0]);
   }
   const ins = v2.prepare(`INSERT OR IGNORE INTO o_redirects (old_id,session_id,from_seq,to_seq)
     VALUES (?,?,?,?)`);

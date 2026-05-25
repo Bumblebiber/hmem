@@ -60,7 +60,7 @@ export function decomposeORoots(v1: Database.Database, v2: Database.Database, ma
 
     const nodes = nodesForRoot(v1, r.id);
     const projectUid = resolveProject(r.links, maps);
-    const isUnattributed = r.seq === 0 || projectUid === null;
+    const isUnattributed = r.seq === 0 || projectUid === null; // latent: seq===0 also implies no P-link (O0000 has none), so both conditions coincide — a seq-0 root that somehow resolved a P-link would be both bound and counted unattributed, but this can't happen in real data.
 
     if (nodes.length === 0) {                            // empty O-root
       out.emptyORoots.push(r.id);
