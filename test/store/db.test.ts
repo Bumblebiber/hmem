@@ -38,6 +38,24 @@ describe('db', () => {
     expect(getSchemaMajor(db2)).toBe('2');
   });
 
+  it('runs Phase-2 migrations: segment_summaries exists, idempotent on reopen', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hmem-mig-'));
+    const path = join(dir, 'test.hmem');
+    const db1 = openDb(path);
+    const tables = () =>
+      (db1.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {
+        name: string;
+      }[]).map((r) => r.name);
+    expect(tables()).toContain('segment_summaries');
+    db1.close();
+    const db2 = openDb(path); // re-running MIGRATIONS must not throw
+    expect(
+      (db2.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='segment_summaries'").get() as
+        | { name: string }
+        | undefined)?.name,
+    ).toBe('segment_summaries');
+  });
+
   it('FTS triggers index inserted content', () => {
     const db = openDb(':memory:');
     db.prepare(

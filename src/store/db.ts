@@ -19,7 +19,17 @@ const SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'schema-v2.sql
  * runs once. Idempotent: duplicate-column / already-exists errors are tolerated.
  */
 const MIGRATIONS: string[] = [
-  // (none yet — the base schema is current)
+  // Phase 2 (v2_alter_1): cadence + node-pointer state for the live summarizer.
+  // One row per binding segment keyed (session_id, from_seq); `node_uid` points at
+  // the rolling-summary node under the segment's project, `last_summarized_seq`
+  // tracks how far that summary has consumed the segment.
+  `CREATE TABLE IF NOT EXISTS segment_summaries (
+     session_id          TEXT NOT NULL,
+     from_seq            INTEGER NOT NULL,
+     node_uid            TEXT,
+     last_summarized_seq INTEGER NOT NULL DEFAULT 0,
+     PRIMARY KEY (session_id, from_seq)
+   )`,
 ];
 
 export function openDb(path: string): Database.Database {
