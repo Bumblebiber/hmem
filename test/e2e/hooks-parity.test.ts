@@ -30,9 +30,11 @@ function seed() {
   return { s, p, t };
 }
 
+interface BindingRow { project_uid: string; from_seq: number; to_seq: number | null; }
+
 function rows(s: ReturnType<typeof createV2Store>, sid: string) {
   return {
-    bindings: s.db.prepare('SELECT project_uid, from_seq, to_seq FROM session_bindings WHERE session_id=? ORDER BY from_seq').all(sid),
+    bindings: s.db.prepare('SELECT project_uid, from_seq, to_seq FROM session_bindings WHERE session_id=? ORDER BY from_seq').all(sid) as BindingRow[],
     events: s.events.getSessionLog(sid).map(e => [e.seq, e.role, e.content]),
     project: s.sessions.currentProject(sid),
   };
@@ -47,6 +49,17 @@ describe('Phase 5 acceptance — harness parity', () => {
     for (const needle of ['Identität', 'Anrede: "Benni"', 'Recent projects', 'Active device', 'hmem-sync verbunden', 'its-over-9k', 'Next Steps', 'Ship Phase 5', t.label]) {
       expect(res.context).toContain(needle);
     }
+
+    // Gap 1: exercise the git "Offene Arbeit" path (isRepo: true with uncommitted files)
+    const depsWithGit: SessionStartDeps = {
+      gitProbe: () => ({ uncommitted: [' M src/x.ts'], stashes: [], worktrees: [], unmergedBranches: [], isRepo: true }),
+      syncProbe: deps.syncProbe,
+      deviceProbe: deps.deviceProbe,
+    };
+    const resGit = buildSessionStart(s, ctx, depsWithGit);
+    expect(resGit.context).toContain('Offene Arbeit im Repo');
+    expect(resGit.context).toContain('src/x.ts');
+
     s.close();
   });
 
@@ -84,6 +97,11 @@ describe('Phase 5 acceptance — harness parity', () => {
     // both bound their seeded project as the open segment
     expect(a.project).toBe(p1.uid);
     expect(b.project).toBe(p2.uid);
+    // Gap 2: cross-store structural comparison of binding segments' shape
+    const shapeA = a.bindings.map(x => [x.from_seq, x.to_seq]);
+    const shapeB = b.bindings.map(x => [x.from_seq, x.to_seq]);
+    expect(shapeA).toEqual(shapeB);
+    expect(shapeA).toEqual([[1, null]]);
     fs.rmSync(dir, { recursive: true, force: true });
     s1.close(); s2.close();
   });
