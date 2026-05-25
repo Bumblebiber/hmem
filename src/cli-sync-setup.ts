@@ -130,6 +130,7 @@ export async function mergeWithRename(opts: MergeOpts): Promise<{ renamedCount: 
       const res = await opts.client.push({
         file_id: opts.fileId,
         idempotency_key: randomUUID(),
+        client_schema_major: 1,
         blobs: batch,
       })
       total += res.mappings.length
@@ -268,7 +269,7 @@ export async function runSetup(opts: { join?: boolean }) {
         device_id: hostname(),
         updated_at: b.updated_at ?? new Date().toISOString(),
       }))
-      const res = await client.push({ file_id: fileId, idempotency_key: randomUUID(), blobs: batch })
+      const res = await client.push({ file_id: fileId, idempotency_key: randomUUID(), client_schema_major: 1, blobs: batch })
       total += res.mappings.length
       process.stdout.write(`\r  ${total}/${blobsRaw.length} blobs uploaded...`)
     }

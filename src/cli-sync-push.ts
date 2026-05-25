@@ -61,7 +61,7 @@ export async function syncPush(opts: { skipPull?: boolean; passphrase?: string }
   for (let i = 0; i < encoded.length; i += BATCH) {
     const batch = encoded.slice(i, i + BATCH)
     try {
-      const res = await client.push({ file_id: fileId, idempotency_key: randomUUID(), blobs: batch })
+      const res = await client.push({ file_id: fileId, idempotency_key: randomUUID(), client_schema_major: 1, blobs: batch })
       total += res.mappings.length
       if (encoded.length > BATCH) process.stdout.write(`\r  ${total}/${encoded.length} blobs...`)
     } catch (err) {
