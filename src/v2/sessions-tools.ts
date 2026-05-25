@@ -7,7 +7,8 @@ export interface ActivateResult { session_id: string; project: string; project_u
 export function activate(store: V2Store, projectLabel: string, opts: ActivateOpts = {}): ActivateResult {
   const uid = store.entries.labelToUid(projectLabel.split('.')[0]);
   const entry = uid ? store.entries.getEntry(uid) : null;
-  if (!entry || entry.prefix !== 'P') throw new Error(`activate: ${projectLabel} is not a project`);
+  // Include `!uid` so TS narrows uid to string below (avoids non-null assertions).
+  if (!uid || !entry || entry.prefix !== 'P') throw new Error(`activate: ${projectLabel} is not a project`);
 
   let sessionId = resolveSessionId();
   if (!sessionId || !store.sessions.getSession(sessionId)) {
