@@ -42,3 +42,14 @@ export interface LinkRow {
   dst_uid: string;
   kind: string | null;
 }
+
+// ── Phase 2: append-only events ──
+
+export interface EventRow {
+  event_uid: string;
+  session_id: string;
+  seq: number;
+  ts: string;
+  role: 'user' | 'assistant';
+  content: string;
+}
