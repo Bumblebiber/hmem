@@ -1,6 +1,6 @@
 // test/hooks/cli-dispatch.test.ts
 import { describe, it, expect } from 'vitest';
-import { resolveHookRunner } from '../../src/cli.js';
+import { resolveHookRunner } from '../../src/hooks/dispatch.js';
 
 describe('hook command dispatch', () => {
   it('maps each hook command + harness to a runner', () => {
