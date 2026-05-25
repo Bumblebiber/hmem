@@ -1,6 +1,6 @@
 // test/hooks/harness-claude-code.test.ts
 import { describe, it, expect } from 'vitest';
-import { parseSessionStartStdin, parseStopStdin, formatSessionStartOutput } from '../../src/hooks/harness/claude-code.js';
+import { parseSessionStartStdin, parseStopStdin, parsePromptSubmitStdin, formatSessionStartOutput } from '../../src/hooks/harness/claude-code.js';
 
 describe('claude-code shim parse/format', () => {
   it('parses SessionStart stdin into a HookContext', () => {
@@ -19,5 +19,15 @@ describe('claude-code shim parse/format', () => {
     const out = JSON.parse(formatSessionStartOutput('BRIEF TEXT'));
     expect(out.hookSpecificOutput.hookEventName).toBe('SessionStart');
     expect(out.hookSpecificOutput.additionalContext).toBe('BRIEF TEXT');
+  });
+
+  it('parseSessionStartStdin tolerates malformed stdin (does not throw, returns empty sessionId)', () => {
+    const ctx = parseSessionStartStdin('not json{{{');
+    expect(ctx).toMatchObject({ harness: 'claude-code', sessionId: '' });
+  });
+
+  it('parsePromptSubmitStdin parses valid stdin and returns sessionId', () => {
+    const ctx = parsePromptSubmitStdin(JSON.stringify({ session_id: 'p1' }));
+    expect(ctx).toMatchObject({ harness: 'claude-code', sessionId: 'p1' });
   });
 });

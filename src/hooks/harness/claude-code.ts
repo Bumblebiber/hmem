@@ -16,19 +16,23 @@ interface CcStdin {
   transcript_path?: string; last_assistant_message?: string; stop_hook_active?: boolean;
 }
 
+function safeParse(raw: string): CcStdin {
+  try { return JSON.parse(raw || '{}') as CcStdin; } catch { return {}; }
+}
+
 export function parseSessionStartStdin(raw: string): HookContext {
-  const j: CcStdin = JSON.parse(raw || '{}');
+  const j = safeParse(raw);
   return { harness: 'claude-code', sessionId: j.session_id ?? '', cwd: j.cwd, source: j.source };
 }
 export function parseStopStdin(raw: string): HookContext {
-  const j: CcStdin = JSON.parse(raw || '{}');
+  const j = safeParse(raw);
   return {
     harness: 'claude-code', sessionId: j.session_id ?? '',
     transcriptPath: j.transcript_path, lastAssistantMessage: j.last_assistant_message, stopHookActive: j.stop_hook_active,
   };
 }
 export function parsePromptSubmitStdin(raw: string): HookContext {
-  const j: CcStdin = JSON.parse(raw || '{}');
+  const j = safeParse(raw);
   return { harness: 'claude-code', sessionId: j.session_id ?? '' };
 }
 
