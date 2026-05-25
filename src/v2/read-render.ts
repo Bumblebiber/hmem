@@ -1,6 +1,6 @@
 import type { V2Store } from './store-facade.js';
 import { resolveAddress } from './addressing.js';
-import type { NodeRow } from '../store/types.js';
+import type { NodeRow, EntryRow } from '../store/types.js';
 
 function cap(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) + '…' : text;
@@ -39,7 +39,16 @@ function renderChildren(
   }
 }
 
-/** Render an entry or node subtree as the read_memory({id}) handler emits it. */
+/**
+ * Render an entry or node subtree as the read_memory({id}) handler emits it.
+ *
+ * `depth` counts **levels of children** to show, not total levels:
+ * - `depth=1` → entry header only (no children rendered)
+ * - `depth=2` → direct children shown, grandchildren suppressed
+ * - `depth>=3` → grandchildren shown, and so on
+ *
+ * Pass `depth >= 2` to show any children at all.
+ */
 export function renderEntryTree(store: V2Store, address: string, depth = 2): string {
   const addr = resolveAddress(store, address);
   if (!addr) return `‹${address} not found›`;
@@ -57,4 +66,87 @@ export function renderEntryTree(store: V2Store, address: string, depth = 2): str
     renderChildren(store, addr.root_uid, n.uid, depth, 1, maxNode, out);
   }
   return out.join('\n');
+}
+
+// ── readBulk ──────────────────────────────────────────────────────────────────
+
+export interface ReadBulkOpts {
+  prefix?: string;
+  after?: string;
+  before?: string;
+  limit?: number;
+  why?: boolean;
+}
+
+export interface WhyRow {
+  label: string;
+  shown: 'expanded' | 'title' | 'hidden';
+  reason: string;
+}
+
+export interface ReadBulkResult {
+  text: string;
+  why?: WhyRow[];
+}
+
+export function readBulk(store: V2Store, opts: ReadBulkOpts = {}): ReadBulkResult {
+  const where: string[] = ['deleted_at IS NULL', 'irrelevant = 0'];
+  const args: unknown[] = [];
+  if (opts.prefix) { where.push('prefix = ?'); args.push(opts.prefix); }
+  if (opts.after)  { where.push('created_at >= ?'); args.push(opts.after); }
+  if (opts.before) { where.push('created_at <= ?'); args.push(opts.before); }
+
+  const sql =
+    `SELECT * FROM entries WHERE ${where.join(' AND ')} ORDER BY created_at DESC, seq DESC` +
+    (opts.limit ? ` LIMIT ${Math.max(1, Math.floor(opts.limit))}` : '');
+
+  const rows = store.db.prepare(sql).all(...args) as EntryRow[];
+
+  const topNewest  = store.config.bulkReadV2?.topNewestCount  ?? 5;
+  const topObsolete = store.config.bulkReadV2?.topObsoleteCount ?? 3;
+
+  const live     = rows.filter(r => !r.obsolete);
+  const obsolete = rows.filter(r =>  r.obsolete).slice(0, topObsolete);
+
+  // Collect the newest-N UIDs per prefix (rows are already DESC by created_at).
+  const newestByPrefix = new Map<string, Set<string>>();
+  for (const r of live) {
+    let set = newestByPrefix.get(r.prefix);
+    if (!set) { set = new Set(); newestByPrefix.set(r.prefix, set); }
+    if (set.size < topNewest) set.add(r.uid);
+  }
+
+  const whyTrace: WhyRow[] = [];
+  const out: string[] = [];
+
+  for (const r of live) {
+    const isFav    = !!r.favorite;
+    const isPin    = !!r.pinned;
+    const isNewest = newestByPrefix.get(r.prefix)?.has(r.uid) ?? false;
+
+    if (isFav || isPin || isNewest) {
+      out.push(renderEntryTree(store, r.label, 2));
+      whyTrace.push({
+        label: r.label,
+        shown: 'expanded',
+        reason: isPin ? 'pinned' : isFav ? 'favorite' : 'newest-in-prefix',
+      });
+    } else {
+      out.push(`${r.label}  ${store.entries.renderRefs(r.level_1).split('\n')[0]}`);
+      whyTrace.push({
+        label: r.label,
+        shown: 'title',
+        reason: 'suppressed: not in newest/favorite/pinned set',
+      });
+    }
+  }
+
+  for (const r of obsolete) {
+    out.push(`[obsolete] ${r.label}  ${r.level_1.split('\n')[0]}`);
+    whyTrace.push({ label: r.label, shown: 'title', reason: 'obsolete (capped)' });
+  }
+
+  return opts.why
+    ? { text: out.join('\n\n'), why: whyTrace }
+    : { text: out.join('\n\n') };
 }
