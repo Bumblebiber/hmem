@@ -83,6 +83,7 @@ test('v2_alter_3 ALTER path: tags column added to a pre-Phase-3 entries table', 
   const raw = new Database(path);
   raw.exec(`
     CREATE TABLE entries (uid TEXT PRIMARY KEY, label TEXT);
+    CREATE TABLE sessions (session_id TEXT PRIMARY KEY, project_uid TEXT);
     CREATE TABLE schema_version (key TEXT PRIMARY KEY, value TEXT);
     INSERT INTO schema_version(key, value) VALUES ('schema_major', '2');
     INSERT INTO schema_version(key, value) VALUES ('v2_alter_1', 'applied');
