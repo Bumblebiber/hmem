@@ -49,7 +49,7 @@
     "hmem_developer.hmem"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-assets.cjs",
     "start": "node dist/mcp-server.js",
     "dev": "tsc --watch",
     "test": "vitest run",

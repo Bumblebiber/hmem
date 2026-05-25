@@ -9,10 +9,11 @@ import path from "node:path";
 import { spawnSync, spawn } from "node:child_process";
 import Database from "better-sqlite3";
 import os from "node:os";
-import { openCompanyMemory, resolveHmemPath, HmemStore } from "./hmem-store.js";
+import { resolveHmemPath, HmemStore } from "./hmem-store.js";
 import type { HmemConfig } from "./hmem-config.js";
 import { loadHmemConfig, getSyncServers } from "./hmem-config.js";
-import { currentSessionId } from "./session-state.js";
+import { createV2Store, type V2Store } from "./v2/store-facade.js";
+import { resolveSessionId } from "./v2/session-id.js";
 
 // ---- Environment ----
 export const HMEM_PATH = process.env.HMEM_PATH || resolveHmemPath();
@@ -53,11 +54,12 @@ export function safeError(e: unknown): string {
   return msg.replace(/\/[^\s:)]+/g, "[path]").substring(0, 300);
 }
 
-export function activeProjectLine(store: HmemStore): string {
-  const current = store.getActiveProject(currentSessionId());
-  if (!current) return "Active project: none (call load_project to set)";
-  const shortTitle = current.title.split("|")[0].trim();
-  return `Active project: ${current.id} ${shortTitle}`;
+export function activeProjectLine(store: V2Store): string {
+  const sid = resolveSessionId();
+  if (!sid) return "";
+  const uid = store.sessions.currentProject(sid);
+  const label = uid ? (store.entries.uidToLabel(uid) ?? "") : "";
+  return label ? `Active project: ${label}` : "";
 }
 
 // ---- hmem-sync integration ----
@@ -488,14 +490,14 @@ log(`Config: l1=${hmemConfig.maxCharsPerLevel[0]} maxNodeChars=${hmemConfig.maxN
 export function resolveStore(
   storeName: "personal" | "company",
   hmemPath: string | undefined,
-): { store: HmemStore; label: string; path: string; isExternal: boolean } {
+): { store: V2Store; label: string; path: string; isExternal: boolean } {
   if (hmemPath) {
     if (!fs.existsSync(hmemPath)) {
       throw new Error(`hmem_path not found: ${hmemPath}`);
     }
     const extConfig = loadHmemConfig(path.dirname(hmemPath));
     return {
-      store: new HmemStore(hmemPath, extConfig),
+      store: createV2Store(hmemPath, extConfig),
       label: path.basename(hmemPath, ".hmem"),
       path: hmemPath,
       isExternal: true,
@@ -504,14 +506,14 @@ export function resolveStore(
   if (storeName === "company") {
     const companyPath = path.join(PROJECT_DIR, "company.hmem");
     return {
-      store: openCompanyMemory(PROJECT_DIR, hmemConfig),
+      store: createV2Store(companyPath, hmemConfig),
       label: "company",
       path: companyPath,
       isExternal: false,
     };
   }
   return {
-    store: new HmemStore(HMEM_PATH, hmemConfig),
+    store: createV2Store(HMEM_PATH, hmemConfig),
     label: path.basename(HMEM_PATH, ".hmem"),
     path: HMEM_PATH,
     isExternal: false,

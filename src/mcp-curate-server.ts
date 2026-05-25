@@ -15,12 +15,32 @@ import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
 import { openCompanyMemory, HmemStore } from "./hmem-store.js";
+import { loadHmemConfig } from "./hmem-config.js";
 import { createRequire } from "node:module";
 import {
   HMEM_PATH, PROJECT_DIR, hmemConfig, log,
   safeError, validateFilePath,
-  syncPullThenPush, syncPush, syncPushWithRetry, resolveStore,
+  syncPullThenPush, syncPush, syncPushWithRetry,
 } from "./mcp-shared.js";
+
+// Local v1 store resolver — Task 13 changed mcp-shared's resolveStore to return a
+// V2Store. The curate server is still v1-coupled (rewired in Task 14), so it keeps
+// its own HmemStore-based resolver until then.
+function resolveStore(
+  storeName: "personal" | "company",
+  hmemPath: string | undefined,
+): { store: HmemStore; label: string; path: string; isExternal: boolean } {
+  if (hmemPath) {
+    if (!fs.existsSync(hmemPath)) throw new Error(`hmem_path not found: ${hmemPath}`);
+    const extConfig = loadHmemConfig(path.dirname(hmemPath));
+    return { store: new HmemStore(hmemPath, extConfig), label: path.basename(hmemPath, ".hmem"), path: hmemPath, isExternal: true };
+  }
+  if (storeName === "company") {
+    const companyPath = path.join(PROJECT_DIR, "company.hmem");
+    return { store: openCompanyMemory(PROJECT_DIR, hmemConfig), label: "company", path: companyPath, isExternal: false };
+  }
+  return { store: new HmemStore(HMEM_PATH, hmemConfig), label: path.basename(HMEM_PATH, ".hmem"), path: HMEM_PATH, isExternal: false };
+}
 
 const _require = createRequire(import.meta.url);
 const PKG_VERSION: string = _require("../package.json").version;
