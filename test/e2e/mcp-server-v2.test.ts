@@ -49,6 +49,8 @@ d('MCP server v2 (spawned, stdio)', () => {
     const act = await client.callTool({ name: 'activate', arguments: { project: pid } });
     expect(textOf(act)).toContain(pid);
     const log = await client.callTool({ name: 'get_session_log', arguments: { session_id: sessionId } });
-    expect(typeof textOf(log)).toBe('string');
+    // No user/agent events exist yet, but the response must echo back the session_id
+    // (verifies the call was routed with the correct arg and didn't silently error).
+    expect(textOf(log)).toContain(sessionId);
   });
 });
