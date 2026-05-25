@@ -1,13 +1,14 @@
 import type { V2Store } from './store-facade.js';
 import type { EntryRow } from '../store/types.js';
 import { renderEntryTree, type WhyRow } from './read-render.js';
+import { createSchemaEngine } from '../store/schema-engine.js';
 
 export function listProjects(store: V2Store): string {
   const rows = store.db.prepare(
     "SELECT label, level_1 FROM entries WHERE prefix='P' AND deleted_at IS NULL AND obsolete=0 ORDER BY seq"
   ).all() as Pick<EntryRow, 'label' | 'level_1'>[];
   if (!rows.length) return 'No projects yet.';
-  return rows.map(r => `${r.label}  ${r.level_1.split('\n')[0]}`).join('\n');
+  return rows.map(r => `${r.label}  ${store.entries.renderRefs(r.level_1).split('\n')[0]}`).join('\n');
 }
 
 interface RecentSession { session_id: string; summary: string | null; last_active_at: string | null; }
@@ -38,4 +39,37 @@ export function loadProject(store: V2Store, address: string, opts: LoadProjectOp
   const text = brief + recentBlock;
   if (!opts.why) return { text };
   return { text, why: [{ label: entry.label, shown: 'expanded', reason: 'load_project target (depth 3)' }] };
+}
+
+export interface CreateProjectInput {
+  name: string;
+  tech: string;
+  description: string;
+  goal?: string;
+  audience?: string;
+  status?: string;
+  repo?: string;
+  deployment?: string;
+  tags?: string[];
+}
+
+export function createProject(store: V2Store, input: CreateProjectInput): { uid: string; label: string } {
+  const status = input.status ?? 'Active';
+  const level_1 = `${input.name} | ${status} | ${input.tech} | ${input.description}`;
+  const { uid, label } = store.entries.createEntry({ prefix: 'P', level_1 });
+  if (input.tags?.length) store.db.prepare('UPDATE entries SET tags=? WHERE uid=?').run(JSON.stringify(input.tags), uid);
+
+  const engine = createSchemaEngine(store.config);
+  const sections = engine.scaffoldSections('P'); // string[] of section names
+  for (const section of sections) {
+    store.entries.addNode({ root_uid: uid, content: section });
+  }
+  return { uid, label };
+}
+
+export function readProject(store: V2Store, address: string): string {
+  const uid = store.entries.labelToUid(address.split('.')[0]);
+  const e = uid ? store.entries.getEntry(uid) : null;
+  if (!e || e.prefix !== 'P') return `‹${address} not found›`;
+  return renderEntryTree(store, e.label, 3);
 }
