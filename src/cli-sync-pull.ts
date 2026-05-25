@@ -7,25 +7,12 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { hostname } from 'node:os'
-import Database from 'better-sqlite3'
 import { pullV2 } from './sync/v2/sync.js'
+import { syncLaneForPath } from './sync/v2/dispatch.js'
 import { createV2Store } from './v2/store-facade.js'
 import { makeHttpTransport } from './sync/v2/transport.js'
 import { loadHmemConfig } from './hmem-config.js'
 
-/** Peek the schema_major value without mutating the file. Returns null if indeterminate. */
-function peekSchemaMajor(hmemPath: string): string | null {
-  let db: Database.Database | null = null
-  try {
-    db = new Database(hmemPath, { readonly: true })
-    const row = db.prepare("SELECT value FROM schema_version WHERE key='schema_major'").get() as { value: string } | undefined
-    return row?.value ?? null
-  } catch {
-    return null
-  } finally {
-    try { db?.close() } catch { /* ignore */ }
-  }
-}
 
 export async function syncPull(opts: { passphrase?: string } = {}) {
   const config = await loadSyncConfig()
@@ -37,7 +24,7 @@ export async function syncPull(opts: { passphrase?: string } = {}) {
   const fileCfg = config.files[fileId] ?? {}
 
   // --- v2 lane ---
-  if (fileCfg.hmem_path && peekSchemaMajor(fileCfg.hmem_path) === '2') {
+  if (fileCfg.hmem_path && syncLaneForPath(fileCfg.hmem_path) === 'v2') {
     const salt = fileCfg.salt
     if (!salt) { console.error(`No salt for "${fileId}". Run: hmem setup`); process.exit(1) }
     const passphrase = opts.passphrase ?? await getPassphrase(fileCfg.passphrase_hint)
