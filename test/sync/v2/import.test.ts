@@ -156,4 +156,26 @@ describe('importV2', () => {
     expect(s.entries.getEntry(big)!.seq).toBe(2);
     s.close();
   });
+
+  it('self-heals a stale LWW-revert that re-introduces a collision (fixpoint)', () => {
+    const s = fresh();
+    // already-resolved state: small uid = P0001, big uid = P0002
+    const small = '0'.repeat(26); const big = 'Z'.repeat(26);
+    s.db.prepare(`INSERT INTO entries (uid,label,prefix,seq,level_1,created_at,updated_at)
+                  VALUES (?, 'P0001','P',1,'a', ?, ?)`).run(small, ts(0), ts(0));
+    s.db.prepare(`INSERT INTO entries (uid,label,prefix,seq,level_1,created_at,updated_at)
+                  VALUES (?, 'P0002','P',2,'b', ?, ?)`).run(big, ts(0), ts(0));
+
+    // a stale envelope for `big` carries the OLD label P0001 with a NEWER timestamp → LWW would
+    // revert big to P0001 and re-collide with small. The in-import resolve must re-fix it.
+    const stale = rowToEnvelope('entries', {
+      uid: big, label: 'P0001', prefix: 'P', seq: 1, level_1: 'b', created_at: ts(0), updated_at: ts(9),
+      access_count: 0, last_accessed: null, obsolete: 0, favorite: 0, irrelevant: 0, pinned: 0, tags: null, deleted_at: null,
+    });
+    expect(() => importV2(s, { file_id: 'f', cursor: null, acked: {} }, [stale])).not.toThrow();
+    expect(s.entries.getEntry(small)!.label).toBe('P0001'); // unchanged winner
+    expect(s.entries.getEntry(big)!.label).toBe('P0002');   // re-bumped, not stuck at P0001
+    expect(s.entries.getEntryByLabel('P0001')!.uid).toBe(small); // uniqueness intact
+    s.close();
+  });
 });
