@@ -25,3 +25,14 @@ for (const [from, to] of assets) {
   fs.mkdirSync(path.dirname(dst), { recursive: true });
   fs.copyFileSync(src, dst);
 }
+
+// tsc emits .js without the execute bit, but the `bin` entries are invoked
+// directly via the global symlink (hooks and the statusline call `hmem`/
+// `hmem-curate`), so they must be executable. npm sets this on install, but a
+// local dev-link rebuild (`npm run build`) loses it — leaving hooks failing with
+// "hmem: Permission denied". Restore +x here so every build is self-contained.
+const bins = ["dist/cli.js", "dist/mcp-curate-server.js"];
+for (const rel of bins) {
+  const p = path.join(root, rel);
+  if (fs.existsSync(p)) fs.chmodSync(p, 0o755);
+}
