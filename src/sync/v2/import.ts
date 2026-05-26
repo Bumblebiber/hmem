@@ -51,6 +51,27 @@ export function importV2(store: V2Store, staging: V2Staging, pulled: BlobEnvelop
   }
 
   const toAck: BlobEnvelope[] = [];
+  // A different LIVE uid already holding an incoming entry's label → label collision.
+  const clashStmt = store.db.prepare(
+    'SELECT uid FROM entries WHERE label = ? AND deleted_at IS NULL AND uid != ?',
+  );
+  const prefixesToResolve = new Set<string>();
+
+  /** Upsert an entries row, dodging the partial unique label index: if the label collides
+   *  with a different live uid, write a placeholder label (the uid — unique, never a valid
+   *  P-label) and mark the prefix for a deterministic resolveLabelCollisions pass afterwards. */
+  function upsertEntry(row: Record<string, unknown>): void {
+    const label = String(row.label);
+    const collides =
+      row.deleted_at == null && (clashStmt.get(label, row.uid) as { uid: string } | undefined) != null;
+    if (collides) {
+      upsert(store.db, 'entries', { ...row, label: String(row.uid) });
+      prefixesToResolve.add(String(row.prefix));
+    } else {
+      upsert(store.db, 'entries', row);
+    }
+  }
+
   const apply = store.db.transaction(() => {
     for (const [, env] of winners) {
       if (env.table === 'events') {
@@ -65,7 +86,8 @@ export function importV2(store: V2Store, staging: V2Staging, pulled: BlobEnvelop
           const localEnv = rowToEnvelope(env.table, localRow);
           const winner = pickWinner(localEnv, env);
           if (winner === env) {
-            upsert(store.db, env.table, env.row);
+            if (env.table === 'entries') upsertEntry(env.row);
+            else upsert(store.db, env.table, env.row);
             stats.updated++;
             toAck.push(env);
           } else {
@@ -76,12 +98,15 @@ export function importV2(store: V2Store, staging: V2Staging, pulled: BlobEnvelop
           }
         } else {
           // Row does not exist locally — insert.
-          upsert(store.db, env.table, env.row);
+          if (env.table === 'entries') upsertEntry(env.row);
+          else upsert(store.db, env.table, env.row);
           stats.inserted++;
           toAck.push(env);
         }
       }
     }
+    // Resolve any label collisions a placeholder insert introduced (deterministic, in-tx).
+    for (const prefix of prefixesToResolve) store.entries.resolveLabelCollisions(prefix);
   });
   apply(); // on throw: DB rolled back AND no acks applied (toAck discarded), staging untouched
   for (const env of toAck) markAcked(staging, env);

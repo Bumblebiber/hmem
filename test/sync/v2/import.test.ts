@@ -132,4 +132,28 @@ describe('importV2', () => {
     expect(raw.deleted_at).toBe(ts(9)); // delete preserved
     s.close();
   });
+
+  it('relabels a same-seq label collision instead of throwing (smaller uid keeps the label)', () => {
+    const s = fresh();
+    // local store already holds a live P0001 with a LARGER uid than the incoming one
+    const big = 'Z'.repeat(26);
+    s.db.prepare(
+      `INSERT INTO entries (uid,label,prefix,seq,level_1,created_at,updated_at)
+       VALUES (?, 'P0001','P',1,'local', ?, ?)`,
+    ).run(big, ts(0), ts(0));
+
+    const small = '0'.repeat(26); // smaller uid → should keep P0001
+    const incoming = rowToEnvelope('entries', {
+      uid: small, label: 'P0001', prefix: 'P', seq: 1, level_1: 'remote',
+      created_at: ts(1), updated_at: ts(1), access_count: 0, last_accessed: null,
+      obsolete: 0, favorite: 0, irrelevant: 0, pinned: 0, tags: null, deleted_at: null,
+    });
+    const staging = { file_id: 'f', cursor: null, acked: {} };
+
+    expect(() => importV2(s, staging, [incoming])).not.toThrow();
+    expect(s.entries.getEntry(small)!.label).toBe('P0001'); // smaller uid keeps it
+    expect(s.entries.getEntry(big)!.label).toBe('P0002');   // local loser bumped
+    expect(s.entries.getEntry(big)!.seq).toBe(2);
+    s.close();
+  });
 });
