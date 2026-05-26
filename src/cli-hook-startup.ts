@@ -22,8 +22,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveEnvDefaults } from "./cli-env.js";
-import { loadHmemConfig } from "./hmem-config.js";
+import { loadHmemConfig, type HmemConfig } from "./hmem-config.js";
 import { writeSessionMarker, purgeStaleSessionMarkers, readSessionMarker, writePpidMapping, getParentPid, getActiveDevice } from "./session-state.js";
+import { createV2Store } from "./v2/store-facade.js";
+import { getSchemaMajor } from "./store/db.js";
+import type { EntryRow, NodeRow } from "./store/types.js";
 
 export const TIP_BLOCK = `
 --- Tip ---
@@ -75,6 +78,154 @@ function buildSyncStatus(): string {
   }
   const ago = formatAgo(Date.now() - new Date(fileCfg.last_sync).getTime());
   return `\n\n--- hmem-sync ---\n✓ Linked to ${server} | active_file: ${activeFile} | last sync: ${ago} — writes propagate to other devices on next \`hmem-sync push\`.`;
+}
+
+/**
+ * Testable core: open the v2 store at `hmemPath` and build the two session-start
+ * context fragments the UserPromptSubmit hook injects on the first message:
+ *
+ *   `humanContext`   — Human context (H-entries) + Active-device Apps (or known
+ *                      devices) + Infrastructure (favorites)
+ *   `recentProjects` — Recent projects + Checkpoint status
+ *
+ * These are returned as separate strings so the caller can interleave them with
+ * the greeting directive / device note / sync status exactly as v1 did.
+ *
+ * v2 model: reads the v2 `entries` / `nodes` / `sessions` tables. There is NO
+ * v1-style `memories` / `memory_nodes` table and NO `active` column — "active
+ * project" is the open `session_bindings` segment for `sessionId` (mirrors
+ * `cli-context-inject.ts`). When the file is not a schema_major=2 store
+ * (defensive — should never happen after the v1→v2 cutover) `wrote` is `false`
+ * and both fragments are empty.
+ *
+ * Note: `createV2Store` opens the DB read-write (FTS triggers require it), so the
+ * literal v1 `{ readonly: true }` cannot be honoured via the facade — but this
+ * function performs NO writes, preserving the read-only *intent*. Performs no
+ * stdin/env side-effects, so it is safe to call from tests against a temp DB.
+ */
+export function buildHookStartupContextV2(
+  hmemPath: string,
+  config: HmemConfig,
+  opts: { deviceId?: string | null; sessionId?: string | null } = {},
+): { wrote: boolean; schemaMajor: string | null; humanContext: string; recentProjects: string } {
+  const store = createV2Store(hmemPath, config);
+  try {
+    const schemaMajor = getSchemaMajor(store.db);
+    if (schemaMajor !== "2") return { wrote: false, schemaMajor, humanContext: "", recentProjects: "" };
+
+    const deviceId = opts.deviceId ?? null;
+    const sessionId = opts.sessionId ?? null;
+    const oneLine = (s: string | null | undefined) => store.entries.renderRefs(s ?? "").split("\n")[0];
+
+    let humanContext = "";
+    let recentProjects = "";
+
+    // ── Human context (H-entries) ── pinned first, then most-accessed. Pinned
+    // entries also expand their direct child bullets (v1 behaviour).
+    const hRows = store.db.prepare(
+      `SELECT uid, label, level_1, pinned FROM entries
+        WHERE prefix='H' AND deleted_at IS NULL AND obsolete=0 AND irrelevant=0
+        ORDER BY pinned DESC, access_count DESC LIMIT 10`,
+    ).all() as Array<Pick<EntryRow, "uid" | "label" | "level_1" | "pinned">>;
+    if (hRows.length > 0) {
+      const childStmt = store.db.prepare(
+        `SELECT content FROM nodes
+          WHERE root_uid=? AND parent_uid IS NULL AND deleted_at IS NULL ORDER BY seq`,
+      );
+      const lines: string[] = [];
+      for (const r of hRows) {
+        lines.push(`${r.label}  ${oneLine(r.level_1)}`);
+        if (r.pinned) {
+          const children = childStmt.all(r.uid) as Array<Pick<NodeRow, "content">>;
+          for (const n of children) {
+            const text = oneLine(n.content);
+            if (text) lines.push(`  • ${text}`);
+          }
+        }
+      }
+      humanContext = "\n\n--- Human context (H-entries) ---\n" + lines.join("\n");
+    }
+
+    if (deviceId) {
+      // Device known: inject the Apps list for this machine only.
+      const dUid = store.entries.labelToUid(deviceId);
+      if (dUid) {
+        const appsNode = store.db.prepare(
+          `SELECT uid FROM nodes
+            WHERE root_uid=? AND parent_uid IS NULL AND content='Apps' AND deleted_at IS NULL
+            ORDER BY seq LIMIT 1`,
+        ).get(dUid) as { uid: string } | undefined;
+        if (appsNode) {
+          const apps = store.db.prepare(
+            `SELECT content FROM nodes
+              WHERE root_uid=? AND parent_uid=? AND deleted_at IS NULL ORDER BY seq`,
+          ).all(dUid, appsNode.uid) as Array<Pick<NodeRow, "content">>;
+          if (apps.length > 0) {
+            humanContext += `\n\n--- Active device (${deviceId}) Apps ---\n` +
+              apps.map(n => `  - ${oneLine(n.content)}`).join("\n");
+          }
+        }
+      }
+    } else {
+      // Device unknown: list known I-entries so the agent can identify this machine.
+      const iRows = store.db.prepare(
+        `SELECT label, level_1 FROM entries
+          WHERE prefix='I' AND deleted_at IS NULL AND obsolete=0 AND irrelevant=0
+          ORDER BY seq`,
+      ).all() as Array<Pick<EntryRow, "label" | "level_1">>;
+      if (iRows.length > 0) {
+        humanContext += "\n\n--- Known devices (identify this machine) ---\n" +
+          iRows.map(r => `${r.label}  ${oneLine(r.level_1)}`).join("\n");
+      }
+    }
+
+    // ── Infrastructure (favorites) ── favorite I-entries.
+    const iFavRows = store.db.prepare(
+      `SELECT label, level_1 FROM entries
+        WHERE prefix='I' AND favorite=1 AND deleted_at IS NULL AND obsolete=0 AND irrelevant=0
+        ORDER BY seq`,
+    ).all() as Array<Pick<EntryRow, "label" | "level_1">>;
+    if (iFavRows.length > 0) {
+      humanContext += "\n\n--- Infrastructure (favorites) ---\n" +
+        iFavRows.map(r => `${r.label}  ${oneLine(r.level_1)}`).join("\n");
+    }
+
+    // ── Recent projects ── 5 most recently edited P-entries (recency stands in
+    // for the dropped v1 `active` flag).
+    const pRows = store.db.prepare(
+      `SELECT label, level_1 FROM entries
+        WHERE prefix='P' AND deleted_at IS NULL AND obsolete=0 AND irrelevant=0
+        ORDER BY updated_at DESC LIMIT 5`,
+    ).all() as Array<Pick<EntryRow, "label" | "level_1">>;
+    if (pRows.length > 0) {
+      recentProjects = "\n\n--- Recent projects ---\n" +
+        pRows.map(r => `${r.label}  ${oneLine(r.level_1)}`).join("\n");
+    }
+
+    // ── Checkpoint status ── v2 equivalent of v1's "N sessions in O00xx without
+    // summary": sessions bound to the active project (the open binding segment
+    // for this session) that still have no rolling summary. NOTE: when this hook
+    // fires (before load_project binds a project) `currentProject` is usually
+    // null, so this block is empty in practice — see report.
+    if (sessionId) {
+      const activeUid = store.sessions.currentProject(sessionId);
+      if (activeUid) {
+        const label = store.entries.uidToLabel(activeUid) ?? activeUid;
+        const row = store.db.prepare(
+          `SELECT COUNT(DISTINCT s.session_id) AS cnt
+             FROM sessions s JOIN session_bindings b ON b.session_id = s.session_id
+            WHERE b.project_uid = ? AND (s.summary IS NULL OR s.summary = '')`,
+        ).get(activeUid) as { cnt: number } | undefined;
+        if (row && row.cnt > 0) {
+          recentProjects += `\n\n--- Checkpoint status ---\n${row.cnt} session(s) bound to ${label} without summary. Run \`hmem checkpoint\` or wait for auto-checkpoint.`;
+        }
+      }
+    }
+
+    return { wrote: true, schemaMajor, humanContext, recentProjects };
+  } finally {
+    store.close();
+  }
 }
 
 export async function hookStartup(): Promise<void> {
@@ -172,93 +323,14 @@ export async function hookStartup(): Promise<void> {
     let recentProjects = "";
     if (hmemPath) {
       try {
-        const Database = (await import("better-sqlite3")).default;
-        const db = new (Database as any)(hmemPath, { readonly: true });
-        try {
-          const hRows = db.prepare(
-            "SELECT id, title, level_1, pinned FROM memories WHERE prefix='H' AND obsolete!=1 ORDER BY pinned DESC, access_count DESC LIMIT 10"
-          ).all() as Array<{ id: string; title: string; level_1: string; pinned: number }>;
-          if (hRows.length > 0) {
-            const l2Stmt = db.prepare(
-              "SELECT title, content FROM memory_nodes WHERE root_id=? AND depth=2 AND (irrelevant IS NULL OR irrelevant!=1) ORDER BY seq"
-            );
-            const lines: string[] = [];
-            for (const r of hRows) {
-              const raw = r.title || r.level_1 || "";
-              lines.push(`${r.id}  ${raw.split("\n")[0]}`);
-              if (r.pinned === 1) {
-                const l2 = l2Stmt.all(r.id) as Array<{ title: string | null; content: string | null }>;
-                for (const n of l2) {
-                  const text = (n.title ?? n.content ?? "").split("\n")[0];
-                  if (text) lines.push(`  • ${text}`);
-                }
-              }
-            }
-            humanContext = "\n\n--- Human context (H-entries) ---\n" + lines.join("\n");
-          }
-
-          if (deviceId) {
-            // Device is known: inject Apps list for this machine only
-            const appsNode = db.prepare(
-              "SELECT id FROM memory_nodes WHERE root_id=? AND depth=2 AND title='Apps' AND (irrelevant IS NULL OR irrelevant!=1) LIMIT 1"
-            ).get(deviceId) as { id: string } | undefined;
-            if (appsNode) {
-              const l3Rows = db.prepare(
-                "SELECT title FROM memory_nodes WHERE parent_id=? AND depth=3 AND (irrelevant IS NULL OR irrelevant!=1) ORDER BY seq"
-              ).all(appsNode.id) as Array<{ title: string }>;
-              if (l3Rows.length > 0) {
-                humanContext += `\n\n--- Active device (${deviceId}) Apps ---\n` +
-                  l3Rows.map(r => `  - ${r.title ?? ""}`).join("\n");
-              }
-            }
-          } else {
-            // Device unknown: list known I-entries so agent can identify this machine
-            const iRows = db.prepare(
-              "SELECT id, title FROM memories WHERE prefix='I' AND obsolete!=1 ORDER BY id"
-            ).all() as Array<{ id: string; title: string }>;
-            if (iRows.length > 0) {
-              humanContext += "\n\n--- Known devices (identify this machine) ---\n" +
-                iRows.map(r => `${r.id}  ${r.title ?? ""}`).join("\n");
-            }
-          }
-
-          const iFavRows = db.prepare(
-            "SELECT id, title FROM memories WHERE prefix='I' AND favorite=1 AND obsolete!=1 AND (irrelevant IS NULL OR irrelevant!=1) ORDER BY id"
-          ).all() as Array<{ id: string; title: string }>;
-          if (iFavRows.length > 0) {
-            humanContext += "\n\n--- Infrastructure (favorites) ---\n" +
-              iFavRows.map(r => `${r.id}  ${r.title ?? ""}`).join("\n");
-          }
-
-          const pRows = db.prepare(
-            "SELECT id, title FROM memories WHERE prefix='P' AND obsolete!=1 ORDER BY updated_at DESC LIMIT 5"
-          ).all() as Array<{ id: string; title: string }>;
-          if (pRows.length > 0) {
-            recentProjects = "\n\n--- Recent projects ---\n" +
-              pRows.map((r: { id: string; title: string }) => `${r.id}  ${r.title ?? ""}`).join("\n");
-          }
-
-          // Checkpoint status: count unsummarized sessions in active project's O-entry
-          const activeP = db.prepare(
-            "SELECT id FROM memories WHERE prefix='P' AND active=1 AND obsolete!=1 LIMIT 1"
-          ).get() as { id: string } | undefined;
-          if (activeP) {
-            const seq = parseInt(activeP.id.replace(/\D/g, ""), 10);
-            const oId = `O${String(seq).padStart(4, "0")}`;
-            const unsummarized = db.prepare(
-              `SELECT COUNT(*) as cnt FROM memory_nodes
-               WHERE root_id=? AND depth=2
-               AND (content IS NULL OR content = title)
-               AND (irrelevant IS NULL OR irrelevant != 1)`
-            ).get(oId) as { cnt: number } | undefined;
-            if (unsummarized && unsummarized.cnt > 0) {
-              recentProjects += `\n\n--- Checkpoint status ---\n${unsummarized.cnt} session(s) in ${oId} without summary. Run \`hmem checkpoint\` or wait for auto-checkpoint.`;
-            }
-          }
-        } finally {
-          db.close();
+        let cfg;
+        try { cfg = loadHmemConfig(path.dirname(hmemPath)); } catch { cfg = undefined; }
+        if (cfg) {
+          const ctx = buildHookStartupContextV2(hmemPath, cfg, { deviceId, sessionId });
+          humanContext = ctx.humanContext;
+          recentProjects = ctx.recentProjects;
         }
-      } catch { /* ignore */ }
+      } catch { /* swallow — never block the user's prompt on a read failure */ }
     }
 
     const syncStatus = buildSyncStatus();
