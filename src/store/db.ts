@@ -75,6 +75,14 @@ export function openDb(path: string): Database.Database {
 }
 
 export function getSchemaMajor(db: Database.Database): string | null {
+  // Tolerate a missing `schema_version` table (e.g. a brand-new/empty file, or a
+  // v1 store before its schema is installed) — same sqlite_master precheck pattern
+  // openDb() uses for the `entries` table. Without this the SELECT below throws
+  // "no such table: schema_version".
+  const hasTable = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'")
+    .get();
+  if (!hasTable) return null;
   const row = db
     .prepare("SELECT value FROM schema_version WHERE key='schema_major'")
     .get() as { value: string } | undefined;

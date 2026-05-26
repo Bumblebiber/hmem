@@ -33,6 +33,7 @@ import path from "node:path";
 import type { HmemConfig } from "./hmem-config.js";
 import { DEFAULT_CONFIG, DEFAULT_PREFIX_DESCRIPTIONS } from "./hmem-config.js";
 import { readSessionMarker, writeSessionMarker } from "./session-state.js";
+import { getSchemaMajor } from "./store/db.js";
 import { safeHomedir } from "./utils.js";
 
 // ---- Types ----
@@ -375,6 +376,21 @@ export class HmemStore {
       fs.mkdirSync(dir, { recursive: true });
     }
     this.db = new Database(hmemPath);
+
+    // Catch-all v2 guard: HmemStore is the v1 schema (`memories`/`memory_nodes`).
+    // If pointed at a schema_major=2 (v2) file, the `this.db.exec(SCHEMA)` below
+    // would inject the v1 schema and CORRUPT it. Reject before any pragma/schema
+    // runs (so no -wal/-shm sidecars are materialized on rejection). A brand-new
+    // empty file has no `schema_version` table → getSchemaMajor returns null →
+    // falls through. A v1 file (null or '1') → falls through. Only '2' throws.
+    const schemaMajor = getSchemaMajor(this.db);
+    if (schemaMajor === "2") {
+      this.db.close();
+      throw new Error(
+        `HmemStore (v1) refusing to open a schema_major=2 (v2) store at ${hmemPath}. This command is not yet ported to v2.`,
+      );
+    }
+
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("busy_timeout = 5000");
 
