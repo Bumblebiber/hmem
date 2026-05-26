@@ -5,6 +5,7 @@ import type { HookContext } from '../types.js';
 import { resolveEnvDefaults } from '../../cli-env.js';
 import { loadHmemConfig } from '../../hmem-config.js';
 import { createV2Store } from '../../v2/store-facade.js';
+import { V1FileError } from '../../store/db.js';
 import { writePpidMapping, writeSessionMarker } from '../../session-state.js';
 import { buildSessionStart } from '../session-start.js';
 import { buildPromptSubmit } from '../prompt-submit.js';
@@ -47,11 +48,18 @@ function readStdin(): string {
   if (process.stdin.isTTY) return '';
   try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
 }
-function openStore() {
+export function openStore() {
   resolveEnvDefaults();
   const hmemPath = process.env.HMEM_PATH!;
   if (!hmemPath || !fs.existsSync(hmemPath)) return null;
-  return createV2Store(hmemPath, loadHmemConfig(path.dirname(hmemPath)));
+  try {
+    return createV2Store(hmemPath, loadHmemConfig(path.dirname(hmemPath)));
+  } catch (e) {
+    // A v1 file (openDb throws V1FileError) is treated like "no v2 store available":
+    // the SessionStart/Stop hooks silently skip rather than crashing for an un-migrated user.
+    if (e instanceof V1FileError) return null;
+    throw e;
+  }
 }
 
 export function runSessionStart(): void {

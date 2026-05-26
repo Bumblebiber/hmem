@@ -24,7 +24,7 @@
 
 import fs from "node:fs";
 import { createV2Store } from "./v2/store-facade.js";
-import { getSchemaMajor } from "./store/db.js";
+import { getSchemaMajor, V1FileError } from "./store/db.js";
 import { loadHmemConfig, type HmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
 
@@ -41,7 +41,15 @@ export function buildContextInjectV2(
   hmemPath: string,
   config: HmemConfig,
 ): { wrote: boolean; schemaMajor: string | null; text: string } {
-  const store = createV2Store(hmemPath, config);
+  let store: ReturnType<typeof createV2Store>;
+  try {
+    store = createV2Store(hmemPath, config);
+  } catch (e) {
+    // A v1 file (openDb throws V1FileError) → no-op with the empty "not v2" contract;
+    // the PromptSubmit context-inject hook must never crash the prompt for an un-migrated user.
+    if (e instanceof V1FileError) return { wrote: false, schemaMajor: "1", text: "" };
+    throw e;
+  }
   try {
     const schemaMajor = getSchemaMajor(store.db);
     if (schemaMajor !== "2") return { wrote: false, schemaMajor, text: "" };

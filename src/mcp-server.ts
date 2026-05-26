@@ -32,7 +32,7 @@ import {
 
 // ---- v2 facade ----
 import { createV2Store, type V2Store } from "./v2/store-facade.js";
-import { getSchemaMajor } from "./store/db.js";
+import { getSchemaMajor, V1FileError } from "./store/db.js";
 import { renderEntryTree, readBulk, type WhyRow } from "./v2/read-render.js";
 import { searchMemory as searchMemoryDb } from "./v2/search.js";
 import { findRelated } from "./v2/related.js";
@@ -971,7 +971,13 @@ async function main() {
         entryCount = row?.n ?? 0;
         log(`Schema major: ${major ?? "unknown"}`);
       } finally { store.close(); }
-    } catch {}
+    } catch (e) {
+      // A v1 file is the one non-noise failure here: surface it instead of swallowing,
+      // so a v1 user sees WHY their tools refuse (rather than a silent "0 entries").
+      if (e instanceof V1FileError) {
+        log("Schema major: 1 (v1 file — run 'hmem migrate'; v2 tools refuse writes until migrated)");
+      }
+    }
   }
   if (!dbExists) {
     log(`WARNING: DB not found at ${HMEM_PATH}`);

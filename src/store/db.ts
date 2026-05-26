@@ -54,18 +54,58 @@ const MIGRATIONS: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_sessions_cwd ON sessions(cwd)`,
 ];
 
+/**
+ * Thrown by openDb() when asked to open an existing **v1** store
+ * (`memories`/`memory_nodes`). The v2 open path must never v2-stamp such a file —
+ * doing so injects empty v2 tables next to the real v1 data and corrupts it into
+ * an unreadable hybrid (v2 reads query `entries`, see 0 rows; real data sits unread
+ * in `memories`). Symmetric corruption-prevention dual of HmemStore's v2-file guard
+ * (commit 44fd3dc). Callers that can tolerate a v1 file (hooks, the MCP tool boundary)
+ * catch this and no-op / surface a "run `hmem migrate`" hint; others let it propagate
+ * as a clear fatal.
+ */
+export class V1FileError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'V1FileError';
+  }
+}
+
 export function openDb(path: string): Database.Database {
   const db = new Database(path);
-  db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
 
-  const hasSchema = db
+  // Table-presence probes BEFORE any CREATE/INSERT (and before enabling WAL) drive
+  // a three-way branch. Probing in the default journal mode means the refuse branch
+  // below leaves NO `-wal`/`-shm` sidecars on a rejected v1 file.
+  const hasEntries = db // v2 marker (the table v2 reads key on; part of base schema)
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entries'")
     .get();
-  if (!hasSchema) {
+  // `memories` is the canonical v1 root table — only v1 stores ever create it.
+  // Do NOT reuse this name in future schema work; the guard keys on its presence.
+  const hasMemories = db // v1 marker
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memories'")
+    .get();
+
+  // (b) Existing v1 file — REFUSE. Close the handle BEFORE throwing (and before WAL
+  // was ever enabled) so no `-wal`/`-shm` sidecars land on the user's file (mirror 44fd3dc).
+  if (!hasEntries && hasMemories) {
+    db.close();
+    throw new V1FileError(
+      `openDb refusing to v2-init an existing v1 store at ${path}. ` +
+        `This is a v1 (memories/memory_nodes) file; run: ` +
+        `hmem migrate --in ${path} --out <new-v2-path>`,
+    );
+  }
+
+  db.pragma('journal_mode = WAL');
+
+  // (a) Fresh / empty file — install the locked v2 schema.
+  if (!hasEntries) {
     db.exec(readFileSync(SCHEMA_PATH, 'utf8'));
   }
 
+  // (a) + (c) idempotent stamp + forward migrations (heals a half-initialized v2 file).
   db.prepare(
     "INSERT OR IGNORE INTO schema_version(key, value) VALUES('schema_major', '2')",
   ).run();

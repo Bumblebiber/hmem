@@ -25,7 +25,7 @@ import { resolveEnvDefaults } from "./cli-env.js";
 import { loadHmemConfig, type HmemConfig } from "./hmem-config.js";
 import { writeSessionMarker, purgeStaleSessionMarkers, readSessionMarker, writePpidMapping, getParentPid, getActiveDevice } from "./session-state.js";
 import { createV2Store } from "./v2/store-facade.js";
-import { getSchemaMajor } from "./store/db.js";
+import { getSchemaMajor, V1FileError } from "./store/db.js";
 import type { EntryRow, NodeRow } from "./store/types.js";
 
 export const TIP_BLOCK = `
@@ -108,7 +108,15 @@ export function buildHookStartupContextV2(
   config: HmemConfig,
   opts: { deviceId?: string | null; sessionId?: string | null } = {},
 ): { wrote: boolean; schemaMajor: string | null; humanContext: string; recentProjects: string } {
-  const store = createV2Store(hmemPath, config);
+  let store: ReturnType<typeof createV2Store>;
+  try {
+    store = createV2Store(hmemPath, config);
+  } catch (e) {
+    // A v1 file (openDb throws V1FileError) → no-op with the empty "not v2" contract;
+    // the SessionStart hook must never crash the harness for an un-migrated user.
+    if (e instanceof V1FileError) return { wrote: false, schemaMajor: "1", humanContext: "", recentProjects: "" };
+    throw e;
+  }
   try {
     const schemaMajor = getSchemaMajor(store.db);
     if (schemaMajor !== "2") return { wrote: false, schemaMajor, humanContext: "", recentProjects: "" };

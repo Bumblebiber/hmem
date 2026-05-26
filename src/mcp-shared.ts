@@ -13,6 +13,7 @@ import { resolveHmemPath, HmemStore } from "./hmem-store.js";
 import type { HmemConfig } from "./hmem-config.js";
 import { loadHmemConfig, getSyncServers } from "./hmem-config.js";
 import { createV2Store, type V2Store } from "./v2/store-facade.js";
+import { V1FileError } from "./store/db.js";
 import { resolveSessionId } from "./v2/session-id.js";
 
 // ---- Environment ----
@@ -487,6 +488,29 @@ export const hmemConfig = loadHmemConfig(PROJECT_DIR);
 log(`Config: l1=${hmemConfig.maxCharsPerLevel[0]} maxNodeChars=${hmemConfig.maxNodeChars} depth=${hmemConfig.maxDepth}`);
 
 // ---- Store resolver ----
+
+/**
+ * Open a v2 store for the MCP tool boundary. createV2Store → openDb now throws
+ * V1FileError on an existing v1 file; surface that to the agent as a clean,
+ * per-call "needs migration" hint (Decision #1: per-call refusal — the server
+ * stays alive and the migrator stays reachable) instead of openDb's internal
+ * phrasing. Hooks and the startup diagnostic catch the raw V1FileError themselves
+ * (they need to no-op / log), so this wrapper is MCP-tool-only.
+ */
+function openV2OrMigrationHint(p: string, cfg: HmemConfig): V2Store {
+  try {
+    return createV2Store(p, cfg);
+  } catch (e) {
+    if (e instanceof V1FileError) {
+      throw new Error(
+        "This .hmem store is still v1 (memories, memory_nodes tables) — v2 tools cannot read it. " +
+          "Migrate it first: `hmem migrate --in <path> --out <new-v2-path>`, then point HMEM_PATH at the new v2 file.",
+      );
+    }
+    throw e;
+  }
+}
+
 export function resolveStore(
   storeName: "personal" | "company",
   hmemPath: string | undefined,
@@ -497,7 +521,7 @@ export function resolveStore(
     }
     const extConfig = loadHmemConfig(path.dirname(hmemPath));
     return {
-      store: createV2Store(hmemPath, extConfig),
+      store: openV2OrMigrationHint(hmemPath, extConfig),
       label: path.basename(hmemPath, ".hmem"),
       path: hmemPath,
       isExternal: true,
@@ -506,14 +530,14 @@ export function resolveStore(
   if (storeName === "company") {
     const companyPath = path.join(PROJECT_DIR, "company.hmem");
     return {
-      store: createV2Store(companyPath, hmemConfig),
+      store: openV2OrMigrationHint(companyPath, hmemConfig),
       label: "company",
       path: companyPath,
       isExternal: false,
     };
   }
   return {
-    store: createV2Store(HMEM_PATH, hmemConfig),
+    store: openV2OrMigrationHint(HMEM_PATH, hmemConfig),
     label: path.basename(HMEM_PATH, ".hmem"),
     path: HMEM_PATH,
     isExternal: false,

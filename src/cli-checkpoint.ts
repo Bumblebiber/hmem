@@ -21,7 +21,8 @@ import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { currentSessionId } from "./session-state.js";
 import { runCheckpointAgent } from "./cli-checkpoint-agent.js";
-import { openDb, getSchemaMajor } from "./store/db.js";
+import Database from "better-sqlite3";
+import { getSchemaMajor } from "./store/db.js";
 
 /**
  * v2 cutover guard. The auto-firing checkpoint Stop hook (installed by cli-init)
@@ -35,15 +36,20 @@ import { openDb, getSchemaMajor } from "./store/db.js";
  * is NOT yet ported to v2 — that's a tracked follow-up. Until then, the checkpoint
  * hook is a safe no-op on v2 files so it cannot corrupt them.
  *
- * Reads the schema with a plain better-sqlite3 handle (never HmemStore), so this
- * touches no v1 code path on a v2 file.
+ * Probes the schema with a READ-ONLY better-sqlite3 handle — never `openDb` (which
+ * now refuses a v1 file with V1FileError and would crash this hook for every existing
+ * v1 user) and never HmemStore. A missing / unreadable / v1 file → false, so the v1
+ * checkpoint path (or the existsSync gate in checkpoint()) takes over. Never throws.
  */
-function isV2Store(hmemPath: string): boolean {
-  const db = openDb(hmemPath);
+export function isV2Store(hmemPath: string): boolean {
+  let db: Database.Database | undefined;
   try {
+    db = new Database(hmemPath, { readonly: true });
     return getSchemaMajor(db) === "2";
+  } catch {
+    return false;
   } finally {
-    db.close();
+    try { db?.close(); } catch { /* ignore */ }
   }
 }
 
