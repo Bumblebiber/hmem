@@ -143,6 +143,17 @@ describe('Phase 6 acceptance — two devices converge', () => {
     expect(A.store.entries.getEntryByLabel('P0001')?.uid).toBe(winner.uid);
     expect(B.store.entries.getEntryByLabel('P0002')?.uid).toBe(loser.uid);
 
+    // QUIESCENCE: a second full cycle propagates the resolve-bumps but must NOT oscillate —
+    // each device's resolve is idempotent, so labels stay put (fixpoint reached, not a relabel loop).
+    await pushV2(argsFor(A, t));
+    await pushV2(argsFor(B, t));
+    await pullV2(argsFor(A, t));
+    await pullV2(argsFor(B, t));
+    for (const D of [A, B]) {
+      expect(D.store.entries.getEntry(winner.uid)?.label).toBe('P0001');
+      expect(D.store.entries.getEntry(loser.uid)?.label).toBe('P0002');
+    }
+
     A.store.close(); B.store.close();
   });
 });
