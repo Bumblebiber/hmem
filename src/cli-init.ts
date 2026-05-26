@@ -725,13 +725,13 @@ export async function runInit(args: string[] = []): Promise<void> {
           changed = true;
         }
 
-        // Stop — checkpoint (async, runs after log-exchange to extract knowledge)
-        if (!hasHookCmd("Stop", "hmem checkpoint")) {
-          settings.hooks.Stop.push({
-            hooks: [{ type: "command", command: `hmem ${pathFlag} checkpoint`, timeout: 120, async: true }],
-          });
-          changed = true;
-        }
+        // Stop — checkpoint: NOT installed for v2. The always-on v2 summarizer
+        // (store.summarizer.maybeCheckpoint, wired into the log-exchange Stop path)
+        // keeps the rolling segment summary current. The v1 `hmem checkpoint`
+        // command stays v1-only (and now no-ops on schema_major=2 files); the
+        // richer LLM knowledge-extraction it did is a tracked v2 follow-up.
+        // (Existing installs that already have the hook are protected by the
+        // schema guard in cli-checkpoint.ts.)
 
         // SessionStart[startup|resume|clear|compact] — context inject (clear|compact)
         // + auto-summarize the previous session (all sources, issue #31).

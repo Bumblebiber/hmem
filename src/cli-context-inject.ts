@@ -3,12 +3,17 @@
  *
  * Called by Claude Code's SessionStart hook (matchers: startup|resume|clear|compact).
  *
- * Two responsibilities, branched by hook `source`:
- *   - clear|compact: emit a compact project + rules context block to stdout
- *     for re-injection after the prior context was wiped (~200 tokens).
- *   - all sources: if the previous session lacks an arc summary, spawn
- *     `hmem summarize-session` asynchronously. This closes the gap for
- *     sessions that ended without /clear (issue #31).
+ * On clear|compact, emits a compact project + rules context block to stdout for
+ * re-injection after the prior context was wiped (~200 tokens). On startup/resume
+ * the UserPromptSubmit hook (`hook-startup`) already injects context, so this hook
+ * stays quiet there to avoid double-injection.
+ *
+ * v2 model: reads the v2 `entries` table directly (P-entries by updated_at, pinned/
+ * favorite R-entries). There is NO global `active` flag in v2 — "active project" is
+ * the open `session_bindings` segment, resolved per-session elsewhere — so the block
+ * lists recent projects and asks the agent to `load_project`. The previous v1
+ * `summarize-session` async spawn is dropped: v2's sessions API closes + flushes
+ * segments automatically via `onSegmentClose` (see store-facade / summarize/loop).
  *
  * Usage: hmem context-inject  (reads stdin JSON from Claude Code hook)
  *
@@ -18,11 +23,78 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
-import { execFileSync, spawn } from "node:child_process";
-import { HmemStore } from "./hmem-store.js";
-import { loadHmemConfig } from "./hmem-config.js";
+import { createV2Store } from "./v2/store-facade.js";
+import { getSchemaMajor } from "./store/db.js";
+import { loadHmemConfig, type HmemConfig } from "./hmem-config.js";
 import { resolveEnvDefaults } from "./cli-env.js";
+
+/**
+ * Testable core: open the v2 store at `hmemPath` and build the SessionStart
+ * re-injection context block from the v2 `entries` table. When the file is not a
+ * schema_major=2 store (defensive — should never happen after the v1→v2 cutover)
+ * `wrote` is `false` and `text` is empty.
+ *
+ * Performs NO stdin/env side-effects so it is safe to call from tests against a
+ * temp DB.
+ */
+export function buildContextInjectV2(
+  hmemPath: string,
+  config: HmemConfig,
+): { wrote: boolean; schemaMajor: string | null; text: string } {
+  const store = createV2Store(hmemPath, config);
+  try {
+    const schemaMajor = getSchemaMajor(store.db);
+    if (schemaMajor !== "2") return { wrote: false, schemaMajor, text: "" };
+
+    const lines: string[] = [];
+
+    // 1. Compact project overview — 5 most recently edited P-entries.
+    //    (No `active` column in v2; recency stands in for "what you were on".)
+    const recentProjects = store.db
+      .prepare(
+        `SELECT label, level_1 FROM entries
+         WHERE prefix='P' AND deleted_at IS NULL AND obsolete=0 AND irrelevant=0
+         ORDER BY updated_at DESC LIMIT 5`,
+      )
+      .all() as Array<{ label: string; level_1: string }>;
+
+    if (recentProjects.length > 0) {
+      lines.push("## Projects (5 most recent):");
+      for (const p of recentProjects) {
+        lines.push(`  ${p.label}  ${(p.level_1 ?? "").split("\n")[0]}`);
+      }
+      lines.push(`  (full list: read_memory({prefix:"P", titles_only:true}))`);
+    }
+
+    // 2. R-entries (rules) — only pinned or favorite to keep startup compact.
+    //    To make a rule appear here: update_memory(id="R00XX", pinned=true)
+    const rules = store.db
+      .prepare(
+        `SELECT label, level_1 FROM entries
+         WHERE prefix='R' AND deleted_at IS NULL AND obsolete=0 AND irrelevant=0
+         AND (pinned=1 OR favorite=1)
+         ORDER BY seq ASC`,
+      )
+      .all() as Array<{ label: string; level_1: string }>;
+    if (rules.length > 0) {
+      lines.push("\n## Rules (pinned/favorited):");
+      for (const r of rules) {
+        const raw = r.level_1 ?? "";
+        const title = raw.split("\n")[0];
+        const rest = raw.includes("\n") ? `\n> ${raw.split("\n").slice(1).join(" ").trim()}` : "";
+        lines.push(`  ${r.label}  ${title}${rest}`);
+      }
+    }
+
+    lines.push(
+      `\n(Context re-injected after /clear. Call load_project(id="P00XX") with the ID of the project you want to resume, or read_memory() to list them.)`,
+    );
+
+    return { wrote: true, schemaMajor, text: lines.join("\n") + "\n" };
+  } finally {
+    store.close();
+  }
+}
 
 export async function contextInject(): Promise<void> {
   // Resolve env defaults (HMEM_PATH, HMEM_PROJECT_DIR)
@@ -50,91 +122,16 @@ export async function contextInject(): Promise<void> {
   // injects this — emitting again here would double-inject.
   const source = hookInput.source ?? "clear";
   const emitContext = source === "clear" || source === "compact";
+  if (!emitContext) return;
 
   const hmemPath = process.env.HMEM_PATH!;
+  if (!hmemPath || !fs.existsSync(hmemPath)) return;
   const config = loadHmemConfig(projectDir);
 
-  let store;
   try {
-    store = new HmemStore(hmemPath, config);
+    const { wrote, text } = buildContextInjectV2(hmemPath, config);
+    if (wrote && text) process.stdout.write(text);
   } catch (e) {
-    process.stderr.write(`Failed to open memory: ${e}\n`);
-    return;
-  }
-
-  try {
-    // Active project drives both the context block and the prev-session lookup
-    const allProjects = store.read({ prefix: "P", depth: 1 })
-      .filter(e => !e.obsolete && !e.irrelevant);
-    const activeProject = allProjects.find(e => e.active);
-
-    if (emitContext) {
-      const lines: string[] = [];
-
-      // 1. Compact project overview — 5 most recently edited P-entries
-      const recentProjects = [...allProjects]
-        .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""))
-        .slice(0, 5);
-
-      if (recentProjects.length > 0) {
-        lines.push("## Projects (5 most recent):");
-        for (const p of recentProjects) {
-          const marker = p.active ? " [*]" : "";
-          lines.push(`  ${p.id}${marker}  ${p.title}`);
-        }
-        lines.push(`  (full list: read_memory({prefix:"P", titles_only:true}))`);
-      }
-
-      // 2. R-entries (rules) — only pinned [P] or favorite [♥] to keep startup compact.
-      // To make a rule appear here: update_memory(id="R00XX", pinned=true)
-      const rules = store.read({ prefix: "R", depth: 1 })
-        .filter(r => !r.obsolete && !r.irrelevant && (r.pinned || r.favorite));
-      if (rules.length > 0) {
-        lines.push("\n## Rules (pinned/favorited):");
-        for (const r of rules) {
-          const body = r.level_1 && r.level_1 !== r.title ? `\n> ${r.level_1}` : "";
-          lines.push(`  ${r.id}  ${r.title}${body}`);
-        }
-      }
-
-      // Explicitly name the active project so the agent doesn't guess an ID when
-      // multiple P-entries exist (see issue #20).
-      if (activeProject) {
-        lines.push(`\n(Context re-injected after /clear. Continue with: load_project(id="${activeProject.id}")  — ${activeProject.title})`);
-      } else {
-        lines.push(`\n(Context re-injected after /clear. No active project — call load_project(id="P00XX") with the ID of the project you want to resume, or read_memory() to list them.)`);
-      }
-
-      process.stdout.write(lines.join("\n") + "\n");
-    }
-
-    // Check if the previous session needs a summary (async, non-blocking).
-    // Runs for every source — fires the summarize-session spawn even when the
-    // user opens a fresh `claude` (startup) or `claude -c` (resume), so long
-    // sessions that ended without /clear still get an arc summary (#31).
-    if (activeProject) {
-      try {
-        const projSeq = parseInt(activeProject.id.replace(/\D/g, ""), 10);
-        const oId = `O${String(projSeq).padStart(4, "0")}`;
-        const prevSession = store.getPreviousSession(oId);
-        if (prevSession && prevSession.content === prevSession.title) {
-          // No summary yet — resolve hmem binary and spawn async
-          let hmemBin: string;
-          try {
-            hmemBin = execFileSync("which", ["hmem"], { encoding: "utf8" }).trim();
-          } catch {
-            hmemBin = path.join(path.dirname(process.execPath), "hmem");
-          }
-          const child = spawn(hmemBin, ["summarize-session", prevSession.id], {
-            detached: true,
-            stdio: "ignore",
-            env: { ...process.env },
-          });
-          child.unref();
-        }
-      } catch { /* non-critical */ }
-    }
-  } finally {
-    store.close();
+    process.stderr.write(`Failed to build context: ${e}\n`);
   }
 }

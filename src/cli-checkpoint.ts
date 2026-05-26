@@ -21,6 +21,31 @@ import { HmemStore } from "./hmem-store.js";
 import { loadHmemConfig } from "./hmem-config.js";
 import { currentSessionId } from "./session-state.js";
 import { runCheckpointAgent } from "./cli-checkpoint-agent.js";
+import { openDb, getSchemaMajor } from "./store/db.js";
+
+/**
+ * v2 cutover guard. The auto-firing checkpoint Stop hook (installed by cli-init)
+ * must NEVER open a schema_major=2 file with the v1 `HmemStore` class — doing so
+ * re-injects the v1 schema (`memories`/`memory_nodes`) and corrupts the file.
+ *
+ * On a v2 store, the always-on summarizer (`store.summarizer.maybeCheckpoint`,
+ * wired into the v2 `logStop` Stop-hook path) already keeps the rolling segment
+ * summary current. The richer v1 checkpoint work (LLM-driven exchange titling,
+ * L/D/E knowledge extraction, P-entry section updates, project-relevance moves)
+ * is NOT yet ported to v2 — that's a tracked follow-up. Until then, the checkpoint
+ * hook is a safe no-op on v2 files so it cannot corrupt them.
+ *
+ * Reads the schema with a plain better-sqlite3 handle (never HmemStore), so this
+ * touches no v1 code path on a v2 file.
+ */
+function isV2Store(hmemPath: string): boolean {
+  const db = openDb(hmemPath);
+  try {
+    return getSchemaMajor(db) === "2";
+  } finally {
+    db.close();
+  }
+}
 
 function syncReady(hmemPath: string): boolean {
   if (!process.env.HMEM_SYNC_PASSPHRASE) return false;
@@ -64,6 +89,14 @@ export async function checkpoint(): Promise<void> {
 
   const hmemPath = process.env.HMEM_PATH!;
   if (!fs.existsSync(hmemPath)) process.exit(0);
+
+  // v2 cutover guard: never run the v1 checkpoint path against a v2 file (it would
+  // open with HmemStore and re-inject the v1 schema). The v2 summarizer in logStop
+  // keeps the rolling summary current; richer knowledge-extraction is a follow-up.
+  if (isV2Store(hmemPath)) {
+    console.error("[hmem checkpoint] schema_major=2 store — skipping v1 checkpoint (handled by v2 logStop summarizer)");
+    return;
+  }
 
   const doSync = syncReady(hmemPath);
   if (doSync) await runSyncChild(["pull"], "pull");
