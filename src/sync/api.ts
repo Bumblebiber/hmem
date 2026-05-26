@@ -17,6 +17,7 @@ interface PushBlob {
 interface PushRequest {
   file_id: string
   idempotency_key: string
+  client_schema_major: number
   blobs: PushBlob[]
 }
 
@@ -110,11 +111,11 @@ export class HmemSyncClient {
     return r.data
   }
 
-  async pull(fileId: string, since?: string): Promise<PullResponse> {
-    const qs = since
-      ? `?file_id=${encodeURIComponent(fileId)}&since=${encodeURIComponent(since)}`
-      : `?file_id=${encodeURIComponent(fileId)}`
-    const r = await this.request<PullResponse>(`/sync/pull${qs}`)
+  async pull(fileId: string, since?: string, clientSchemaMajor?: number): Promise<PullResponse> {
+    const params = [`file_id=${encodeURIComponent(fileId)}`]
+    if (since) params.push(`since=${encodeURIComponent(since)}`)
+    if (clientSchemaMajor !== undefined) params.push(`client_schema_major=${clientSchemaMajor}`)
+    const r = await this.request<PullResponse>(`/sync/pull?${params.join('&')}`)
     if (!r.ok) {
       if (r.status === 403) throw new SyncApiError('Access revoked', 'REVOKED')
       if (r.status === 402) throw new SyncApiError('Subscription required', 'PAYMENT_REQUIRED')

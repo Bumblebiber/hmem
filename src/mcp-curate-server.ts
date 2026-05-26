@@ -13,14 +13,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import fs from "node:fs";
-import path from "node:path";
-import { openCompanyMemory, HmemStore } from "./hmem-store.js";
 import { createRequire } from "node:module";
 import {
-  HMEM_PATH, PROJECT_DIR, hmemConfig, log,
-  safeError, validateFilePath,
-  syncPullThenPush, syncPush, syncPushWithRetry, resolveStore,
+  HMEM_PATH, log, safeError, resolveStore,
 } from "./mcp-shared.js";
+import { updateMemory } from "./v2/writes.js";
+import {
+  tagRename, tagBulk, memoryStats, memoryHealth,
+  deleteEntryOrNode, renameId, reparentNode, exportMarkdown,
+} from "./v2/curation.js";
 
 const _require = createRequire(import.meta.url);
 const PKG_VERSION: string = _require("../package.json").version;
@@ -41,42 +42,36 @@ server.tool(
     ids: z.array(z.string()).min(1).describe("List of entry/node IDs to update, e.g. ['T0005', 'T0012', 'L0044']"),
     irrelevant: z.coerce.boolean().optional().describe("Mark all as irrelevant [-]"),
     favorite: z.coerce.boolean().optional().describe("Set or clear [♥] favorite on all"),
-    active: z.coerce.boolean().optional().describe("Set or clear [*] active on all"),
     pinned: z.coerce.boolean().optional().describe("Set or clear [P] pinned on all"),
     store: z.enum(["personal", "company"]).default("personal"),
   },
-  async ({ ids, irrelevant, favorite, active, pinned, store: storeName }) => {
+  async ({ ids, irrelevant, favorite, pinned, store: storeName }) => {
     try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
+      const { store, label: storeLabel } = resolveStore(storeName, undefined);
       try {
-        if (storeName === "personal") await syncPullThenPush(HMEM_PATH);
-
+        // v2 sync lands in Phase 6
+        const patch = { irrelevant, favorite, pinned };
         let updated = 0;
         let notFound = 0;
         for (const id of ids) {
-          const ok = hmemStore.updateNode(id, undefined as any, undefined, undefined, favorite, undefined, irrelevant, undefined, pinned, active);
+          const ok = updateMemory(store, id, patch);
           if (ok) updated++;
           else notFound++;
         }
 
-        const storeLabel = storeName === "company" ? "company" : path.basename(HMEM_PATH, ".hmem");
         const flags = [
           irrelevant !== undefined ? `irrelevant=${irrelevant}` : "",
           favorite !== undefined ? `favorite=${favorite}` : "",
-          active !== undefined ? `active=${active}` : "",
           pinned !== undefined ? `pinned=${pinned}` : "",
         ].filter(Boolean).join(", ");
         log(`update_many [${storeLabel}]: ${updated}/${ids.length} updated (${flags})`);
 
-        if (storeName === "personal") syncPush(HMEM_PATH);
         const result = `Updated ${updated} of ${ids.length} entries (${flags})`;
         return {
           content: [{ type: "text" as const, text: notFound > 0 ? `${result}\n${notFound} not found` : result }],
         };
       } finally {
-        hmemStore.close();
+        store.close();
       }
     } catch (e) {
       return {
@@ -134,26 +129,22 @@ server.tool(
       "Ignored for 'text' format."
     ),
   },
-  async ({ store: storeName, format, output_path }) => {
+  async ({ store: storeName, format }) => {
     try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
+      if (format === "hmem") {
+        return {
+          content: [{
+            type: "text" as const,
+            text: "v2 .hmem file export lands in Phase 6 (sync). Use format='text' for a Markdown dump.",
+          }],
+        };
+      }
+      const { store } = resolveStore(storeName, undefined);
       try {
-        if (format === "hmem") {
-          const defaultPath = path.join(
-            path.dirname(hmemStore.getDbPath()),
-            "export.hmem"
-          );
-          const outPath = validateFilePath(output_path || defaultPath, path.dirname(hmemStore.getDbPath()));
-          const result = hmemStore.exportPublicToHmem(outPath);
-          return { content: [{ type: "text" as const, text: `Exported to ${outPath}\n${result.entries} entries, ${result.nodes} nodes, ${result.tags} tags` }] };
-        } else {
-          const output = hmemStore.exportMarkdown();
-          return { content: [{ type: "text" as const, text: output }] };
-        }
+        const output = exportMarkdown(store);
+        return { content: [{ type: "text" as const, text: output }] };
       } finally {
-        hmemStore.close();
+        store.close();
       }
     } catch (e) {
       return {
@@ -178,45 +169,15 @@ server.tool(
       "Preview only — report what would happen without modifying the database"
     ),
   },
-  async ({ source_path, store: storeName, dry_run }) => {
-    try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
-      try {
-        const safePath = validateFilePath(source_path, path.dirname(hmemStore.getDbPath()));
-        if (storeName === "personal" && !dry_run) await syncPullThenPush(HMEM_PATH);
-        const result = hmemStore.importFromHmem(safePath, dry_run);
-        const mode = dry_run ? "preview" : "imported";
-        log(`import_memory: ${mode} from ${safePath} (${result.inserted} new, ${result.merged} merged)`);
-
-        const lines: string[] = [];
-        lines.push(dry_run
-          ? `Import preview from ${source_path}:`
-          : `Imported from ${source_path}:`);
-        lines.push(`  ${result.inserted} entries ${dry_run ? "to insert" : "inserted"}`);
-        lines.push(`  ${result.merged} entries ${dry_run ? "to merge" : "merged"} (L1 match)`);
-        lines.push(`  ${result.nodesInserted} nodes ${dry_run ? "to insert" : "inserted"}`);
-        lines.push(`  ${result.nodesSkipped} nodes skipped (duplicate L2)`);
-        lines.push(`  ${result.tagsImported} tags ${dry_run ? "to import" : "imported"}`);
-        if (result.remapped) {
-          lines.push(`  ID remapping ${dry_run ? "required" : "applied"} (${result.conflicts} conflicts)`);
-        }
-        if (storeName === "personal" && !dry_run && (result.inserted > 0 || result.merged > 0)) {
-          const retry = await syncPushWithRetry(HMEM_PATH);
-          if (!retry.resolved) lines.push(`  ⚠ unresolved push conflicts after ${retry.attempts} attempts`);
-          else if (retry.attempts > 1) lines.push(`  (resolved push conflict after ${retry.attempts} attempts)`);
-        }
-        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
-      } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return {
-        content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }],
-        isError: true,
-      };
-    }
+  async () => {
+    // Cross-store .hmem import depends on the v2 sync/import bridge, which lands
+    // in Phase 6. Returning a clear message rather than silently no-op'ing.
+    return {
+      content: [{
+        type: "text" as const,
+        text: "import not supported on v2 yet (Phase 6). Cross-store .hmem import will be reintroduced with the v2 sync bridge.",
+      }],
+    };
   }
 );
 
@@ -231,36 +192,19 @@ server.tool(
   },
   async ({ store: storeName }) => {
     try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
+      const { store, label, path: dbPath } = resolveStore(storeName, undefined);
       try {
-        const s = hmemStore.getStats();
-        const hmemPath = storeName === "company"
-          ? path.join(PROJECT_DIR, "company.hmem")
-          : HMEM_PATH;
+        const s = memoryStats(store);
         const lines: string[] = [];
-        lines.push(`Memory stats (${storeName}):`);
-        lines.push(`  DB: ${hmemPath}`);
-        lines.push(`  Total entries: ${s.totalEntries}`);
+        lines.push(`Memory stats (${label}):`);
+        lines.push(`  DB: ${dbPath}`);
+        lines.push(`  Total entries: ${s.total}`);
         const prefixLine = Object.entries(s.byPrefix).map(([p, c]) => `${p}:${c}`).join(", ");
         if (prefixLine) lines.push(`  By prefix: ${prefixLine}`);
-        lines.push(`  Total nodes: ${s.totalNodes}  (avg ${s.avgDepth} nodes/entry)`);
-        lines.push(`  Favorites [♥]: ${s.favorites}  Pinned [P]: ${s.pinned}`);
-        lines.push(`  Unique hashtags: ${s.uniqueTags}`);
-        lines.push(`  Stale (>30d not accessed): ${s.staleCount}`);
-        if (s.oldestEntry) {
-          lines.push(`  Oldest entry: ${s.oldestEntry.id} (${s.oldestEntry.created_at}) — ${s.oldestEntry.title}`);
-        }
-        if (s.mostAccessed.length > 0) {
-          lines.push(`  Most accessed:`);
-          for (const e of s.mostAccessed) {
-            lines.push(`    ${e.id} (${e.access_count}×) — ${e.title}`);
-          }
-        }
+        lines.push(`  Total nodes: ${s.nodes}`);
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       } finally {
-        hmemStore.close();
+        store.close();
       }
     } catch (e) {
       return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
@@ -284,9 +228,9 @@ server.tool(
   },
   async ({ store: storeName, hmem_path }) => {
     try {
-      const { store: hmemStore, label: storeLabelResolved } = resolveStore(storeName, hmem_path);
+      const { store, label: storeLabelResolved } = resolveStore(storeName, hmem_path);
       try {
-        const h = hmemStore.healthCheck();
+        const h = memoryHealth(store);
         const lines: string[] = [`Memory health report (${storeLabelResolved}):`];
         const ok = (label: string) => lines.push(`  ✓ ${label}`);
         const warn = (label: string) => lines.push(`  ⚠ ${label}`);
@@ -294,48 +238,21 @@ server.tool(
         if (h.brokenLinks.length === 0) {
           ok("No broken links");
         } else {
-          warn(`${h.brokenLinks.length} entries with broken links:`);
+          warn(`${h.brokenLinks.length} broken link(s) (pointing to deleted entries/nodes):`);
           for (const e of h.brokenLinks) {
-            lines.push(`    ${e.id} — ${e.title} → broken: ${e.brokenIds.join(", ")}`);
+            lines.push(`    ${e.src} → ${e.dst}`);
           }
         }
 
-        if (h.orphanedEntries.length === 0) {
-          ok("No orphaned entries (all have sub-nodes)");
+        if (h.orphanNodes === 0) {
+          ok("No orphaned nodes");
         } else {
-          warn(`${h.orphanedEntries.length} entries with no sub-nodes:`);
-          for (const e of h.orphanedEntries) {
-            lines.push(`    ${e.id} (${e.created_at}) — ${e.title}`);
-          }
-        }
-
-        if (h.staleFavorites.length === 0) {
-          ok("No stale favorites/pinned");
-        } else {
-          warn(`${h.staleFavorites.length} stale favorites/pinned (>60d not accessed):`);
-          for (const e of h.staleFavorites) {
-            lines.push(`    ${e.id} — ${e.title} [last: ${e.lastAccessed ?? "never"}]`);
-          }
-        }
-
-        if (h.brokenObsoleteChains.length === 0) {
-          ok("No broken obsolete chains");
-        } else {
-          warn(`${h.brokenObsoleteChains.length} broken [✓ID] references:`);
-          for (const e of h.brokenObsoleteChains) {
-            lines.push(`    ${e.id} — ${e.title} → [✓${e.badRef}] not found`);
-          }
-        }
-
-        if (h.tagOrphans === 0) {
-          ok("No tag orphans");
-        } else {
-          warn(`${h.tagOrphans} tag rows pointing to deleted entries`);
+          warn(`${h.orphanNodes} orphaned node(s) (root entry deleted)`);
         }
 
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       } finally {
-        hmemStore.close();
+        store.close();
       }
     } catch (e) {
       return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
@@ -346,27 +263,22 @@ server.tool(
 // ---- Tool: tag_bulk ----
 server.tool(
   "tag_bulk",
-  "Apply tag changes (add and/or remove) to all entries matching a filter. " +
-    "Filter by prefix, full-text search, or existing tag. " +
+  "Apply tag changes (add and/or remove) to all entries matching a prefix filter. " +
     "Returns the number of entries modified. " +
     "Also use tag_rename to rename a tag across all entries.",
   {
     filter: z.object({
       prefix: z.string().optional().describe("Only entries with this prefix, e.g. 'L'"),
-      search: z.string().optional().describe("FTS5 search term — only matching entries"),
-      tag: z.string().optional().describe("Only entries that already have this tag"),
-    }).describe("At least one filter field required"),
+    }).describe("Prefix filter required"),
     add_tags: z.array(z.string()).optional().describe("Tags to add, e.g. ['#hmem', '#bugfix']"),
     remove_tags: z.array(z.string()).optional().describe("Tags to remove"),
     store: z.enum(["personal", "company"]).default("personal"),
   },
   async ({ filter, add_tags, remove_tags, store: storeName }) => {
     try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
+      const { store } = resolveStore(storeName, undefined);
       try {
-        const count = hmemStore.tagBulk(filter, add_tags, remove_tags);
+        const count = tagBulk(store, { prefix: filter.prefix }, add_tags, remove_tags);
         const added = add_tags?.length ? `+[${add_tags.join(", ")}]` : "";
         const removed = remove_tags?.length ? `-[${remove_tags.join(", ")}]` : "";
         return {
@@ -376,7 +288,7 @@ server.tool(
           }],
         };
       } finally {
-        hmemStore.close();
+        store.close();
       }
     } catch (e) {
       return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
@@ -396,11 +308,9 @@ server.tool(
   },
   async ({ old_tag, new_tag, store: storeName }) => {
     try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
+      const { store } = resolveStore(storeName, undefined);
       try {
-        const count = hmemStore.tagRename(old_tag, new_tag);
+        const count = tagRename(store, old_tag, new_tag);
         return {
           content: [{
             type: "text" as const,
@@ -410,7 +320,7 @@ server.tool(
           }],
         };
       } finally {
-        hmemStore.close();
+        store.close();
       }
     } catch (e) {
       return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
@@ -418,36 +328,34 @@ server.tool(
   }
 );
 
-// ---- Tool: move_memory ----
+// ---- Tool: move_node ----
 server.tool(
-  "move_memory",
-  "Move a sub-node (and its entire subtree) to a different parent, updating all ID references. " +
+  "move_node",
+  "Reparent a single sub-node to a different parent. " +
     "source_id must be a sub-node (e.g. 'P0029.15'), not a root entry. " +
-    "target_parent_id is the new parent: a root entry (e.g. 'L0074') or a sub-node (e.g. 'P0029.20'). " +
-    "Use during curation to reorganize entries into the correct hierarchy.",
+    "target_id is the new parent: a root entry (e.g. 'L0074') or a sub-node (e.g. 'P0029.20'). " +
+    "Use during curation to reorganize a node into the correct hierarchy.",
   {
     source_id: z.string().describe("Sub-node to move, e.g. 'P0029.15' (must not be a root entry ID)"),
-    target_parent_id: z.string().describe("New parent: root 'L0074' or sub-node 'P0029.20'"),
+    target_id: z.string().describe("New parent: root 'L0074' or sub-node 'P0029.20'"),
     store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
   },
-  async ({ source_id, target_parent_id, store }) => {
+  async ({ source_id, target_id, store: storeName }) => {
     try {
-      const hmemStore = store === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
+      const { store } = resolveStore(storeName, undefined);
       try {
-        const result = hmemStore.moveNode(source_id, target_parent_id);
-        const idLines = Object.entries(result.idMap)
-          .map(([old, nw]) => `  ${old} → ${nw}`)
-          .join("\n");
+        const ok = reparentNode(store, source_id, target_id);
+        if (!ok) {
+          return {
+            content: [{ type: "text" as const, text: `Could not move ${source_id} → ${target_id} (source must be a sub-node and target must resolve).` }],
+            isError: true,
+          };
+        }
         return {
-          content: [{
-            type: "text" as const,
-            text: `Moved ${result.moved} node(s) to ${target_parent_id}.\nNew ID: ${result.newId}\n\nID mapping:\n${idLines}`,
-          }],
+          content: [{ type: "text" as const, text: `Moved ${source_id} under ${target_id}.` }],
         };
       } finally {
-        hmemStore.close();
+        store.close();
       }
     } catch (e) {
       return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
@@ -468,62 +376,27 @@ server.tool(
     new_id: z.string().min(1).describe("New entry ID, e.g. 'P0052' — must have same prefix and not exist yet"),
     store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
   },
-  async ({ old_id, new_id, store }) => {
+  async ({ old_id, new_id, store: storeName }) => {
     try {
-      const hmemStore = store === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
+      const { store } = resolveStore(storeName, undefined);
       try {
-        const result = hmemStore.renameId(old_id, new_id);
-        if (!result.ok) {
-          return { content: [{ type: "text" as const, text: `ERROR: ${result.error}` }], isError: true };
+        const ok = renameId(store, old_id, new_id);
+        if (!ok) {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: could not rename ${old_id} → ${new_id} (not found, or not a root entry — only root entries are relabelable).` }],
+            isError: true,
+          };
         }
-        if (store === "personal") syncPush(HMEM_PATH);
-        log(`rename_id: ${old_id} → ${new_id} (${result.affected} rows affected)`);
+        // v2 sync lands in Phase 6
+        log(`rename_id: ${old_id} → ${new_id}`);
         return {
           content: [{
             type: "text" as const,
-            text: `Renamed ${old_id} → ${new_id} (${result.affected} rows affected).\nAll child nodes, tags, links, and FTS index updated.`,
+            text: `Renamed ${old_id} → ${new_id}. All child nodes, tags, links, and FTS index updated.`,
           }],
         };
       } finally {
-        hmemStore.close();
-      }
-    } catch (e) {
-      return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
-    }
-  }
-);
-
-// ---- Tool: move_nodes ----
-server.tool(
-  "move_nodes",
-  "Move session (L2), batch (L3), or exchange (L4) nodes between O-entries. Handles ID rewriting, tag migration, and cleanup of empty parents.",
-  {
-    node_ids: z.array(z.string()).describe("IDs of nodes to move (L2, L3, or L4)"),
-    target_o_id: z.string().describe("Target O-entry ID (e.g. O0048)"),
-    store: z.enum(["personal", "company"]).default("personal").describe("Which store to operate on"),
-  },
-  async ({ node_ids, target_o_id, store }) => {
-    try {
-      const hmemStore = store === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
-      try {
-        if (store === "personal") await syncPullThenPush(HMEM_PATH);
-        const result = hmemStore.moveNodes(node_ids, target_o_id);
-        let text = `Moved ${result.moved} node(s) to ${target_o_id}.`;
-        if (result.errors.length > 0) {
-          text += `\nErrors:\n${result.errors.join("\n")}`;
-        }
-        if (store === "personal") {
-          const retry = await syncPushWithRetry(HMEM_PATH);
-          if (!retry.resolved) text += `\n⚠ unresolved push conflicts after ${retry.attempts} attempts`;
-          else if (retry.attempts > 1) text += `\n(resolved push conflict after ${retry.attempts} attempts)`;
-        }
-        return { content: [{ type: "text" as const, text }] };
-      } finally {
-        hmemStore.close();
+        store.close();
       }
     } catch (e) {
       return { content: [{ type: "text" as const, text: `ERROR: ${safeError(e)}` }], isError: true };
@@ -546,28 +419,21 @@ server.tool(
   },
   async ({ id, store: storeName }) => {
     try {
-      const hmemStore = storeName === "company"
-        ? openCompanyMemory(PROJECT_DIR, hmemConfig)
-        : new HmemStore(HMEM_PATH, hmemConfig);
+      const { store } = resolveStore(storeName, undefined);
       try {
-        let deleted: boolean;
-        if (id.includes(".")) {
-          deleted = hmemStore.deleteNode(id);
-        } else {
-          deleted = hmemStore.delete(id);
-        }
+        const deleted = deleteEntryOrNode(store, id);
         if (!deleted) {
           return {
             content: [{ type: "text" as const, text: `Not found: ${id}` }],
             isError: true,
           };
         }
-        if (storeName === "personal") syncPush(HMEM_PATH);
+        // v2 sync lands in Phase 6
         return {
           content: [{ type: "text" as const, text: `Deleted: ${id}` }],
         };
       } finally {
-        hmemStore.close();
+        store.close();
       }
     } catch (e) {
       return {

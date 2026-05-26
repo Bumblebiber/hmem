@@ -6,6 +6,8 @@
  * Created:   2026-02-21
  */
 
+import type { Harness } from './hooks/types.js';
+
 // Parse --hmem-path flag (cross-platform alternative to HMEM_PATH=... env prefix)
 const args = process.argv.slice(2);
 const pathIdx = args.indexOf("--hmem-path");
@@ -153,6 +155,17 @@ switch (command) {
   case "hook-startup": {
     const { hookStartup } = await import("./cli-hook-startup.js");
     await hookStartup();
+    break;
+  }
+
+  case 'hook-session-start':
+  case 'hook-stop':
+  case 'hook-prompt-submit': {
+    const harnessArg = (args.find(a => a.startsWith('--harness='))?.split('=')[1]
+      ?? 'claude-code') as Harness;
+    const { resolveHookRunner } = await import('./hooks/dispatch.js');
+    const runner = resolveHookRunner(command, harnessArg);
+    if (runner) await runner();
     break;
   }
 

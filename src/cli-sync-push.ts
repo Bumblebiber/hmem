@@ -6,15 +6,17 @@ import { exportToStaging } from './sync-bridge.js'
 import { syncPull } from './cli-sync-pull.js'
 import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { hostname } from 'node:os'
 import { randomUUID } from 'node:crypto'
+import { pushV2, pullV2 } from './sync/v2/sync.js'
+import { syncLaneForPath } from './sync/v2/dispatch.js'
+import { createV2Store } from './v2/store-facade.js'
+import { makeHttpTransport } from './sync/v2/transport.js'
+import { loadHmemConfig } from './hmem-config.js'
+
 
 export async function syncPush(opts: { skipPull?: boolean; passphrase?: string } = {}) {
-  if (!opts.skipPull) {
-    await syncPull({ passphrase: opts.passphrase })
-  }
-
   const config = await loadSyncConfig()
   if (!config.api_key) { console.error('Not configured. Run: hmem setup'); process.exit(1) }
 
@@ -22,6 +24,40 @@ export async function syncPush(opts: { skipPull?: boolean; passphrase?: string }
   if (!fileId) { console.error('No active file. Run: hmem setup'); process.exit(1) }
 
   const fileCfg = config.files[fileId] ?? {}
+
+  // --- v2 lane: intercept before the v1 pull/push path ---
+  if (fileCfg.hmem_path && syncLaneForPath(fileCfg.hmem_path) === 'v2') {
+    const salt = fileCfg.salt
+    if (!salt) { console.error(`No salt for "${fileId}". Run: hmem setup`); process.exit(1) }
+    const passphrase = opts.passphrase ?? await getPassphrase(fileCfg.passphrase_hint)
+    const client = new HmemSyncClient(config.server, config.api_key)
+    const transport = makeHttpTransport(client)
+    const hmemConfig = loadHmemConfig(dirname(fileCfg.hmem_path))
+    const store = createV2Store(fileCfg.hmem_path, hmemConfig)
+    try {
+      if (!opts.skipPull) {
+        const pullResult = await pullV2({ store, transport, dir: configDir(), fileId, deviceId: hostname(), passphrase, salt })
+        console.log(`✓ Pulled ${pullResult.applied} updates`)
+      }
+      const pushResult = await pushV2({ store, transport, dir: configDir(), fileId, deviceId: hostname(), passphrase, salt })
+      if (pushResult.queued) {
+        console.log(`✓ Queued ${pushResult.pushed} blobs (offline — will retry on next push)`)
+      } else {
+        console.log(`✓ Pushed ${pushResult.pushed} blobs`)
+      }
+    } finally {
+      store.close()
+    }
+    config.files[fileId] = { ...fileCfg, last_sync: new Date().toISOString() }
+    await saveSyncConfig(config)
+    return
+  }
+  // --- end v2 lane ---
+
+  if (!opts.skipPull) {
+    await syncPull({ passphrase: opts.passphrase })
+  }
+
   const salt = fileCfg.salt
   if (!salt) { console.error(`No salt for "${fileId}". Run: hmem setup`); process.exit(1) }
 
@@ -61,7 +97,7 @@ export async function syncPush(opts: { skipPull?: boolean; passphrase?: string }
   for (let i = 0; i < encoded.length; i += BATCH) {
     const batch = encoded.slice(i, i + BATCH)
     try {
-      const res = await client.push({ file_id: fileId, idempotency_key: randomUUID(), blobs: batch })
+      const res = await client.push({ file_id: fileId, idempotency_key: randomUUID(), client_schema_major: 1, blobs: batch })
       total += res.mappings.length
       if (encoded.length > BATCH) process.stdout.write(`\r  ${total}/${encoded.length} blobs...`)
     } catch (err) {
