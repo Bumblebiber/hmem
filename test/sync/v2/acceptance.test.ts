@@ -114,22 +114,35 @@ describe('Phase 6 acceptance — two devices converge', () => {
     A.store.close(); B.store.close();
   });
 
-  // ── KNOWN GAP (scope decision pending) ───────────────────────────────────────
-  it.skip('same-prefix multi-device offline creation collides on the label unique index — design decision pending (relabel-by-uid vs drop-index vs defer to Phase 6.1)', async () => {
+  // ── Phase 6.1: label collision resolves convergently (client-side relabel-by-uid) ──────────
+  it('same-prefix multi-device offline creation converges: smaller ULID keeps the label, the other is relabeled (no throw)', async () => {
     // Both devices create a P-entry offline → both get label "P0001" with DIFFERENT ULIDs.
-    // importV2's verbatim upsert inserts a new uid whose label collides with the local "P0001",
-    // violating `CREATE UNIQUE INDEX idx_entries_label ... WHERE deleted_at IS NULL`, so the import
-    // transaction throws and rolls back. The ULID identity is preserved (no data loss / no uid rename),
-    // but the display-label index makes the verbatim upsert fail. Resolving this convergently
-    // (deterministic relabel-by-uid) changes importV2's contract and is OUT of the literal Phase 6
-    // acceptance scope. Tracked here so it stays visible in every test run.
+    // On import the deterministic resolveLabelCollisions pass keeps the smaller ULID at P0001
+    // and bumps the other to the next free seq — identical on both devices, no throw, identity
+    // (the ULIDs) preserved. See docs/superpowers/spikes/2026-05-26-v2-label-collision.md.
     const A = device('A'); const B = device('B');
     const t = new FakeSyncServer(2, SALT).transport();
-    A.store.entries.createEntry({ prefix: 'P', level_1: 'A project' }); // P0001
-    B.store.entries.createEntry({ prefix: 'P', level_1: 'B project' }); // P0001 (collision on import)
+    const eA = A.store.entries.createEntry({ prefix: 'P', level_1: 'A project' }); // P0001 locally
+    const eB = B.store.entries.createEntry({ prefix: 'P', level_1: 'B project' }); // P0001 locally
+
     await pushV2(argsFor(A, t));
     await pushV2(argsFor(B, t));
-    await expect(pullV2(argsFor(A, t))).rejects.toThrow(); // documents the CURRENT throwing behavior
+    await pullV2(argsFor(A, t)); // converges, no throw
+    await pullV2(argsFor(B, t));
+
+    // smaller ULID keeps P0001; the other gets P0002 — identical on BOTH devices
+    const [winner, loser] = eA.uid < eB.uid ? [eA, eB] : [eB, eA];
+    for (const D of [A, B]) {
+      expect(D.store.entries.getEntry(winner.uid)?.label).toBe('P0001');
+      expect(D.store.entries.getEntry(loser.uid)?.label).toBe('P0002');
+      // both entries present on both devices, addressed by ULID (identity preserved)
+      expect(D.store.entries.getEntry(eA.uid)?.level_1).toBe('A project');
+      expect(D.store.entries.getEntry(eB.uid)?.level_1).toBe('B project');
+    }
+    // label uniqueness holds on both
+    expect(A.store.entries.getEntryByLabel('P0001')?.uid).toBe(winner.uid);
+    expect(B.store.entries.getEntryByLabel('P0002')?.uid).toBe(loser.uid);
+
     A.store.close(); B.store.close();
   });
 });
