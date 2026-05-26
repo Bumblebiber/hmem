@@ -62,3 +62,65 @@ describe('entries', () => {
     expect(next.label).toBe('P0002');
   });
 });
+
+// raw insert bypassing createEntry — lets us seed transient collision shapes
+// (a live label-collision can't be made via createEntry; the loser always carries a placeholder).
+function seed(db: ReturnType<typeof openDb>, uid: string, prefix: string, seq: number, label: string) {
+  db.prepare(
+    `INSERT INTO entries (uid, label, prefix, seq, level_1, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+  ).run(uid, label, prefix, seq, `lvl-${uid}`);
+}
+const U = (n: number) => String(n).padStart(26, '0'); // valid-length pseudo-ULID, lexicographically ordered
+
+describe('resolveLabelCollisions', () => {
+  it('pairwise: smaller uid keeps the seq, larger is bumped to next free', () => {
+    const db = openDb(':memory:'); const e = createEntriesApi(db);
+    seed(db, U(1), 'P', 1, 'P0001');     // winner (smaller uid)
+    seed(db, U(2), 'P', 1, U(2));        // loser carries placeholder label (= its uid)
+    expect(e.resolveLabelCollisions('P')).toBe(1);
+    expect(e.getEntry(U(1))!.label).toBe('P0001');
+    expect(e.getEntry(U(2))!.label).toBe('P0002');
+    expect(e.getEntry(U(2))!.seq).toBe(2);
+  });
+
+  it('is order-independent for a 3-way collision (deterministic by seq,uid)', () => {
+    const db = openDb(':memory:'); const e = createEntriesApi(db);
+    seed(db, U(1), 'P', 1, 'P0001');
+    seed(db, U(3), 'P', 1, U(3));
+    seed(db, U(2), 'P', 1, U(2));        // inserted out of uid order on purpose
+    e.resolveLabelCollisions('P');
+    expect(e.getEntry(U(1))!.label).toBe('P0001');
+    expect(e.getEntry(U(2))!.label).toBe('P0002');
+    expect(e.getEntry(U(3))!.label).toBe('P0003');
+  });
+
+  it('does not displace a legit non-colliding holder', () => {
+    const db = openDb(':memory:'); const e = createEntriesApi(db);
+    seed(db, U(1), 'P', 1, 'P0001');
+    seed(db, U(2), 'P', 1, U(2));        // collides with seq 1
+    seed(db, U(3), 'P', 2, 'P0002');     // legit holder of P0002
+    e.resolveLabelCollisions('P');
+    expect(e.getEntry(U(1))!.label).toBe('P0001'); // kept
+    expect(e.getEntry(U(3))!.label).toBe('P0002'); // NOT displaced
+    expect(e.getEntry(U(2))!.label).toBe('P0003'); // bumped past the taken seqs
+  });
+
+  it('is idempotent — a second run changes nothing', () => {
+    const db = openDb(':memory:'); const e = createEntriesApi(db);
+    seed(db, U(1), 'P', 1, 'P0001');
+    seed(db, U(2), 'P', 1, U(2));
+    e.resolveLabelCollisions('P');
+    expect(e.resolveLabelCollisions('P')).toBe(0);
+  });
+
+  it('ignores soft-deleted rows and other prefixes', () => {
+    const db = openDb(':memory:'); const e = createEntriesApi(db);
+    seed(db, U(1), 'P', 1, 'P0001');
+    seed(db, U(2), 'P', 1, U(2));
+    db.prepare(`UPDATE entries SET deleted_at='2026-01-02T00:00:00.000Z' WHERE uid=?`).run(U(2));
+    seed(db, U(3), 'E', 1, 'E0001');     // different prefix, untouched
+    expect(e.resolveLabelCollisions('P')).toBe(0); // the only live P-row is U(1)
+    expect(e.getEntry(U(3))!.label).toBe('E0001');
+  });
+});

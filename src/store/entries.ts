@@ -33,6 +33,12 @@ export interface EntriesApi {
   uidToLabel(uid: string): string | null;
   renderRefs(text: string): string;
   relabel(uid: string, newLabel: string): boolean;
+  /** Normalize the seq→label bijection for a prefix after a sync import may have
+   *  introduced a transient seq collision. Deterministic over the live set (order
+   *  by seq,uid: smallest keeps its seq, clashers bump to the next free seq), idempotent.
+   *  Bumps both seq and label and touches updated_at so the fix propagates via LWW.
+   *  Returns the number of rows changed. */
+  resolveLabelCollisions(prefix: string): number;
   addNode(p: { root_uid: string; parent_uid?: string; content: string; tags?: string[] }): {
     uid: string;
   };
@@ -54,6 +60,10 @@ export function createEntriesApi(db: Database.Database): EntriesApi {
   const selByLabel = db.prepare('SELECT * FROM entries WHERE label = ? AND deleted_at IS NULL');
   const updLabel = db.prepare('UPDATE entries SET label = ?, updated_at = ? WHERE uid = ?');
   const softDelEntry = db.prepare('UPDATE entries SET deleted_at = ? WHERE uid = ?');
+  const liveByPrefix = db.prepare(
+    'SELECT uid, seq, label FROM entries WHERE prefix = ? AND deleted_at IS NULL ORDER BY seq ASC, uid ASC',
+  );
+  const updSeqLabel = db.prepare('UPDATE entries SET seq = ?, label = ?, updated_at = ? WHERE uid = ?');
 
   const maxNodeSeq = db.prepare(
     `SELECT COALESCE(MAX(seq), 0) AS m FROM nodes
@@ -94,6 +104,39 @@ export function createEntriesApi(db: Database.Database): EntriesApi {
   }
   function relabel(uid: string, newLabel: string): boolean {
     return updLabel.run(newLabel, now(), uid).changes > 0;
+  }
+
+  function resolveLabelCollisions(prefix: string): number {
+    // Pass 1: walk live rows in (seq, uid) order. The first row at each seq KEEPS it
+    // (smallest uid wins a same-seq tie); any later row at an already-claimed seq is a LOSER.
+    const rows = liveByPrefix.all(prefix) as { uid: string; seq: number; label: string }[];
+    const claimed = new Set<number>();
+    const keepers: typeof rows = [];
+    const losers: typeof rows = [];
+    for (const row of rows) {
+      if (claimed.has(row.seq)) losers.push(row);
+      else { claimed.add(row.seq); keepers.push(row); }
+    }
+    // Pass 2: assign each loser the lowest globally-free seq (monotonic probe → ascending, distinct).
+    const loserSeq: number[] = [];
+    let probe = 1;
+    for (let i = 0; i < losers.length; i++) {
+      while (claimed.has(probe)) probe++;
+      claimed.add(probe);
+      loserSeq.push(probe);
+      probe++;
+    }
+    // Apply LOSERS FIRST so they vacate their old labels before any keeper claims one
+    // (covers the case where the seq-keeper is an incoming row still on its placeholder label).
+    const ts = now();
+    let changed = 0;
+    const apply = (uid: string, seq: number, oldSeq: number, oldLabel: string): void => {
+      const desired = labelFor(prefix, seq);
+      if (oldSeq !== seq || oldLabel !== desired) { updSeqLabel.run(seq, desired, ts, uid); changed++; }
+    };
+    for (let i = 0; i < losers.length; i++) apply(losers[i].uid, loserSeq[i], losers[i].seq, losers[i].label);
+    for (const k of keepers) apply(k.uid, k.seq, k.seq, k.label);
+    return changed;
   }
 
   function addNode(p: {
@@ -149,6 +192,7 @@ export function createEntriesApi(db: Database.Database): EntriesApi {
     uidToLabel,
     renderRefs,
     relabel,
+    resolveLabelCollisions,
     addNode,
     getNode,
     updateNodeContent,
