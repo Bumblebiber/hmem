@@ -2,6 +2,7 @@ import type { V2Store } from './store-facade.js';
 import type { EntryRow } from '../store/types.js';
 import { renderEntryTree, type WhyRow } from './read-render.js';
 import { createSchemaEngine } from '../store/schema-engine.js';
+import { resolveSessionId } from './session-id.js';
 
 export function listProjects(store: V2Store): string {
   const rows = store.db.prepare(
@@ -13,7 +14,7 @@ export function listProjects(store: V2Store): string {
 
 interface RecentSession { session_id: string; summary: string | null; last_active_at: string | null; }
 
-export interface LoadProjectOpts { why?: boolean; recentLimit?: number; }
+export interface LoadProjectOpts { why?: boolean; recentLimit?: number; currentSessionId?: string; }
 export interface LoadProjectResult { text: string; why?: WhyRow[]; }
 
 export function loadProject(store: V2Store, address: string, opts: LoadProjectOpts = {}): LoadProjectResult {
@@ -23,13 +24,17 @@ export function loadProject(store: V2Store, address: string, opts: LoadProjectOp
 
   const brief = renderEntryTree(store, entry.label, 3);
 
+  const curSid = opts.currentSessionId ?? resolveSessionId() ?? '';
   const sessions = store.db.prepare(
     `SELECT DISTINCT s.session_id, s.summary, s.last_active_at
        FROM sessions s JOIN session_bindings b ON b.session_id = s.session_id
       WHERE b.project_uid = ?
+        AND s.irrelevant = 0
+        AND (EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.session_id)
+             OR s.session_id = ?)
       ORDER BY s.last_active_at IS NULL, s.last_active_at DESC
       LIMIT ?`
-  ).all(uid, opts.recentLimit ?? 5) as RecentSession[];
+  ).all(uid, curSid, opts.recentLimit ?? 5) as RecentSession[];
 
   const recentBlock = sessions.length
     ? '\n\n--- Recent Sessions ---\n' + sessions.map(s =>
