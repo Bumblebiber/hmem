@@ -6,7 +6,7 @@ import { resolveEnvDefaults } from '../../cli-env.js';
 import { loadHmemConfig } from '../../hmem-config.js';
 import { createV2Store } from '../../v2/store-facade.js';
 import { V1FileError } from '../../store/db.js';
-import { writePpidMapping, writeSessionMarker } from '../../session-state.js';
+import { writePpidBridgeForCurrentProcess, writeSessionMarker } from '../../session-state.js';
 import { buildSessionStart } from '../session-start.js';
 import { buildPromptSubmit } from '../prompt-submit.js';
 import { logStop } from '../stop-log.js';
@@ -70,10 +70,11 @@ export function runSessionStart(): void {
   try {
     const res = buildSessionStart(store, ctx);
     // Bridge: a sibling MCP-server process resolves the session via readPpidMapping(process.ppid)
-    // (src/session-state.ts:141) → must write BOTH the ppid mapping and the session marker, so
-    // in-session MCP calls like activate() resolve to this same deterministic id (D1).
+    // (src/session-state.ts:141) → must write the ppid bridge (parent shell AND grandparent =
+    // Claude Code PID, the one the MCP server reads) plus the session marker, so in-session MCP
+    // calls like activate() resolve to this same deterministic id (D1).
     try {
-      writePpidMapping(process.ppid, ctx.sessionId, store.path);                       // (ppid, sessionId, hmemPath)
+      writePpidBridgeForCurrentProcess(ctx.sessionId, store.path);
       writeSessionMarker(ctx.sessionId, { projectId: res.projectLabel, hmemPath: store.path });
     } catch { /* never crash the hook over a bridge write */ }
     process.stdout.write(formatSessionStartOutput(res.context));
@@ -86,6 +87,11 @@ export function runPromptSubmit(): void {
   const store = openStore();
   if (!store) return;
   try {
+    // Per-message bridge refresh: process.ppid (and the grandparent Claude Code PID)
+    // change when the MCP server reconnects mid-session, so SessionStart alone is not
+    // enough — re-stamp the bridge on every user turn so in-session MCP calls keep
+    // resolving the session. Best-effort; never blocks the prompt.
+    writePpidBridgeForCurrentProcess(ctx.sessionId, store.path);
     const { context } = buildPromptSubmit({ store, sessionId: ctx.sessionId });
     process.stdout.write(formatPromptSubmitOutput(context));
   } finally { store.close(); }

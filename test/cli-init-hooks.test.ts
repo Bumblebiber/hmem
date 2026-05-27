@@ -185,17 +185,53 @@ describe('installClaudeHooksInto — v2 store', () => {
     expect(v2Cmds).toHaveLength(1);
   });
 
-  it('also installs log-exchange Stop hook and hook-startup UserPromptSubmit hook', () => {
+  it('installs log-exchange Stop + harness hook-prompt-submit + hook-session-start (no legacy)', () => {
     installClaudeHooksInto(settingsPath, hmemPath, true);
     const settings = readSettings(settingsPath);
 
     const leCmds = stopCommands(settings).filter(c => c.includes('log-exchange'));
     expect(leCmds).toHaveLength(1);
 
-    const startupCmds = (settings.hooks.UserPromptSubmit ?? []).flatMap(
-      (e: any) => (e.hooks ?? []).map((h: any) => h.command as string),
-    ).filter((c: string) => c.includes('hook-startup'));
-    expect(startupCmds).toHaveLength(1);
+    const ups = (settings.hooks.UserPromptSubmit ?? []).flatMap(
+      (e: any) => (e.hooks ?? []).map((h: any) => h.command as string));
+    expect(ups.filter((c: string) => c.includes('hook-prompt-submit'))).toHaveLength(1);
+    expect(ups.filter((c: string) => c.includes('hook-startup'))).toHaveLength(0); // no legacy on v2
+
+    const ss = (settings.hooks.SessionStart ?? []).flatMap(
+      (e: any) => (e.hooks ?? []).map((h: any) => h.command as string));
+    expect(ss.filter((c: string) => c.includes('hook-session-start'))).toHaveLength(1);
+    expect(ss.filter((c: string) => c.includes('context-inject'))).toHaveLength(0); // no legacy on v2
+  });
+
+  it('migrates a pre-cutover v2 install: strips legacy hook-startup + context-inject, adds harness hooks', () => {
+    const legacy = {
+      hooks: {
+        UserPromptSubmit: [{ hooks: [{ type: 'command', command: `hmem --hmem-path ${hmemPath} hook-startup`, timeout: 5 }] }],
+        SessionStart: [{ matcher: 'startup|resume|clear|compact', hooks: [{ type: 'command', command: `hmem --hmem-path ${hmemPath} context-inject`, timeout: 10 }] }],
+      },
+    };
+    writeFileSync(settingsPath, JSON.stringify(legacy, null, 2));
+
+    installClaudeHooksInto(settingsPath, hmemPath, true);
+    const settings = readSettings(settingsPath);
+
+    const ups = (settings.hooks.UserPromptSubmit ?? []).flatMap((e: any) => (e.hooks ?? []).map((h: any) => h.command as string));
+    expect(ups.filter((c: string) => c.includes('hook-startup'))).toHaveLength(0);        // legacy gone
+    expect(ups.filter((c: string) => c.includes('hook-prompt-submit'))).toHaveLength(1);  // harness present
+
+    const ss = (settings.hooks.SessionStart ?? []).flatMap((e: any) => (e.hooks ?? []).map((h: any) => h.command as string));
+    expect(ss.filter((c: string) => c.includes('context-inject'))).toHaveLength(0);       // legacy gone
+    expect(ss.filter((c: string) => c.includes('hook-session-start'))).toHaveLength(1);   // harness present
+  });
+
+  it('harness hook install is idempotent (no duplicates on second v2 init)', () => {
+    installClaudeHooksInto(settingsPath, hmemPath, true);
+    installClaudeHooksInto(settingsPath, hmemPath, true);
+    const settings = readSettings(settingsPath);
+    const ups = (settings.hooks.UserPromptSubmit ?? []).flatMap((e: any) => (e.hooks ?? []).map((h: any) => h.command as string));
+    expect(ups.filter((c: string) => c.includes('hook-prompt-submit'))).toHaveLength(1);
+    const ss = (settings.hooks.SessionStart ?? []).flatMap((e: any) => (e.hooks ?? []).map((h: any) => h.command as string));
+    expect(ss.filter((c: string) => c.includes('hook-session-start'))).toHaveLength(1);
   });
 });
 
@@ -237,5 +273,18 @@ describe('installClaudeHooksInto — v1 store', () => {
 
     const ckptCmds = stopCommands(settings).filter(c => c.endsWith(' checkpoint'));
     expect(ckptCmds).toHaveLength(1);
+  });
+
+  it('keeps legacy hook-startup + context-inject for a v1 store (no harness hooks)', () => {
+    installClaudeHooksInto(settingsPath, hmemPath, false);
+    const settings = readSettings(settingsPath);
+
+    const ups = (settings.hooks.UserPromptSubmit ?? []).flatMap((e: any) => (e.hooks ?? []).map((h: any) => h.command as string));
+    expect(ups.filter((c: string) => c.includes('hook-startup'))).toHaveLength(1);
+    expect(ups.filter((c: string) => c.includes('hook-prompt-submit'))).toHaveLength(0);
+
+    const ss = (settings.hooks.SessionStart ?? []).flatMap((e: any) => (e.hooks ?? []).map((h: any) => h.command as string));
+    expect(ss.filter((c: string) => c.includes('context-inject'))).toHaveLength(1);
+    expect(ss.filter((c: string) => c.includes('hook-session-start'))).toHaveLength(0);
   });
 });

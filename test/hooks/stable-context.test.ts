@@ -24,6 +24,23 @@ describe('buildStableContext', () => {
     s.close();
   });
 
+  it('lists pinned/favorite R-entries in a Rules block, excludes unpinned', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const pinned = s.entries.createEntry({ prefix: 'R', level_1: 'Pinned rule title\nbody detail of the pinned rule' });
+    s.db.prepare('UPDATE entries SET pinned=1 WHERE uid=?').run(pinned.uid);
+    const fav = s.entries.createEntry({ prefix: 'R', level_1: 'Favorite rule title' });
+    s.db.prepare('UPDATE entries SET favorite=1 WHERE uid=?').run(fav.uid);
+    s.entries.createEntry({ prefix: 'R', level_1: 'Unpinned rule title' }); // must be excluded
+
+    const out = buildStableContext(s, deps);
+    expect(out).toContain('--- Rules (pinned/favorited) ---');
+    expect(out).toContain(`${pinned.label}  Pinned rule title`);
+    expect(out).toContain('> body detail of the pinned rule');
+    expect(out).toContain(`${fav.label}  Favorite rule title`);
+    expect(out).not.toContain('Unpinned rule title');
+    s.close();
+  });
+
   it('still emits all section headers with no H/P entries', () => {
     const s = createV2Store(':memory:', DEFAULT_CONFIG);
     const out = buildStableContext(s, deps);

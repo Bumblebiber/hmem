@@ -470,9 +470,18 @@ export function installClaudeHooksInto(
   // Use --hmem-path flag so hooks find the correct .hmem file (cross-platform)
   const pathFlag = `--hmem-path ${hmemFilePath}`;
 
-  // UserPromptSubmit — startup (cross-platform Node.js)
+  // UserPromptSubmit — v2: harness hook-prompt-submit (sync status + per-message
+  // ppid-bridge refresh). v1: legacy hook-startup (counter + first-message context).
   if (!settings.hooks.UserPromptSubmit) settings.hooks.UserPromptSubmit = [];
-  if (!hasHookCmd("UserPromptSubmit", "hmem hook-startup")) {
+  if (isV2) {
+    if (migrateHook("UserPromptSubmit", "hmem hook-startup")) changed = true; // strip pre-cutover legacy
+    if (!hasHookCmd("UserPromptSubmit", "hmem hook-prompt-submit")) {
+      settings.hooks.UserPromptSubmit.push({
+        hooks: [{ type: "command", command: `hmem ${pathFlag} hook-prompt-submit`, timeout: 5 }],
+      });
+      changed = true;
+    }
+  } else if (!hasHookCmd("UserPromptSubmit", "hmem hook-startup")) {
     settings.hooks.UserPromptSubmit.push({
       hooks: [{ type: "command", command: `hmem ${pathFlag} hook-startup`, timeout: 5 }],
     });
@@ -514,11 +523,21 @@ export function installClaudeHooksInto(
     }
   }
 
-  // SessionStart[startup|resume|clear|compact] — context inject (clear|compact)
-  // + auto-summarize the previous session (all sources, issue #31).
+  // SessionStart[startup|resume|clear|compact] — v2: harness hook-session-start
+  // (rich stable context + project auto-bind + git pending-work block). v1: legacy
+  // context-inject (project + rules re-injection on clear|compact).
   if (!settings.hooks.SessionStart) settings.hooks.SessionStart = [];
   const sessionStartMatcher = "startup|resume|clear|compact";
-  if (!hasHookCmd("SessionStart", "hmem context-inject")) {
+  if (isV2) {
+    if (migrateHook("SessionStart", "hmem context-inject")) changed = true; // strip pre-cutover legacy
+    if (!hasHookCmd("SessionStart", "hmem hook-session-start")) {
+      settings.hooks.SessionStart.push({
+        matcher: sessionStartMatcher,
+        hooks: [{ type: "command", command: `hmem ${pathFlag} hook-session-start`, timeout: 10 }],
+      });
+      changed = true;
+    }
+  } else if (!hasHookCmd("SessionStart", "hmem context-inject")) {
     settings.hooks.SessionStart.push({
       matcher: sessionStartMatcher,
       hooks: [{ type: "command", command: `hmem ${pathFlag} context-inject`, timeout: 10 }],

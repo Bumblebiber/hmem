@@ -3,8 +3,16 @@ import { describe, it, expect } from 'vitest';
 import { createV2Store } from '../../src/v2/store-facade.js';
 import { DEFAULT_CONFIG } from '../../src/hmem-config.js';
 import { buildPromptSubmit } from '../../src/hooks/prompt-submit.js';
+import { defaultSyncProbe } from '../../src/hooks/stable-context.js';
 
 describe('buildPromptSubmit', () => {
+  it('defaults to the real sync probe (not a hardcoded string) when none injected', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const { context } = buildPromptSubmit({ store: s, sessionId: 'S1' });
+    expect(context).toBe(defaultSyncProbe()); // wired to the real probe, not "🔴 nicht konfiguriert"
+    s.close();
+  });
+
   it('returns only a sync-status line', () => {
     const s = createV2Store(':memory:', DEFAULT_CONFIG);
     const { context } = buildPromptSubmit({ store: s, sessionId: 'S1', syncProbe: () => '🟢 hmem-sync verbunden.' });

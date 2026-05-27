@@ -149,6 +149,29 @@ export function readPpidMapping(ppid: number): PpidMapping | null {
 }
 
 /**
+ * Write the ppid→session bridge for the current hook process — for BOTH the
+ * immediate parent (the shell that ran the hook) AND the grandparent (the Claude
+ * Code PID). Hooks are spawned via `sh -c`, so:
+ *   Claude Code (C) → sh (S) → hook (this process);  process.ppid = S, grandparent = C
+ * The MCP server is a direct child of Claude Code, so it resolves the session via
+ * readPpidMapping(process.ppid) === readPpidMapping(C). Without the grandparent
+ * write, that lookup misses and in-session MCP calls can't bind to the session.
+ * No-op safe — never throws (the bridge is best-effort, must not crash a hook).
+ */
+export function writePpidBridgeForCurrentProcess(sessionId: string, hmemPath: string): void {
+  if (!sessionId || !hmemPath) return;
+  const ppid = typeof process.ppid === "number" ? process.ppid : 0;
+  if (ppid <= 0) return;
+  try {
+    writePpidMapping(ppid, sessionId, hmemPath);            // shell PID (or Claude Code if direct)
+    const grandparent = getParentPid(ppid);
+    if (grandparent && grandparent > 1) {
+      writePpidMapping(grandparent, sessionId, hmemPath);   // Claude Code PID — what the MCP server reads
+    }
+  } catch { /* bridge is best-effort — never crash the hook */ }
+}
+
+/**
  * Resolve the current session id by chaining: env var > ppid-bridge file.
  * Caches the result in process.env.HMEM_SESSION_ID so repeated calls are cheap.
  *

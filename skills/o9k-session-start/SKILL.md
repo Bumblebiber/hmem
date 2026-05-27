@@ -8,85 +8,46 @@ description: "Mandatory entry point for every Cortex session — invoke at conve
 ## TRIGGER
 Run at the beginning of any session, after /clear, and after any load_project call.
 
-## CONTEXT: Pre-injected by hook
+## CONTEXT: Pre-injected by the hook
 
-All stable context is PRE-INJECTED by the o9k-startup.sh hook:
+On a bound v2 store the SessionStart hook (`hook-session-start`) pre-injects:
 - H-entries (H0008 Identität, H0005 Arbeitsstil, H0003 IT-Skills, H0007 Präferenzen, etc.)
-- Recent projects (--- Recent projects --- block)
-- Device info (--- Active device --- block)
-- Sync status (--- hmem-sync --- block)
-- Infrastructure favorites (--- Infrastructure --- block)
-- Checkpoint status
+- Recent projects (`--- Recent projects ---`), Active device, hmem-sync status
+- Pinned/favorite **Rules** (`--- Rules (pinned/favorited) ---`)
+- The **active project's full brief** (sections + Next Steps) when a project is bound → STEP 1
+- **`📌 Offene Tasks (verknüpft)`** for that project → STEP 3
+- **`⚠ Offene Arbeit im Repo`** git pending-work block → STEP 2
 
-Do NOT call `read_memory(mode='essentials')` — it's redundant and slow.
+Do NOT call `read_memory(mode='essentials')`, and do NOT re-fetch (via `load_project`/`read_memory`/`git`) anything already injected — it's redundant and slow.
 
-## STEP 1: Activate project
+## STEP 1: Project — already auto-bound by the hook
 
-**If the user's message names a specific project** (e.g. "lade Projekt hmem", "P0048"): call `load_project(id: "P00XX")`.
+The hook **already resolved and bound** the active project (resume → user-named → workspace-cwd) and **injected its full brief** — sections, Next Steps, `📌 Offene Tasks`. When that brief is present the project is live: **do NOT call `load_project` again.** Cases:
 
-**If the user did NOT name a project:** list the 5 entries from the `--- Recent projects ---` block as bullet points, ask which one. Once picked, call `load_project(id: "P00XX")`.
+- **Brief present, right project** → use it directly. No activation call.
+- **`⚠ Kein aktives Projekt gebunden` instead** (this cwd had no prior binding) → list the `--- Recent projects ---` entries, ask which one, then activate it (`o9k-activate`).
+- **User's first message names a *different* project than the bound one** → switch via `o9k-activate`.
 
-`load_project` returns the project brief, recent O-Entry summaries, rules, lessons. `load_project` is the only activation action — no separate `read_memory`.
+**Legacy fallback** (no brief injected — pre-cutover or v1 install, you see only `--- Recent projects ---`/`## Projects` with no brief): use the old flow — `load_project(id: "P00XX")` for the named/chosen project.
 
-## STEP 2: Pending-work check (git repo state)
+## STEP 2: Pending-work check — already injected by the hook
 
-Sessions resume after days or weeks — pending work rots if nobody surfaces it.
+The hook runs the git pending-work probe against your cwd and injects an `⚠ Offene Arbeit im Repo:` block when anything is pending (uncommitted, stashes, worktrees, unmerged branches). **If that block is present, surface it** and ask "Weiter dran arbeiten oder aufräumen?". Do NOT re-run git — it's already done. Never auto-delete/commit/merge.
 
-### Find the repo
-
-Look in load_project output for a filesystem path (`.1.4 Environment` / `.2 Codebase`). If no `.git`, skip.
-
-### Run the checks (parallel)
+**Legacy fallback** (no hook git block *and* you are in a git repo — pre-cutover/v1): run the checks yourself —
 
 ```bash
-git status --porcelain
-git stash list
-git worktree list
-git for-each-ref --format='%(refname:short) %(committerdate:relative)' refs/heads/ | grep -v '^main\b\|^master\b'
+git status --porcelain; git stash list; git worktree list
 git branch --no-merged main 2>/dev/null || git branch --no-merged master
 ```
 
-Cross-reference: branch in `for-each-ref` AND `--no-merged` = real unmerged commits.
+Surface only real pending work (a branch is unmerged only if it appears in `--no-merged`).
 
-### Surface
+## STEP 3: Next Steps & open tasks — read from the injected brief
 
-Only when something is pending. German format:
+The auto-bound project brief already contains the **Next Steps** node and a **`📌 Offene Tasks (verknüpft)`** list. Read them straight from the injected brief and surface what's relevant — no `read_memory`/`load_project` round-trip. No interpretation — just display.
 
-```
-⚠ Offene Arbeit im Repo:
-  Worktrees:
-    .worktrees/<name> — Branch <branch>, letzter Commit <relative date>
-  Stashes:
-    stash@{0}: <message> (<relative date>)
-  Unmerged Branches:
-    <branch> — <N> Commits voraus, letzter Commit <relative date>
-  Uncommitted auf <current branch>:
-    <file>, <file>, ...
-
-Weiter dran arbeiten oder aufräumen?
-```
-
-Never auto-delete/commit/merge.
-
-## STEP 3: Next Steps & offene Tasks
-
-Read the "Next Steps" node from load_project output:
-
-```
-read_memory(id: "P00XX.8.YY")   ← Node titled "Next Steps"
-```
-
-Compare with T-entries under `Links:`. Report ones NOT in Next Steps.
-
-```
-📋 Next Steps:
-  • Item 1
-
-📌 Offene Tasks (nicht in Next Steps):
-  T0033: ...
-```
-
-No interpretation — just display.
+**Legacy fallback** (no brief injected): read the "Next Steps" node (`read_memory(id: "P00XX.<seq>")`) and compare with linked T-entries, reporting ones not already in Next Steps.
 
 ## STEP 4: Noise Check
 

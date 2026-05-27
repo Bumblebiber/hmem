@@ -87,6 +87,23 @@ export function buildStableContext(store: V2Store, deps: StableDeps = {}): strin
   ).all() as { label: string; level_1: string }[];
   for (const p of ps) out.push(`${p.label}  ${p.level_1.split('\n')[0]}`);
 
+  // Rules — pinned/favorite R-entries only (guardrails worth seeing every start).
+  // To surface a rule here: update_memory(id="R00XX", pinned=true).
+  const rules = store.db.prepare(
+    `SELECT label, level_1 FROM entries
+      WHERE prefix='R' AND deleted_at IS NULL AND obsolete=0 AND irrelevant=0
+      AND (pinned=1 OR favorite=1) ORDER BY seq`,
+  ).all() as { label: string; level_1: string }[];
+  if (rules.length) {
+    out.push('\n--- Rules (pinned/favorited) ---');
+    for (const r of rules) {
+      const raw = r.level_1 ?? '';
+      const title = raw.split('\n')[0];
+      const rest = raw.includes('\n') ? `\n> ${raw.split('\n').slice(1).join(' ').trim()}` : '';
+      out.push(`${r.label}  ${title}${rest}`);
+    }
+  }
+
   // Device + sync — injected stub in tests, real probe in production (DI default).
   out.push('\n' + (deps.deviceProbe ? deps.deviceProbe() : defaultDeviceProbe(store)));
   out.push('\n' + (deps.syncProbe ? deps.syncProbe() : defaultSyncProbe()));

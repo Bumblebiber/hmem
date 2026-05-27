@@ -10,6 +10,8 @@ import {
   sessionMarkerDir,
   writePpidMapping,
   readPpidMapping,
+  writePpidBridgeForCurrentProcess,
+  getParentPid,
 } from "../src/session-state.js";
 
 const tmpHome = path.join(os.tmpdir(), `hmem-test-${process.pid}`);
@@ -78,5 +80,26 @@ describe("session-state", () => {
     const mapping = readPpidMapping(fakePpid);
     expect(mapping?.sessionId).toBe("ppid-test-session");
     expect(mapping?.hmemPath).toBe("/tmp/x.hmem");
+  });
+
+  it("writePpidBridgeForCurrentProcess bridges BOTH the parent shell and the grandparent (Claude Code) PID", () => {
+    writePpidBridgeForCurrentProcess("bridge-sess", "/tmp/y.hmem");
+
+    // Immediate parent (process.ppid) — the shell that ran the hook.
+    const parent = readPpidMapping(process.ppid);
+    expect(parent?.sessionId).toBe("bridge-sess");
+    expect(parent?.hmemPath).toBe("/tmp/y.hmem");
+
+    // Grandparent (the PID the MCP server reads). Linux-only via /proc — guarded
+    // so the test still passes on platforms where getParentPid returns null.
+    const gp = getParentPid(process.ppid);
+    if (gp && gp > 1) {
+      expect(readPpidMapping(gp)?.sessionId).toBe("bridge-sess");
+    }
+  });
+
+  it("writePpidBridgeForCurrentProcess is a no-op without sessionId or hmemPath", () => {
+    expect(() => writePpidBridgeForCurrentProcess("", "/x.hmem")).not.toThrow();
+    expect(() => writePpidBridgeForCurrentProcess("s", "")).not.toThrow();
   });
 });
