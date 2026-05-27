@@ -56,7 +56,8 @@ CREATE TABLE sessions (
   started_at       TEXT NOT NULL,
   last_active_at   TEXT,
   ended_at         TEXT,
-  updated_at       TEXT NOT NULL
+  updated_at       TEXT NOT NULL,
+  irrelevant       INTEGER NOT NULL DEFAULT 0  -- Chunk 2: 0=visible, 1=hidden from "Recent Sessions"
 );
 CREATE INDEX idx_sessions_cwd ON sessions(cwd);
 
