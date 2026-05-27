@@ -60,7 +60,22 @@ export function defaultDeviceProbe(store: V2Store): string {
   try {
     const id = fs.readFileSync(path.join(os.homedir(), '.hmem', 'active-device'), 'utf8').trim();
     const e = id ? store.entries.getEntryByLabel(id) : null;
-    if (e) return `--- Active device ---\n  ${e.label}  ${e.level_1.split('\n')[0]}`;
+    if (e) {
+      let out = `--- Active device ---\n  ${e.label}  ${e.level_1.split('\n')[0]}`;
+      // Append the device's "Apps" list (what's installed) — mirrors the legacy hook.
+      const appsNode = store.db.prepare(
+        `SELECT uid FROM nodes WHERE root_uid=? AND parent_uid IS NULL AND content='Apps' AND deleted_at IS NULL ORDER BY seq LIMIT 1`,
+      ).get(e.uid) as { uid: string } | undefined;
+      if (appsNode) {
+        const apps = store.db.prepare(
+          `SELECT content FROM nodes WHERE root_uid=? AND parent_uid=? AND deleted_at IS NULL ORDER BY seq`,
+        ).all(e.uid, appsNode.uid) as { content: string }[];
+        if (apps.length) {
+          out += '\n' + apps.map(a => '  - ' + store.entries.renderRefs(a.content).split('\n')[0]).join('\n');
+        }
+      }
+      return out;
+    }
   } catch { /* fall through */ }
   return '--- Active device ---\n  (kein aktives Gerät)';
 }
@@ -102,6 +117,17 @@ export function buildStableContext(store: V2Store, deps: StableDeps = {}): strin
       const rest = raw.includes('\n') ? `\n> ${raw.split('\n').slice(1).join(' ').trim()}` : '';
       out.push(`${r.label}  ${title}${rest}`);
     }
+  }
+
+  // Infrastructure (favorites) — favorite I-entries (endpoints, keys, services worth
+  // seeing every start). To surface one: update_memory(id="I00XX", favorite=true).
+  const infra = store.db.prepare(
+    `SELECT label, level_1 FROM entries
+      WHERE prefix='I' AND favorite=1 AND deleted_at IS NULL AND obsolete=0 AND irrelevant=0 ORDER BY seq`,
+  ).all() as { label: string; level_1: string }[];
+  if (infra.length) {
+    out.push('\n--- Infrastructure (favorites) ---');
+    for (const i of infra) out.push(`${i.label}  ${i.level_1.split('\n')[0]}`);
   }
 
   // Device + sync — injected stub in tests, real probe in production (DI default).
