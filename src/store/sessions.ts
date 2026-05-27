@@ -34,7 +34,7 @@ export interface SessionsApi {
   }): { session_id: string };
   getSession(session_id: string): SessionRow | null;
   touchSession(session_id: string): void;
-  updateSessionSummary(session_id: string, summary: string, summary_node_uid: string): void;
+  updateSessionSummary(session_id: string, summary: string, summary_node_uid: string | null): void;
   bind(session_id: string, project_uid: string, since?: number): void;
   currentProject(session_id: string): string | null;
   projectAt(session_id: string, seq: number): string | null;
@@ -152,7 +152,7 @@ export function createSessionsApi(
     getSession,
     touchSession,
     updateSessionSummary(session_id, summary, summary_node_uid) {
-      updSummary.run(summary, summary_node_uid, now(), session_id);
+      updSummary.run(summary, summary_node_uid ?? null, now(), session_id);
     },
     bind,
     currentProject(session_id) {

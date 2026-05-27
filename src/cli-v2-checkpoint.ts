@@ -23,6 +23,8 @@ import Database from "better-sqlite3";
 import { createV2Store } from "./v2/store-facade.js";
 import { getSchemaMajor, V1FileError } from "./store/db.js";
 import { loadHmemConfig } from "./hmem-config.js";
+import { resolveSessionId } from "./v2/session-id.js";
+import { runV2Checkpoint } from "./v2/checkpoint.js";
 
 /**
  * Read-only schema-major probe. Returns '2' only when the file exists and
@@ -46,7 +48,7 @@ function probeSchemaMajor(hmemPath: string): string | null {
   }
 }
 
-export async function runV2Checkpoint(): Promise<void> {
+export async function runCliV2Checkpoint(): Promise<void> {
   // 1. Env guard — same pattern as cli-log-exchange.ts
   const projectDir = process.env.HMEM_PROJECT_DIR;
   if (!projectDir) return;
@@ -76,7 +78,14 @@ export async function runV2Checkpoint(): Promise<void> {
       throw e;
     }
 
-    // TODO(chunk6): runV2Checkpoint(store, config) — extraction core lands here.
+    // Chunk 6c: real extraction pass. Resolve the current session id the same
+    // way the rest of the v2 code does (HMEM_SESSION_ID env → ppid bridge). With
+    // no resolvable session, or a session with no open binding, runV2Checkpoint
+    // is a clean no-op. The CLI path uses the real spawn (no `invoke` seam).
+    const sid = resolveSessionId();
+    if (sid) {
+      await runV2Checkpoint(store, sid, config, hmemPath);
+    }
 
   } finally {
     try { store?.close(); } catch { /* ignore */ }

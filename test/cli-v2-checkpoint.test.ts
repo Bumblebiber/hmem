@@ -19,7 +19,7 @@ import Database from 'better-sqlite3';
 import { openDb, getSchemaMajor } from '../src/store/db.js';
 import { createV2Store } from '../src/v2/store-facade.js';
 import { DEFAULT_CONFIG } from '../src/hmem-config.js';
-import { runV2Checkpoint } from '../src/cli-v2-checkpoint.js';
+import { runCliV2Checkpoint } from '../src/cli-v2-checkpoint.js';
 
 // ── Fixture paths ─────────────────────────────────────────────────────────────
 
@@ -63,6 +63,9 @@ describe('cli v2-checkpoint (Test #5 — corruption-safety)', () => {
     cleanup(V1_DB);
     delete process.env.HMEM_PROJECT_DIR;
     delete process.env.HMEM_PATH;
+    // No ambient session: with a bound-free fixture, the v2 core no-ops at
+    // currentProject() regardless — but pin the env for determinism.
+    delete process.env.HMEM_SESSION_ID;
   });
 
   afterEach(() => {
@@ -70,6 +73,9 @@ describe('cli v2-checkpoint (Test #5 — corruption-safety)', () => {
     cleanup(V1_DB);
     delete process.env.HMEM_PROJECT_DIR;
     delete process.env.HMEM_PATH;
+    // No ambient session: with a bound-free fixture, the v2 core no-ops at
+    // currentProject() regardless — but pin the env for determinism.
+    delete process.env.HMEM_SESSION_ID;
   });
 
   // ── v2 fixture ─────────────────────────────────────────────────────────────
@@ -85,7 +91,7 @@ describe('cli v2-checkpoint (Test #5 — corruption-safety)', () => {
     process.env.HMEM_PROJECT_DIR = '/tmp';
     process.env.HMEM_PATH = V2_DB;
 
-    await runV2Checkpoint();
+    await runCliV2Checkpoint();
 
     // Core invariant: v1 tables were NEVER injected.
     expect(tableExists(V2_DB, 'memories')).toBe(false);
@@ -112,7 +118,7 @@ describe('cli v2-checkpoint (Test #5 — corruption-safety)', () => {
     process.env.HMEM_PATH = V1_DB;
 
     // Must not throw.
-    await expect(runV2Checkpoint()).resolves.toBeUndefined();
+    await expect(runCliV2Checkpoint()).resolves.toBeUndefined();
 
     // v2 tables must NOT have been created on the v1 file.
     expect(tableExists(V1_DB, 'entries')).toBe(false);
@@ -135,19 +141,19 @@ describe('cli v2-checkpoint (Test #5 — corruption-safety)', () => {
   it('no-op when HMEM_PATH is unset', async () => {
     delete process.env.HMEM_PATH;
     delete process.env.HMEM_PROJECT_DIR;
-    await expect(runV2Checkpoint()).resolves.toBeUndefined();
+    await expect(runCliV2Checkpoint()).resolves.toBeUndefined();
   });
 
   it('no-op when HMEM_PROJECT_DIR is unset', async () => {
     delete process.env.HMEM_PROJECT_DIR;
     process.env.HMEM_PATH = V2_DB;
-    await expect(runV2Checkpoint()).resolves.toBeUndefined();
+    await expect(runCliV2Checkpoint()).resolves.toBeUndefined();
   });
 
   it('no-op when HMEM_PATH points to a non-existent file', async () => {
     process.env.HMEM_PROJECT_DIR = '/tmp';
     process.env.HMEM_PATH = '/tmp/does-not-exist-v2-checkpoint.hmem';
-    await expect(runV2Checkpoint()).resolves.toBeUndefined();
+    await expect(runCliV2Checkpoint()).resolves.toBeUndefined();
   });
 
   it('idempotency: running twice on a v2 store does not throw and keeps schema intact', async () => {
@@ -158,8 +164,8 @@ describe('cli v2-checkpoint (Test #5 — corruption-safety)', () => {
     process.env.HMEM_PROJECT_DIR = '/tmp';
     process.env.HMEM_PATH = V2_DB;
 
-    await runV2Checkpoint();
-    await runV2Checkpoint(); // second run — must not throw or corrupt
+    await runCliV2Checkpoint();
+    await runCliV2Checkpoint(); // second run — must not throw or corrupt
 
     expect(tableExists(V2_DB, 'memories')).toBe(false);
     expect(tableExists(V2_DB, 'memory_nodes')).toBe(false);

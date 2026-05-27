@@ -157,8 +157,8 @@ switch (command) {
   }
 
   case "v2-checkpoint": {
-    const { runV2Checkpoint } = await import("./cli-v2-checkpoint.js");
-    await runV2Checkpoint();
+    const { runCliV2Checkpoint } = await import("./cli-v2-checkpoint.js");
+    await runCliV2Checkpoint();
     break;
   }
 
