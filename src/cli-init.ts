@@ -11,6 +11,7 @@ import os from "node:os";
 import readline from "node:readline";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 import { saveHmemConfig, DEFAULT_CONFIG } from "./hmem-config.js";
 
 // ---- Tool definitions ----
@@ -391,6 +392,156 @@ function installOpencodePlugin(isGlobal: boolean): boolean {
  * Parse CLI flags for non-interactive mode.
  * Flags: --global, --local, --tools tool1,tool2, --dir /path, --no-example, --hooks, --no-hooks
  */
+/**
+ * Detect whether the file at `filePath` is a v2 hmem store.
+ *
+ * Uses a read-only SQLite probe — does NOT call openDb() (which would stamp
+ * schema_major and create WAL sidecars on a v1 file). Rules:
+ *   - File does not exist → fresh install, treat as v2 (will be created as v2).
+ *   - File has `entries` table → v2.
+ *   - File has `memories` table (but no `entries`) → v1.
+ *   - Anything else (empty, unreadable) → default to v2.
+ */
+export function detectStoreIsV2(filePath: string): boolean {
+  if (!fs.existsSync(filePath)) return true; // new install → v2
+  try {
+    const db = new Database(filePath, { readonly: true });
+    try {
+      const hasEntries = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entries'")
+        .get();
+      const hasMemories = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memories'")
+        .get();
+      if (hasEntries) return true;
+      if (hasMemories) return false; // v1 file
+      return true; // empty / unknown → default to v2
+    } finally {
+      db.close();
+    }
+  } catch {
+    return true; // unreadable → default to v2
+  }
+}
+
+/**
+ * Install / update Claude Code hooks in `settingsPath` for the given hmem file.
+ *
+ * Exported for tests. Does NOT touch ~/.claude/hooks/ (script files) — only the
+ * settings.json hook registrations.
+ *
+ * @param settingsPath  Absolute path to settings.json (will be created if absent).
+ * @param hmemFilePath  Absolute path to the .hmem file the hooks should target.
+ * @param isV2          True if the store is a v2 store (or will be created as v2).
+ * @returns             Whether settings.json was modified.
+ */
+export function installClaudeHooksInto(
+  settingsPath: string,
+  hmemFilePath: string,
+  isV2: boolean,
+): boolean {
+  let settings: any = {};
+  try { settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8")); } catch {}
+
+  if (!settings.hooks) settings.hooks = {};
+
+  // Helper: check if a hook command is already registered
+  const hasHookCmd = (event: string, match: string) =>
+    (settings.hooks[event] || []).some((h: any) =>
+      h.hooks?.some((hh: any) => hh.command?.includes(match))
+    );
+
+  // Migration: remove old .sh-based hooks (replaced by cross-platform hmem CLI commands)
+  const migrateHook = (event: string, oldMatch: string) => {
+    if (settings.hooks[event]) {
+      const before = settings.hooks[event].length;
+      settings.hooks[event] = settings.hooks[event].filter((h: any) =>
+        !h.hooks?.some((hh: any) => hh.command?.includes(oldMatch))
+      );
+      return settings.hooks[event].length !== before;
+    }
+    return false;
+  };
+  let changed =
+    migrateHook("UserPromptSubmit", "hmem-startup.sh") ||
+    migrateHook("Stop", "hmem-log-exchange.sh") ||
+    migrateHook("SessionStart", "hmem-context-inject.sh");
+
+  // Use --hmem-path flag so hooks find the correct .hmem file (cross-platform)
+  const pathFlag = `--hmem-path ${hmemFilePath}`;
+
+  // UserPromptSubmit — startup (cross-platform Node.js)
+  if (!settings.hooks.UserPromptSubmit) settings.hooks.UserPromptSubmit = [];
+  if (!hasHookCmd("UserPromptSubmit", "hmem hook-startup")) {
+    settings.hooks.UserPromptSubmit.push({
+      hooks: [{ type: "command", command: `hmem ${pathFlag} hook-startup`, timeout: 5 }],
+    });
+    changed = true;
+  }
+
+  // Stop — log-exchange (async — avoid blocking Claude with Node.js cold start)
+  if (!settings.hooks.Stop) settings.hooks.Stop = [];
+  if (!hasHookCmd("Stop", "hmem log-exchange")) {
+    settings.hooks.Stop.unshift({
+      hooks: [{ type: "command", command: `hmem ${pathFlag} log-exchange`, timeout: 10, async: true }],
+    });
+    changed = true;
+  }
+
+  if (isV2) {
+    // v2 store — strip stale v1 `hmem checkpoint` Stop entries (they are now no-ops
+    // on v2 files and waste a process spawn on every Stop). The match
+    // "hmem checkpoint" does NOT match "hmem v2-checkpoint" (verified: the
+    // command ends with ".hmem checkpoint" vs ".hmem v2-checkpoint").
+    if (migrateHook("Stop", "hmem checkpoint")) {
+      changed = true;
+    }
+
+    // Install async v2-checkpoint Stop hook (heavy LLM extraction; must never block).
+    if (!hasHookCmd("Stop", "hmem v2-checkpoint")) {
+      settings.hooks.Stop.push({
+        hooks: [{ type: "command", command: `hmem ${pathFlag} v2-checkpoint`, timeout: 120, async: true }],
+      });
+      changed = true;
+    }
+  } else {
+    // v1 store — install the classic synchronous checkpoint hook
+    if (!hasHookCmd("Stop", "hmem checkpoint")) {
+      settings.hooks.Stop.push({
+        hooks: [{ type: "command", command: `hmem ${pathFlag} checkpoint`, timeout: 120, async: true }],
+      });
+      changed = true;
+    }
+  }
+
+  // SessionStart[startup|resume|clear|compact] — context inject (clear|compact)
+  // + auto-summarize the previous session (all sources, issue #31).
+  if (!settings.hooks.SessionStart) settings.hooks.SessionStart = [];
+  const sessionStartMatcher = "startup|resume|clear|compact";
+  if (!hasHookCmd("SessionStart", "hmem context-inject")) {
+    settings.hooks.SessionStart.push({
+      matcher: sessionStartMatcher,
+      hooks: [{ type: "command", command: `hmem ${pathFlag} context-inject`, timeout: 10 }],
+    });
+    changed = true;
+  } else {
+    // Migration: widen the matcher on existing context-inject hooks so
+    // summarize-session also fires on startup/resume (issue #31).
+    for (const entry of settings.hooks.SessionStart) {
+      const hasContextInject = entry.hooks?.some((h: any) => h.command?.includes("hmem context-inject"));
+      if (hasContextInject && entry.matcher !== sessionStartMatcher) {
+        entry.matcher = sessionStartMatcher;
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+  }
+  return changed;
+}
+
 function parseInitFlags(args: string[]): Record<string, string> {
   const flags: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
@@ -662,36 +813,23 @@ export async function runInit(args: string[] = []): Promise<void> {
         const hooksDir = path.join(HOME, ".claude", "hooks");
         fs.mkdirSync(hooksDir, { recursive: true });
 
-        // Register hooks in settings.json — direct hmem CLI commands (cross-platform, no bash needed)
         const settingsPath = path.join(HOME, ".claude", "settings.json");
+
+        // Detect v2 vs v1 before installing hooks (read-only probe — no schema stamp)
+        const isV2 = detectStoreIsV2(hmemFilePath);
+
+        // Install / update hook registrations in settings.json
+        const changed = installClaudeHooksInto(settingsPath, hmemFilePath, isV2);
+
+        // Re-read settings after update for the statusline check below
         let settings: any = {};
         try { settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8")); } catch {}
 
-        if (!settings.hooks) settings.hooks = {};
-
-        // Helper: check if a hook command is already registered
-        const hasHookCmd = (event: string, match: string) =>
-          (settings.hooks[event] || []).some((h: any) =>
-            h.hooks?.some((hh: any) => hh.command?.includes(match))
-          );
-
-        // Migration: remove old .sh-based hooks (replaced by cross-platform hmem CLI commands)
-        const migrateHook = (event: string, oldMatch: string) => {
-          if (settings.hooks[event]) {
-            const before = settings.hooks[event].length;
-            settings.hooks[event] = settings.hooks[event].filter((h: any) =>
-              !h.hooks?.some((hh: any) => hh.command?.includes(oldMatch))
-            );
-            return settings.hooks[event].length !== before;
-          }
-          return false;
-        };
-        const migrated =
-          migrateHook("UserPromptSubmit", "hmem-startup.sh") ||
-          migrateHook("Stop", "hmem-log-exchange.sh") ||
-          migrateHook("SessionStart", "hmem-context-inject.sh");
-        if (migrated) {
-          console.log(`\n  [ok] Migrated old .sh hooks to cross-platform hmem commands`);
+        // Inform user about .sh → CLI migration (installClaudeHooksInto handles it silently)
+        if (changed) {
+          console.log(`  [ok] All hooks registered in: ${settingsPath}`);
+        } else {
+          console.log(`  [ok] All hooks already registered in settings.json`);
         }
 
         // Clean up old .sh hook scripts
@@ -700,66 +838,6 @@ export async function runInit(args: string[] = []): Promise<void> {
           if (fs.existsSync(p)) {
             try { fs.unlinkSync(p); } catch {}
           }
-        }
-
-        let changed = migrated;
-
-        // Use --hmem-path flag so hooks find the correct .hmem file (cross-platform)
-        const pathFlag = `--hmem-path ${hmemFilePath}`;
-
-        // UserPromptSubmit — startup + checkpoint (cross-platform Node.js)
-        if (!settings.hooks.UserPromptSubmit) settings.hooks.UserPromptSubmit = [];
-        if (!hasHookCmd("UserPromptSubmit", "hmem hook-startup")) {
-          settings.hooks.UserPromptSubmit.push({
-            hooks: [{ type: "command", command: `hmem ${pathFlag} hook-startup`, timeout: 5 }],
-          });
-          changed = true;
-        }
-
-        // Stop — log-exchange (async — avoid blocking Claude with Node.js cold start)
-        if (!settings.hooks.Stop) settings.hooks.Stop = [];
-        if (!hasHookCmd("Stop", "hmem log-exchange")) {
-          settings.hooks.Stop.unshift({
-            hooks: [{ type: "command", command: `hmem ${pathFlag} log-exchange`, timeout: 10, async: true }],
-          });
-          changed = true;
-        }
-
-        // Stop — checkpoint: NOT installed for v2. The always-on v2 summarizer
-        // (store.summarizer.maybeCheckpoint, wired into the log-exchange Stop path)
-        // keeps the rolling segment summary current. The v1 `hmem checkpoint`
-        // command stays v1-only (and now no-ops on schema_major=2 files); the
-        // richer LLM knowledge-extraction it did is a tracked v2 follow-up.
-        // (Existing installs that already have the hook are protected by the
-        // schema guard in cli-checkpoint.ts.)
-
-        // SessionStart[startup|resume|clear|compact] — context inject (clear|compact)
-        // + auto-summarize the previous session (all sources, issue #31).
-        if (!settings.hooks.SessionStart) settings.hooks.SessionStart = [];
-        const sessionStartMatcher = "startup|resume|clear|compact";
-        if (!hasHookCmd("SessionStart", "hmem context-inject")) {
-          settings.hooks.SessionStart.push({
-            matcher: sessionStartMatcher,
-            hooks: [{ type: "command", command: `hmem ${pathFlag} context-inject`, timeout: 10 }],
-          });
-          changed = true;
-        } else {
-          // Migration: widen the matcher on existing context-inject hooks so
-          // summarize-session also fires on startup/resume (issue #31).
-          for (const entry of settings.hooks.SessionStart) {
-            const hasContextInject = entry.hooks?.some((h: any) => h.command?.includes("hmem context-inject"));
-            if (hasContextInject && entry.matcher !== sessionStartMatcher) {
-              entry.matcher = sessionStartMatcher;
-              changed = true;
-            }
-          }
-        }
-
-        if (changed) {
-          fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
-          console.log(`  [ok] All hooks registered in: ${settingsPath}`);
-        } else {
-          console.log(`  [ok] All hooks already registered in settings.json`);
         }
 
         // --- Statusline: context window bar + active hmem project ---
