@@ -202,7 +202,7 @@ async function runOpenAILoop(prompt: string, store: HmemStore, config: HmemConfi
 
 // ── claude -p subprocess fallback (for Max/OAuth users without API key) ────────
 
-function buildMcpConfig(projectDir: string, hmemPath: string): string {
+export function buildMcpConfig(projectDir: string, hmemPath: string): string {
   let hmemServerPath: string;
   try {
     hmemServerPath = execSync("which hmem", { encoding: "utf8" }).trim();
