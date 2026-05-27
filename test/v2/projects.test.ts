@@ -22,6 +22,7 @@ describe('loadProject', () => {
     s.entries.addNode({ root_uid: p.uid, content: 'Overview' });
     const { session_id } = s.sessions.createSession({});
     s.sessions.bind(session_id, p.uid);
+    s.events.appendEvent({ session_id, role: 'user', content: 'first' });
     s.sessions.updateSessionSummary(session_id, 'did some work', '');
     const { text } = loadProject(s, p.label, { why: false });
     expect(text).toContain('My Proj');
@@ -91,6 +92,58 @@ describe('readProject', () => {
     const { label } = createProject(s, { name: 'P', tech: 'TS', description: 'x' });
     const out = readProject(s, label);
     expect(out).toContain(label);
+    s.close();
+  });
+});
+
+describe('loadProject — Recent Sessions display filter', () => {
+  it('hides a session with irrelevant=1', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const p = s.entries.createEntry({ prefix: 'P', level_1: 'FilterProj' });
+    const { session_id } = s.sessions.createSession({});
+    s.sessions.bind(session_id, p.uid);
+    s.events.appendEvent({ session_id, role: 'user', content: 'hello' });
+    s.sessions.updateSessionSummary(session_id, 'irrelevant session', '');
+    // Mark irrelevant
+    s.db.prepare('UPDATE sessions SET irrelevant = 1 WHERE session_id = ?').run(session_id);
+    const { text } = loadProject(s, p.label);
+    expect(text).not.toContain('irrelevant session');
+    s.close();
+  });
+
+  it('hides a 0-event session (not the current session)', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const p = s.entries.createEntry({ prefix: 'P', level_1: 'FilterProj2' });
+    const { session_id } = s.sessions.createSession({});
+    s.sessions.bind(session_id, p.uid);
+    s.sessions.updateSessionSummary(session_id, 'empty session', '');
+    // No events added — session has 0 events
+    const { text } = loadProject(s, p.label);
+    expect(text).not.toContain('empty session');
+    s.close();
+  });
+
+  it('shows a session with at least 1 event (irrelevant=0)', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const p = s.entries.createEntry({ prefix: 'P', level_1: 'FilterProj3' });
+    const { session_id } = s.sessions.createSession({});
+    s.sessions.bind(session_id, p.uid);
+    s.events.appendEvent({ session_id, role: 'user', content: 'first event' });
+    s.sessions.updateSessionSummary(session_id, 'active session', '');
+    const { text } = loadProject(s, p.label);
+    expect(text).toContain('active session');
+    s.close();
+  });
+
+  it('shows a 0-event session that IS the current session (via opts.currentSessionId)', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const p = s.entries.createEntry({ prefix: 'P', level_1: 'FilterProj4' });
+    const { session_id } = s.sessions.createSession({});
+    s.sessions.bind(session_id, p.uid);
+    // No events — but this IS the current session
+    s.sessions.updateSessionSummary(session_id, 'fresh session', '');
+    const { text } = loadProject(s, p.label, { currentSessionId: session_id });
+    expect(text).toContain('fresh session');
     s.close();
   });
 });

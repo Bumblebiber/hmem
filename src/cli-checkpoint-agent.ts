@@ -202,7 +202,7 @@ async function runOpenAILoop(prompt: string, store: HmemStore, config: HmemConfi
 
 // ── claude -p subprocess fallback (for Max/OAuth users without API key) ────────
 
-function buildMcpConfig(projectDir: string, hmemPath: string): string {
+export function buildMcpConfig(projectDir: string, hmemPath: string): string {
   let hmemServerPath: string;
   try {
     hmemServerPath = execSync("which hmem", { encoding: "utf8" }).trim();
@@ -252,7 +252,7 @@ async function runClaudeSubprocess(prompt: string, hmemPath: string, model: stri
   }
 }
 
-function hasClaudeBinary(): boolean {
+export function hasClaudeBinary(): boolean {
   try { execSync("which claude", { stdio: "ignore" }); return true; } catch { return false; }
 }
 
@@ -274,6 +274,61 @@ export function detectHarness(): Harness {
   if (process.env.CLAUDECODE || process.env.CLAUDE_CODE_SESSION_ID) return "claude-code";
   if (process.env.CODEX_SESSION_ID || process.env.CODEX_API_KEY) return "codex";
   return "unknown";
+}
+
+// ── Free-path predicate ───────────────────────────────────────────────────────
+
+/**
+ * Probes that can be injected in tests to avoid spawning subprocesses or
+ * reading ambient env. Defaults to the real implementations.
+ */
+export interface ExtractionPathProbes {
+  detectHarness?: () => Harness;
+  hasClaudeBinary?: () => boolean;
+}
+
+/**
+ * Returns `true` iff the auto-checkpoint LLM extraction would run via a FREE
+ * route — that is, the Claude Code Max/OAuth `claude -p` subprocess (route 1 or
+ * route 4 in the routing ladder). Returns `false` for every METERED route
+ * (Anthropic SDK, OpenAI/codex SDK).
+ *
+ * Mirrors `runCheckpointAgent`'s own ladder in the same precedence order so
+ * the two can never disagree:
+ *   1. claude-code harness + claude binary → true (free)
+ *   2. codex harness → false (OpenAI metered, unconditional)
+ *   3. resolved API key env var is set → false (SDK metered)
+ *   4. claude binary on PATH (last-resort OAuth) → true (free)
+ *   5. → false (no usable route)
+ *
+ * NOTE: This predicate does not check whether `hmemPath` is available.
+ * Routes 1 and 4 also require `hmemPath` at runtime; treat that as a separate
+ * caller concern — this predicate answers only "free vs metered".
+ */
+export function hasFreeExtractionPath(
+  config: HmemConfig,
+  probes: ExtractionPathProbes = {},
+): boolean {
+  const harness = (probes.detectHarness ?? detectHarness)();
+  const claudeBinary = (probes.hasClaudeBinary ?? hasClaudeBinary)();
+
+  // Route 1: Claude Code harness + claude binary → free
+  if (harness === "claude-code" && claudeBinary) return true;
+
+  // Route 2: Codex → OpenAI (always metered, no API key check needed)
+  if (harness === "codex") return false;
+
+  // Route 3: Configured SDK provider with API key → metered
+  // Mirror the exact apiKeyEnv resolution from runCheckpointAgent lines 321-322
+  const apiKeyEnv = config.checkpointApiKeyEnv
+    ?? (config.checkpointProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY");
+  if (process.env[apiKeyEnv]) return false;
+
+  // Route 4: Last-resort claude binary (zero-config Max OAuth) → free
+  if (claudeBinary) return true;
+
+  // No usable route
+  return false;
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────

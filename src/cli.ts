@@ -38,6 +38,7 @@ Hook drivers (called by AI tool hooks, not directly by users):
   hmem deactivate                     SessionStart[clear] hook — clear active project
   hmem statusline                     statusLine — generate Claude Code statusline (JSON on stdin)
   hmem checkpoint                     Extract knowledge from recent exchanges (background)
+  hmem v2-checkpoint                  Async Stop hook — v2 LLM knowledge extraction (hook-driven, not for direct use)
 
 Migration:
   hmem migrate [--in <p>] [--out <p>] Upgrade a v1 (.hmem) store to the v2 schema (in place, with backup)
@@ -152,6 +153,12 @@ switch (command) {
   case "checkpoint": {
     const { checkpoint } = await import("./cli-checkpoint.js");
     await checkpoint();
+    break;
+  }
+
+  case "v2-checkpoint": {
+    const { runCliV2Checkpoint } = await import("./cli-v2-checkpoint.js");
+    await runCliV2Checkpoint();
     break;
   }
 

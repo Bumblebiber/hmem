@@ -52,6 +52,21 @@ const MIGRATIONS: string[] = [
   // (lastProjectForWorkspace). On fresh files the index is already in schema-v2.sql, so
   // IF NOT EXISTS makes this a no-op — belt-and-suspenders over the runner's /already exists/ guard.
   `CREATE INDEX IF NOT EXISTS idx_sessions_cwd ON sessions(cwd)`,
+  // Chunk 2 (v2_alter_6): sessions.irrelevant — boolean (0=visible, 1=hidden from "Recent
+  // Sessions"). Set by the extractor, read by the display filter. On fresh files the column
+  // is already in schema-v2.sql, so this ALTER throws "duplicate column" — which
+  // runMigrations() already tolerates.
+  `ALTER TABLE sessions ADD COLUMN irrelevant INTEGER NOT NULL DEFAULT 0`,
+  // Chunk 2 (v2_alter_7): segment_extractions — per-segment extraction-cadence marker, kept
+  // SEPARATE from segment_summaries (which the always-on summarizer owns). One row per binding
+  // segment keyed (session_id, from_seq); `last_extracted_seq` tracks how far the extractor
+  // has consumed the segment.
+  `CREATE TABLE IF NOT EXISTS segment_extractions (
+     session_id          TEXT NOT NULL,
+     from_seq            INTEGER NOT NULL,
+     last_extracted_seq  INTEGER NOT NULL DEFAULT 0,
+     PRIMARY KEY (session_id, from_seq)
+   )`,
 ];
 
 /**
