@@ -39,6 +39,9 @@ Hook drivers (called by AI tool hooks, not directly by users):
   hmem statusline                     statusLine — generate Claude Code statusline (JSON on stdin)
   hmem checkpoint                     Extract knowledge from recent exchanges (background)
 
+Migration:
+  hmem migrate [--in <p>] [--out <p>] Upgrade a v1 (.hmem) store to the v2 schema (in place, with backup)
+
 Curation:
   hmem delete <ID>                    Permanently delete an entry (curator only, not synced)
   hmem migrate-o-entries              Migrate O-entries to current schema
@@ -190,6 +193,12 @@ switch (command) {
   case "delete": {
     const { deleteEntry } = await import("./cli-delete.js");
     await deleteEntry(process.argv.slice(3));
+    break;
+  }
+
+  case "migrate": {
+    const { runMigrate } = await import("./cli-migrate.js");
+    await runMigrate(args.slice(1));   // args already has --hmem-path stripped
     break;
   }
 

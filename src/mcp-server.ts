@@ -955,9 +955,47 @@ function checkForUpdates(): void {
 }
 
 // ---- Start ----
+// ---- Serve advisory lockfile (Plan B §3, Layer 1) --------------------------
+// `hmem migrate` refuses to run while a live serve process holds this store, to
+// avoid the silent-data-loss window of swapping a file out from under an open
+// writer. We write a lockfile next to HMEM_PATH on startup and remove it on
+// clean exit (best-effort: a stale lock with a dead PID is ignored by migrate).
+const SERVE_LOCK_PATH = path.join(path.dirname(HMEM_PATH), ".hmem.serve.lock");
+let serveLockWritten = false;
+
+function writeServeLock(): void {
+  try {
+    fs.writeFileSync(
+      SERVE_LOCK_PATH,
+      JSON.stringify({ pid: process.pid, started: new Date().toISOString(), hmemPath: HMEM_PATH }),
+    );
+    serveLockWritten = true;
+  } catch {
+    // Best-effort: if we can't write the lock, migrate's Layer-2 confirm still guards.
+  }
+}
+
+function removeServeLock(): void {
+  if (!serveLockWritten) return;
+  try { fs.rmSync(SERVE_LOCK_PATH, { force: true }); } catch { /* ignore */ }
+  serveLockWritten = false;
+}
+
+function installServeLockCleanup(): void {
+  process.on("exit", removeServeLock);
+  // process.on('exit') does NOT fire on signals — handle the common ones so a
+  // clean shutdown (Claude Code closing the MCP server) doesn't leave a stale lock.
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.on(sig, () => { removeServeLock(); process.exit(0); });
+  }
+}
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  writeServeLock();
+  installServeLockCleanup();
 
   // Startup diagnostics — helps debug "0 entries" issues
   const dbExists = fs.existsSync(HMEM_PATH);
