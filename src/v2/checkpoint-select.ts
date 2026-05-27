@@ -26,6 +26,7 @@
  *    `(session_id, from_seq)` ASC for pure determinism.
  */
 import type Database from 'better-sqlite3';
+import type { V2Store } from './store-facade.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -104,9 +105,10 @@ interface CandidateRow {
  *  7. Return at most `cap` segments total.
  */
 export function selectSegmentsForExtraction(
-  db: Database.Database,
+  store: V2Store,
   opts: SelectOptions,
 ): SelectedSegment[] {
+  const db: Database.Database = store.db;
   const { currentSessionId, projectUid } = opts;
   const cadence = opts.cadence ?? 20;
   const cap = opts.cap ?? 10;

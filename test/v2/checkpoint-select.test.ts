@@ -1,28 +1,24 @@
 /**
  * Chunk 6a — selectSegmentsForExtraction tests (TDD — written BEFORE the implementation).
  *
- * Fixture strategy: in-memory openDb + low-level APIs + raw SQL for rows the
- * function-under-test reads but no existing API writes (segment_extractions).
- * We also bump sessions.updated_at via raw SQL to make ordering tests
- * non-trivial (the API's touchSession sets updated_at to now() — we need
- * independently-controlled timestamps).
+ * Fixture strategy: createV2Store(':memory:') for a realistic full store,
+ * plus raw SQL for rows the function-under-test reads but no existing API
+ * writes (segment_extractions). We also bump sessions.updated_at via raw SQL
+ * to make ordering tests non-trivial (the API's touchSession sets updated_at
+ * to now() — we need independently-controlled timestamps).
  */
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
-import { openDb } from '../../src/store/db.js';
-import { createSessionsApi } from '../../src/store/sessions.js';
-import { createEventsApi } from '../../src/store/events.js';
-import { createEntriesApi } from '../../src/store/entries.js';
+import { createV2Store } from '../../src/v2/store-facade.js';
+import { DEFAULT_CONFIG } from '../../src/hmem-config.js';
 import { selectSegmentsForExtraction } from '../../src/v2/checkpoint-select.js';
 
-// ── Helper: build a minimal in-memory DB with sessions + entries + events ────
+// ── Helper: build a minimal in-memory store ──────────────────────────────────
 
-function makeDb() {
-  const db = openDb(':memory:');
-  const sessions = createSessionsApi(db);
-  const events = createEventsApi(db);
-  const entries = createEntriesApi(db);
-  return { db, sessions, events, entries };
+function makeStore() {
+  const store = createV2Store(':memory:', DEFAULT_CONFIG);
+  const { db, sessions, events, entries } = store;
+  return { store, db, sessions, events, entries };
 }
 
 /** Force sessions.updated_at to a specific ISO string (bypasses the API). */
@@ -56,13 +52,13 @@ function appendN(events: ReturnType<typeof createEventsApi>, sid: string, n: num
 
 describe('selectSegmentsForExtraction — current segment cadence gate', () => {
   it('current segment with unextracted < cadence is NOT selected', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
     sessions.createSession({ session_id: 'S1' });
     sessions.bind('S1', p.uid);
     appendN(events, 'S1', 3); // 3 events, cadence = 5 → below threshold
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'S1',
       projectUid: p.uid,
       cadence: 5,
@@ -73,13 +69,13 @@ describe('selectSegmentsForExtraction — current segment cadence gate', () => {
   });
 
   it('current segment with unextracted === cadence IS selected (first in result)', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
     sessions.createSession({ session_id: 'S1' });
     sessions.bind('S1', p.uid);
     appendN(events, 'S1', 5); // exactly cadence = 5 → eligible
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'S1',
       projectUid: p.uid,
       cadence: 5,
@@ -93,13 +89,13 @@ describe('selectSegmentsForExtraction — current segment cadence gate', () => {
   });
 
   it('current segment with unextracted > cadence IS selected', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
     sessions.createSession({ session_id: 'S1' });
     sessions.bind('S1', p.uid);
     appendN(events, 'S1', 12); // 12 > cadence 5
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'S1',
       projectUid: p.uid,
       cadence: 5,
@@ -112,7 +108,7 @@ describe('selectSegmentsForExtraction — current segment cadence gate', () => {
   });
 
   it('current segment with marker: respects last_extracted_seq in unextracted count', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
     sessions.createSession({ session_id: 'S1' });
     sessions.bind('S1', p.uid);
@@ -120,7 +116,7 @@ describe('selectSegmentsForExtraction — current segment cadence gate', () => {
     // Mark 6 as already extracted → only 2 unextracted (8-6=2), below cadence 5
     setExtracted(db, 'S1', 1, 6);
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'S1',
       projectUid: p.uid,
       cadence: 5,
@@ -131,7 +127,7 @@ describe('selectSegmentsForExtraction — current segment cadence gate', () => {
   });
 
   it('current segment partial extraction with enough remaining is selected', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
     sessions.createSession({ session_id: 'S1' });
     sessions.bind('S1', p.uid);
@@ -139,7 +135,7 @@ describe('selectSegmentsForExtraction — current segment cadence gate', () => {
     // Mark 3 as extracted → 9 unextracted, above cadence 5
     setExtracted(db, 'S1', 1, 3);
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'S1',
       projectUid: p.uid,
       cadence: 5,
@@ -154,7 +150,7 @@ describe('selectSegmentsForExtraction — current segment cadence gate', () => {
 
 describe('selectSegmentsForExtraction — backlog segments', () => {
   it('backlog segment with unextracted > 0 and NO marker is selected', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
 
     // Closed backlog session (different session_id from current)
@@ -171,7 +167,7 @@ describe('selectSegmentsForExtraction — backlog segments', () => {
     sessions.bind('SCURR', p.uid);
     // no events → current segment unextracted = 0, below any cadence
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'SCURR',
       projectUid: p.uid,
       cadence: 5,
@@ -185,7 +181,7 @@ describe('selectSegmentsForExtraction — backlog segments', () => {
   });
 
   it('backlog segment fully extracted (marker covers maxSeq) is NOT selected (idempotent)', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
 
     sessions.createSession({ session_id: 'SBACK' });
@@ -201,7 +197,7 @@ describe('selectSegmentsForExtraction — backlog segments', () => {
     sessions.createSession({ session_id: 'SCURR' });
     sessions.bind('SCURR', p.uid);
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'SCURR',
       projectUid: p.uid,
       cadence: 5,
@@ -214,7 +210,7 @@ describe('selectSegmentsForExtraction — backlog segments', () => {
 
   it('closed segment of currentSessionId with unextracted > 0 is selected as backlog', () => {
     // A session can have multiple bindings: an earlier closed one + the current open one.
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const pA = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
     const pB = entries.createEntry({ prefix: 'P', level_1: 'Project B' });
 
@@ -225,7 +221,7 @@ describe('selectSegmentsForExtraction — backlog segments', () => {
     // now 2 events in the new (current) segment
     appendN(events, 'S1', 2); // seq 5,6
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'S1',
       projectUid: pA.uid, // only looking at pA project
       cadence: 10,        // current pB segment won't be visible (different project)
@@ -242,7 +238,7 @@ describe('selectSegmentsForExtraction — backlog segments', () => {
 
 describe('selectSegmentsForExtraction — project scoping', () => {
   it('segment for a different project is never selected', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const pA = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
     const pB = entries.createEntry({ prefix: 'P', level_1: 'Project B' });
 
@@ -255,7 +251,7 @@ describe('selectSegmentsForExtraction — project scoping', () => {
     sessions.createSession({ session_id: 'SCURR' });
     sessions.bind('SCURR', pA.uid);
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'SCURR',
       projectUid: pA.uid,
       cadence: 5,
@@ -270,7 +266,7 @@ describe('selectSegmentsForExtraction — project scoping', () => {
 
 describe('selectSegmentsForExtraction — cap and ordering', () => {
   it('returns at most cap segments total, current counts toward cap', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
 
     // Create 12 backlog sessions with unextracted events, each on project p
@@ -289,7 +285,7 @@ describe('selectSegmentsForExtraction — cap and ordering', () => {
     sessions.bind('SCURR', p.uid);
     appendN(events, 'SCURR', 5); // = cadence
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'SCURR',
       projectUid: p.uid,
       cadence: 5,
@@ -300,7 +296,7 @@ describe('selectSegmentsForExtraction — cap and ordering', () => {
   });
 
   it('current segment is returned first when both current and backlog are eligible', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
 
     // Backlog session
@@ -315,7 +311,7 @@ describe('selectSegmentsForExtraction — cap and ordering', () => {
     sessions.bind('SCURR', p.uid);
     appendN(events, 'SCURR', 5); // = cadence
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'SCURR',
       projectUid: p.uid,
       cadence: 5,
@@ -326,7 +322,7 @@ describe('selectSegmentsForExtraction — cap and ordering', () => {
   });
 
   it('backlog ordered by sessions.updated_at DESC (most recent first), NOT by session_id', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
 
     // Three backlog sessions with explicit updated_at timestamps
@@ -349,7 +345,7 @@ describe('selectSegmentsForExtraction — cap and ordering', () => {
     sessions.createSession({ session_id: 'SCURR' });
     sessions.bind('SCURR', p.uid);
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'SCURR',
       projectUid: p.uid,
       cadence: 20, // high → current not eligible
@@ -363,7 +359,7 @@ describe('selectSegmentsForExtraction — cap and ordering', () => {
   it('ordering is by sessions.updated_at (not session_id) even when session_id order differs', () => {
     // session_id order: SBACK-Z, SBACK-A; updated_at order: SBACK-A (newer), SBACK-Z (older)
     // Expected result order: [SBACK-A, SBACK-Z]
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
 
     const specs: Array<{ sid: string; ts: string }> = [
@@ -383,7 +379,7 @@ describe('selectSegmentsForExtraction — cap and ordering', () => {
     sessions.createSession({ session_id: 'SCURR' });
     sessions.bind('SCURR', p.uid);
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'SCURR',
       projectUid: p.uid,
       cadence: 20,
@@ -395,7 +391,7 @@ describe('selectSegmentsForExtraction — cap and ordering', () => {
   });
 
   it('0-event segments (no events at all) are excluded', () => {
-    const { db, sessions, entries } = makeDb();
+    const { store, db, sessions, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
 
     // A binding with zero events
@@ -406,7 +402,7 @@ describe('selectSegmentsForExtraction — cap and ordering', () => {
     sessions.createSession({ session_id: 'SCURR' });
     sessions.bind('SCURR', p.uid);
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'SCURR',
       projectUid: p.uid,
       cadence: 1,
@@ -419,13 +415,13 @@ describe('selectSegmentsForExtraction — cap and ordering', () => {
 
 describe('selectSegmentsForExtraction — SelectedSegment shape', () => {
   it('returned SelectedSegment carries session_id, from_seq, fromSeqExclusive, toSeqInclusive', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
     sessions.createSession({ session_id: 'S1' });
     sessions.bind('S1', p.uid);
     appendN(events, 'S1', 7);
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'S1',
       projectUid: p.uid,
       cadence: 5,
@@ -444,14 +440,14 @@ describe('selectSegmentsForExtraction — SelectedSegment shape', () => {
   });
 
   it('fromSeqExclusive = last_extracted_seq when a marker exists', () => {
-    const { db, sessions, events, entries } = makeDb();
+    const { store, db, sessions, events, entries } = makeStore();
     const p = entries.createEntry({ prefix: 'P', level_1: 'Project A' });
     sessions.createSession({ session_id: 'S1' });
     sessions.bind('S1', p.uid);
     appendN(events, 'S1', 10);
     setExtracted(db, 'S1', 1, 4); // extracted up to seq 4
 
-    const result = selectSegmentsForExtraction(db, {
+    const result = selectSegmentsForExtraction(store, {
       currentSessionId: 'S1',
       projectUid: p.uid,
       cadence: 5,
