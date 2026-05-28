@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { newUlid } from '../store/ulid.js';
 import { allRoots, nodesForRoot, tagsFor, parseLinks } from './v1-reader.js';
+import { toIso } from '../util/iso.js';
 
 const SKIP_PREFIXES = new Set(['O', 'F']);          // O -> Half B; F -> tombstones (Task 3 / drop)
 
@@ -44,7 +45,7 @@ export function migrateTree(v1: Database.Database, v2: Database.Database): Migra
       // neither is lost. title-first: for the truncation case (level_1 startsWith title)
       // it returns level_1; for divergent case it returns "title\n\nlevel_1".
       level_1: mergeNodeText(r.title, r.level_1),
-      created_at: r.created_at, updated_at: r.updated_at ?? r.created_at,
+      created_at: toIso(r.created_at), updated_at: toIso(r.updated_at ?? r.created_at),
       access_count: r.access_count, last_accessed: r.last_accessed,
       obsolete: r.obsolete, favorite: r.favorite, irrelevant: r.irrelevant, pinned: r.pinned,
       tags: tags.length ? JSON.stringify(tags) : null,
@@ -57,7 +58,7 @@ export function migrateTree(v1: Database.Database, v2: Database.Database): Migra
     for (const n of nodes) {
       const ntags = tagsFor(v1, n.id);
       // v1 obsolete/irrelevant nodes -> v2 soft-delete tombstone (v2 nodes have no flag columns; entries keep their flags).
-      const hidden = (n.obsolete || n.irrelevant) ? (n.updated_at ?? n.created_at) : null;
+      const hidden = (n.obsolete || n.irrelevant) ? toIso(n.updated_at ?? n.created_at) : null;
       insNode.run({
         uid: nodeIdToUid.get(n.id),
         root_uid: uid,
@@ -65,7 +66,7 @@ export function migrateTree(v1: Database.Database, v2: Database.Database): Migra
         depth: n.depth, seq: n.seq,
         content: mergeNodeText(n.title, n.content),
         tags: ntags.length ? JSON.stringify(ntags) : null,
-        created_at: n.created_at, updated_at: n.updated_at ?? n.created_at,
+        created_at: toIso(n.created_at), updated_at: toIso(n.updated_at ?? n.created_at),
         deleted_at: hidden,
       });
     }
