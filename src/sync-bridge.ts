@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { toIso } from './util/iso.js'
 
 interface StagingBlob {
   id?: number
@@ -12,12 +13,6 @@ interface StagingBlob {
 }
 
 type MemoryRow = Record<string, unknown> & { id: string; updated_at?: string; created_at?: string }
-
-function toIso(ts: string | undefined): string {
-  if (!ts) return new Date().toISOString()
-  if (ts.endsWith('Z') || ts.includes('+')) return ts
-  return ts.replace(' ', 'T') + 'Z'
-}
 
 export async function exportToStaging(hmemPath: string, stagingPath: string): Promise<void> {
   const db = new Database(hmemPath, { readonly: true })
