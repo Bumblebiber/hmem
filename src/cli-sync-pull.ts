@@ -48,6 +48,9 @@ export async function syncPull(opts: { passphrase?: string } = {}) {
 
   let response
   try {
+    // Legacy v1 lane (dead for our all-v2 deployment). `last_sync` is now passed as the opaque
+    // `cursor` arg; the server tolerates a stale ISO value (treats it as s=0 → a full pull).
+    // Kept compiling intentionally; not invested in (spec §2 drops old-client compatibility).
     response = await client.pull(fileId, fileCfg.last_sync)
   } catch (err) {
     if (err instanceof SyncApiError && err.code === 'PAYMENT_REQUIRED') {
