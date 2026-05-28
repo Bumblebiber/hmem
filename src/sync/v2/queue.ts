@@ -23,11 +23,26 @@ function save(path: string, q: QueueItem[]): void {
   renameSync(tmp, path);
 }
 
-export function enqueue(path: string, q: QueueItem[], envelopes: BlobEnvelope[], blobs: PushBlob[]): QueueItem {
-  const item: QueueItem = { idempotency_key: randomUUID(), envelopes, blobs, created_at: new Date().toISOString(), attempts: 0 };
-  q.push(item);
+/** Max blobs per push request — must stay ≤ the server's PushRequestSchema `.max(500)`.
+ *  A bulk re-push (thousands of blobs) is split into multiple idempotent items; each flushes
+ *  as one HTTP request. Normal incremental syncs (a handful of blobs) produce a single item. */
+const PUSH_CHUNK = 500;
+
+export function enqueue(path: string, q: QueueItem[], envelopes: BlobEnvelope[], blobs: PushBlob[]): QueueItem[] {
+  const created: QueueItem[] = [];
+  for (let i = 0; i < blobs.length; i += PUSH_CHUNK) {
+    const item: QueueItem = {
+      idempotency_key: randomUUID(),
+      envelopes: envelopes.slice(i, i + PUSH_CHUNK),  // paired by index with blobs within the chunk
+      blobs: blobs.slice(i, i + PUSH_CHUNK),
+      created_at: new Date().toISOString(),
+      attempts: 0,
+    };
+    q.push(item);
+    created.push(item);
+  }
   save(path, q);
-  return item;
+  return created;
 }
 
 /** Send queued items oldest-first. On the first send error: bump that item's attempts, persist,

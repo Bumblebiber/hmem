@@ -52,6 +52,20 @@ describe('retry queue', () => {
     expect(key2).toBe(key1);
   });
 
+  it('splits a large batch into chunks of at most 500 blobs (server push cap)', () => {
+    const N = 1200;
+    const envs = Array.from({ length: N }, (_, i) => rowToEnvelope('entries', { uid: 'U' + i, updated_at: '2026-05-25T10:00:00.000Z', deleted_at: null }));
+    const blobs = Array.from({ length: N }, (_, i) => ({ proposed_id: 'U' + i, data: 'enc', device_id: 'dev1', updated_at: '2026-05-25T10:00:00.000Z' }));
+    const q = loadQueue(qpath());
+    enqueue(qpath(), q, envs, blobs);
+    const items = loadQueue(qpath());
+    expect(items.map((i) => i.blobs.length)).toEqual([500, 500, 200]);          // 500 + 500 + 200
+    expect(new Set(items.map((i) => i.idempotency_key)).size).toBe(3);          // distinct key per chunk
+    expect(items[2].envelopes).toHaveLength(200);                               // envelopes chunked in lockstep
+    expect(items[2].envelopes[199].key).toBe('U1199');                          // index pairing preserved
+    expect(items[2].blobs[199].proposed_id).toBe('U1199');
+  });
+
   it('drains older items before stopping at the first failure', async () => {
     const q = loadQueue(qpath());
     enqueue(qpath(), q, [env()], [blob()]); // item 1
