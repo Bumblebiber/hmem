@@ -34,8 +34,8 @@ export function markAcked(s: V2Staging, e: BlobEnvelope): void {
   s.acked[stagingKey(e.table, e.key)] = { table: e.table, key: e.key, lww: e.lww, deleted: e.deleted };
 }
 
-export function setCursor(s: V2Staging, serverTime: string): void {
-  s.cursor = serverTime;
+export function setCursor(s: V2Staging, cursor: string): void {
+  s.cursor = cursor;
 }
 
 /** Prune ack records that are tombstoned AND no longer present in the live store key set

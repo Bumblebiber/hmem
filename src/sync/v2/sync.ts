@@ -8,6 +8,7 @@ import { loadQueue, enqueue, flushQueue } from './queue.js';
 import { stagingKey } from './envelope.js';
 import type { BlobEnvelope } from './envelope.js';
 import { encrypt, decrypt, deriveKey } from '../crypto.js';
+import { toIso } from '../../util/iso.js';
 
 export interface SyncArgs {
   store: V2Store; transport: SyncTransport; dir: string; fileId: string;
@@ -30,10 +31,10 @@ export async function pushV2(a: SyncArgs): Promise<{ pushed: number; queued: boo
   const envelopes = exportV2(a.store, staging, inFlight);
   if (envelopes.length > 0) {
     const blobs: PushBlob[] = envelopes.map((e) => ({
-      proposed_id: e.key.slice(0, 50),
+      proposed_id: e.key,                                       // full key — never sliced (compound keys are 53 chars)
       data: encrypt(JSON.stringify(e), key),
       device_id: a.deviceId,
-      updated_at: e.lww ?? new Date(0).toISOString(),
+      updated_at: e.lww ? toIso(e.lww) : new Date(0).toISOString(),  // ISO-normalize; null lww (events/links) → epoch
     }));
     enqueue(qPath, queue, envelopes, blobs);
   }
@@ -51,12 +52,22 @@ export async function pushV2(a: SyncArgs): Promise<{ pushed: number; queued: boo
 export async function pullV2(a: SyncArgs): Promise<{ applied: number }> {
   const stgPath = stagingPath(a.dir, a.fileId);
   const staging = loadStaging(stgPath, a.fileId);
-  const res = await a.transport.pull({ file_id: a.fileId, since: staging.cursor, client_schema_major: 2 });
   const key = deriveKey(a.passphrase, a.salt);
-  const envelopes: BlobEnvelope[] = res.blobs.map((b) => JSON.parse(decrypt(b.data, key)) as BlobEnvelope);
-  const stats = importV2(a.store, staging, envelopes);
-  setCursor(staging, res.server_time);
+
+  let cursor = staging.cursor;            // opaque change_seq cursor; a stale legacy ISO on first
+                                          // upgrade is tolerated by the server (treated as s=0).
+  let applied = 0;
+  let res: Awaited<ReturnType<typeof a.transport.pull>>;
+  do {
+    res = await a.transport.pull({ file_id: a.fileId, cursor, client_schema_major: 2 });
+    const envelopes: BlobEnvelope[] = res.blobs.map((b) => JSON.parse(decrypt(b.data, key)) as BlobEnvelope);
+    const stats = importV2(a.store, staging, envelopes);
+    applied += stats.inserted + stats.updated + stats.unioned;
+    cursor = res.next_cursor ?? cursor;   // defensive vs. a momentarily-old server (field absent)
+  } while (res.has_more === true);
+
+  setCursor(staging, cursor);             // persist only after the full paged pull completes
   gcStaging(staging, collectLiveKeys(a.store));
   saveStaging(stgPath, staging);
-  return { applied: stats.inserted + stats.updated + stats.unioned };
+  return { applied };
 }

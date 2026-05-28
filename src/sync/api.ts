@@ -37,6 +37,8 @@ interface PullResponse {
   blobs: PullBlob[]
   server_time: string
   salt?: string
+  has_more: boolean
+  next_cursor: string
 }
 
 export interface HmemFile {
@@ -111,9 +113,9 @@ export class HmemSyncClient {
     return r.data
   }
 
-  async pull(fileId: string, since?: string, clientSchemaMajor?: number): Promise<PullResponse> {
+  async pull(fileId: string, cursor?: string, clientSchemaMajor?: number): Promise<PullResponse> {
     const params = [`file_id=${encodeURIComponent(fileId)}`]
-    if (since) params.push(`since=${encodeURIComponent(since)}`)
+    if (cursor) params.push(`cursor=${encodeURIComponent(cursor)}`)
     if (clientSchemaMajor !== undefined) params.push(`client_schema_major=${clientSchemaMajor}`)
     const r = await this.request<PullResponse>(`/sync/pull?${params.join('&')}`)
     if (!r.ok) {
