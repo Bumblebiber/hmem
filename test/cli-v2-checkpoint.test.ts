@@ -15,11 +15,12 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, rmSync } from 'node:fs';
+import path from 'node:path';
 import Database from 'better-sqlite3';
 import { openDb, getSchemaMajor } from '../src/store/db.js';
 import { createV2Store } from '../src/v2/store-facade.js';
 import { DEFAULT_CONFIG } from '../src/hmem-config.js';
-import { runCliV2Checkpoint } from '../src/cli-v2-checkpoint.js';
+import { runCliV2CheckpointCore } from '../src/cli-v2-checkpoint.js';
 
 // ── Fixture paths ─────────────────────────────────────────────────────────────
 
@@ -91,7 +92,7 @@ describe('cli v2-checkpoint (Test #5 — corruption-safety)', () => {
     process.env.HMEM_PROJECT_DIR = '/tmp';
     process.env.HMEM_PATH = V2_DB;
 
-    await runCliV2Checkpoint();
+    await runCliV2CheckpointCore();
 
     // Core invariant: v1 tables were NEVER injected.
     expect(tableExists(V2_DB, 'memories')).toBe(false);
@@ -118,7 +119,7 @@ describe('cli v2-checkpoint (Test #5 — corruption-safety)', () => {
     process.env.HMEM_PATH = V1_DB;
 
     // Must not throw.
-    await expect(runCliV2Checkpoint()).resolves.toBeUndefined();
+    await expect(runCliV2CheckpointCore()).resolves.toBeUndefined();
 
     // v2 tables must NOT have been created on the v1 file.
     expect(tableExists(V1_DB, 'entries')).toBe(false);
@@ -141,19 +142,61 @@ describe('cli v2-checkpoint (Test #5 — corruption-safety)', () => {
   it('no-op when HMEM_PATH is unset', async () => {
     delete process.env.HMEM_PATH;
     delete process.env.HMEM_PROJECT_DIR;
-    await expect(runCliV2Checkpoint()).resolves.toBeUndefined();
+    await expect(runCliV2CheckpointCore()).resolves.toBeUndefined();
   });
 
-  it('no-op when HMEM_PROJECT_DIR is unset', async () => {
+  it('threads the explicit session id through to runV2Checkpoint (writes a marker)', async () => {
+    // Stop-hook regression: the session id arrives via stdin, not env/ppid. The
+    // core must forward it so runV2Checkpoint resolves the project + extracts.
+    const store = createV2Store(V2_DB, DEFAULT_CONFIG);
+    const p = store.entries.createEntry({ prefix: 'P', level_1: 'Threaded Project' });
+    store.sessions.createSession({ session_id: 'S-thread' });
+    store.sessions.bind('S-thread', p.uid);            // opens [1, NULL]
+    for (let i = 0; i < 4; i++) {
+      store.events.appendEvent({ session_id: 'S-thread', role: 'user', content: `m-${i}` });
+    }
+    store.sessions.bind('S-thread', p.uid, 5);          // closes [1,4], opens [5, NULL]
+    store.close();
+
+    process.env.HMEM_PROJECT_DIR = '/tmp';
+    process.env.HMEM_PATH = V2_DB;
+
+    await runCliV2CheckpointCore('S-thread', {
+      // No real subprocess: force the gate open + stub the extraction agent.
+      gateProbes: { detectHarness: () => 'claude-code', hasClaudeBinary: () => true },
+      invoke: async () => { /* no-op agent */ },
+    });
+
+    // A marker for the closed [1,4] segment proves the session id was threaded.
+    const db = new Database(V2_DB, { readonly: true });
+    try {
+      const row = db
+        .prepare('SELECT last_extracted_seq FROM segment_extractions WHERE session_id = ? AND from_seq = ?')
+        .get('S-thread', 1) as { last_extracted_seq: number } | undefined;
+      expect(row?.last_extracted_seq).toBe(4);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('derives HMEM_PROJECT_DIR from HMEM_PATH when only HMEM_PATH is set (Stop-hook regression)', async () => {
+    // The Stop hook command sets only HMEM_PATH. The handler must derive
+    // HMEM_PROJECT_DIR (via resolveEnvDefaults) so downstream config/agent wiring
+    // works — instead of early-returning into a silent no-op (the original bug).
+    const store = createV2Store(V2_DB, DEFAULT_CONFIG);
+    store.close();
     delete process.env.HMEM_PROJECT_DIR;
     process.env.HMEM_PATH = V2_DB;
-    await expect(runCliV2Checkpoint()).resolves.toBeUndefined();
+
+    await runCliV2CheckpointCore();
+
+    expect(process.env.HMEM_PROJECT_DIR).toBe(path.dirname(V2_DB));
   });
 
   it('no-op when HMEM_PATH points to a non-existent file', async () => {
     process.env.HMEM_PROJECT_DIR = '/tmp';
     process.env.HMEM_PATH = '/tmp/does-not-exist-v2-checkpoint.hmem';
-    await expect(runCliV2Checkpoint()).resolves.toBeUndefined();
+    await expect(runCliV2CheckpointCore()).resolves.toBeUndefined();
   });
 
   it('idempotency: running twice on a v2 store does not throw and keeps schema intact', async () => {
@@ -164,8 +207,8 @@ describe('cli v2-checkpoint (Test #5 — corruption-safety)', () => {
     process.env.HMEM_PROJECT_DIR = '/tmp';
     process.env.HMEM_PATH = V2_DB;
 
-    await runCliV2Checkpoint();
-    await runCliV2Checkpoint(); // second run — must not throw or corrupt
+    await runCliV2CheckpointCore();
+    await runCliV2CheckpointCore(); // second run — must not throw or corrupt
 
     expect(tableExists(V2_DB, 'memories')).toBe(false);
     expect(tableExists(V2_DB, 'memory_nodes')).toBe(false);
