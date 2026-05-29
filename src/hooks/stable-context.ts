@@ -52,7 +52,7 @@ export function defaultSyncProbe(): string {
     return `--- hmem-sync ---\n⚠ Linked to ${server} (active_file: ${activeFile}) but never synced.`;
   }
   const ago = formatAgo(Date.now() - new Date(fileCfg.last_sync).getTime());
-  return `--- hmem-sync ---\n✓ Linked to ${server} | active_file: ${activeFile} | last sync: ${ago} — writes propagate to other devices on next \`hmem-sync push\`.`;
+  return `--- hmem-sync ---\n✓ Linked to ${server} | active_file: ${activeFile} | last sync: ${ago} — writes propagate to other devices on next \`hmem sync push\`.`;
 }
 
 /** Real active-device block: the I-entry named in ~/.hmem/active-device, resolved in the store. Safe when absent. */

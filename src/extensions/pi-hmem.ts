@@ -136,7 +136,7 @@ function buildSyncStatus(): string {
     return `\n\n--- hmem-sync ---\n⚠ Linked to ${server} (active_file: ${activeFile}) but never synced. Run \`hmem-sync pull\` to fetch.`;
   }
   const ago = formatAgo(Date.now() - new Date(fileCfg.last_sync).getTime());
-  return `\n\n--- hmem-sync ---\n✓ Linked to ${server} | active_file: ${activeFile} | last sync: ${ago} — writes propagate to other devices on next \`hmem-sync push\`.`;
+  return `\n\n--- hmem-sync ---\n✓ Linked to ${server} | active_file: ${activeFile} | last sync: ${ago} — writes propagate to other devices on next \`hmem sync push\`.`;
 }
 
 // ── Startup context builder ────────────────────────────────────────────────
