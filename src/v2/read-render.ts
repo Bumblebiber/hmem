@@ -33,7 +33,7 @@ function renderChildren(
   if (depth <= 1) return; // depth counts levels of children to show
   for (const n of childrenOf(store, rootUid, parentUid)) {
     out.push(
-      '  '.repeat(indent) + '• ' + cap(store.entries.renderRefs(n.content).split('\n')[0], maxNode),
+      '  '.repeat(indent) + '.' + n.seq + ' ' + cap(store.entries.renderRefs(n.content).split('\n')[0], maxNode),
     );
     renderChildren(store, rootUid, n.uid, depth - 1, indent + 1, maxNode, out);
   }
@@ -62,7 +62,7 @@ export function renderEntryTree(store: V2Store, address: string, depth = 2): str
   } else {
     const n = store.entries.getNode(addr.node_uid);
     if (!n) return `‹${address} not found›`;
-    out.push(cap(store.entries.renderRefs(n.content), maxNode));
+    out.push(`${address}  ${cap(store.entries.renderRefs(n.content), maxNode)}`);
     renderChildren(store, addr.root_uid, n.uid, depth, 1, maxNode, out);
   }
   return out.join('\n');

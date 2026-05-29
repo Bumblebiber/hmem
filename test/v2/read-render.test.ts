@@ -78,3 +78,26 @@ describe('readBulk', () => {
     s.close();
   });
 });
+
+describe('addressable node seqs', () => {
+  it('renders each child with its relative seq so the address round-trips', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const { uid: root, label } = s.entries.createEntry({ prefix: 'P', level_1: 'Proj' });
+    const sec = s.entries.addNode({ root_uid: root, content: 'Next Steps' });
+    s.entries.addNode({ root_uid: root, parent_uid: sec.uid, content: 'do the thing' });
+
+    const entryOut = renderEntryTree(s, label, 2);
+    const m = entryOut.match(/\.(\d+)\s+Next Steps/);
+    expect(m, 'section should render with a .<seq> prefix').not.toBeNull();
+    const secAddr = `${label}.${m![1]}`;
+    expect(renderEntryTree(s, secAddr, 2)).toContain('Next Steps');
+
+    const secOut = renderEntryTree(s, secAddr, 2);
+    expect(secOut, 'node header should carry the full address').toContain(secAddr);
+    const cm = secOut.match(/\.(\d+)\s+do the thing/);
+    expect(cm, 'child should render with a .<seq> prefix').not.toBeNull();
+    const childAddr = `${secAddr}.${cm![1]}`;
+    expect(renderEntryTree(s, childAddr, 2)).toContain('do the thing');
+    s.close();
+  });
+});
