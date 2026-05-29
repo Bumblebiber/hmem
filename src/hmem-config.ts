@@ -64,6 +64,14 @@ export interface HmemConfig {
    */
   maxNodeChars: number;
   /**
+   * Max number of children rendered for a "History"/"Protocol" section when it
+   * appears as a sub-section of a broader read (load_project, read_memory on the
+   * parent entry). Only the most recent N are shown; older ones collapse into a
+   * "[+N older]" marker. `0` = title-only (no children). Drilling directly into
+   * the History node (read_memory on that node) is never capped. Default: 8.
+   */
+  historyLimit: number;
+  /**
    * V2 bulk-read algorithm tuning parameters.
    * Controls how many entries receive expanded treatment in default reads.
    */
@@ -243,6 +251,7 @@ export const DEFAULT_CONFIG: HmemConfig = {
   prefixes: { ...DEFAULT_PREFIXES },
   maxTitleChars: 50,
   maxNodeChars: 100_000,
+  historyLimit: 8,
   accessCountTopN: 5,
   prefixDescriptions: { ...DEFAULT_PREFIX_DESCRIPTIONS },
   checkpointInterval: 5,
@@ -382,7 +391,7 @@ export function saveHmemConfig(projectDir: string, config: HmemConfig): void {
 
 /** Known memory config keys — used to detect unified vs flat format. */
 const MEMORY_KEYS = new Set(["maxL1Chars", "maxLnChars", "maxCharsPerLevel", "maxDepth",
-  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "maxNodeChars", "accessCountTopN", "recentOEntries", "bulkReadOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas", "globalLoad",
+  "defaultReadLimit", "prefixes", "prefixDescriptions", "bulkReadV2", "maxTitleChars", "maxNodeChars", "historyLimit", "accessCountTopN", "recentOEntries", "bulkReadOEntries", "contextTokenThreshold", "loadProjectExpand", "schemas", "globalLoad",
   "checkpointInterval", "checkpointMode", "checkpointProvider", "checkpointModel", "checkpointBaseUrl", "checkpointApiKeyEnv", "maxToolResponseChars"]);
 
 /**
@@ -420,6 +429,7 @@ export function loadHmemConfig(projectDir: string): HmemConfig {
     if (typeof memoryRaw.accessCountTopN === "number" && memoryRaw.accessCountTopN >= 0) cfg.accessCountTopN = memoryRaw.accessCountTopN;
     if (typeof memoryRaw.maxTitleChars === "number" && memoryRaw.maxTitleChars >= 10 && memoryRaw.maxTitleChars <= 120) cfg.maxTitleChars = memoryRaw.maxTitleChars;
     if (typeof memoryRaw.maxNodeChars === "number" && memoryRaw.maxNodeChars >= 1000) cfg.maxNodeChars = memoryRaw.maxNodeChars;
+    if (typeof memoryRaw.historyLimit === "number" && memoryRaw.historyLimit >= 0) cfg.historyLimit = memoryRaw.historyLimit;
     if (typeof memoryRaw.checkpointInterval === "number" && memoryRaw.checkpointInterval >= 0) cfg.checkpointInterval = memoryRaw.checkpointInterval;
     if (memoryRaw.checkpointMode === "remind" || memoryRaw.checkpointMode === "auto") cfg.checkpointMode = memoryRaw.checkpointMode;
     if (memoryRaw.checkpointProvider === "anthropic" || memoryRaw.checkpointProvider === "openai") cfg.checkpointProvider = memoryRaw.checkpointProvider;

@@ -31,6 +31,7 @@ describe('sessions.cwd column', () => {
     const raw = new Database(path);
     raw.exec(`
       CREATE TABLE sessions (session_id TEXT PRIMARY KEY, project_uid TEXT);
+      CREATE TABLE nodes (uid TEXT PRIMARY KEY);
       CREATE TABLE schema_version (key TEXT PRIMARY KEY, value TEXT);
       INSERT INTO schema_version(key, value) VALUES ('schema_major', '2');
       INSERT INTO schema_version(key, value) VALUES ('v2_alter_1', 'applied');

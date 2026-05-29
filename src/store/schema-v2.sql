@@ -32,6 +32,7 @@ CREATE TABLE nodes (
   tags       TEXT,                    -- JSON array
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  irrelevant INTEGER NOT NULL DEFAULT 0,  -- 0=visible, 1=hidden from broad reads (load_project/read parent); show_all bypasses
   deleted_at TEXT
 );
 CREATE INDEX idx_nodes_root ON nodes(root_uid);

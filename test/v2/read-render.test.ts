@@ -79,6 +79,87 @@ describe('readBulk', () => {
   });
 });
 
+describe('irrelevant node filter', () => {
+  function makeStore() {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const { uid: root, label } = s.entries.createEntry({ prefix: 'P', level_1: 'Proj' });
+    const keep = s.entries.addNode({ root_uid: root, content: 'keep me' });
+    const drop = s.entries.addNode({ root_uid: root, content: 'hide me' });
+    s.db.prepare('UPDATE nodes SET irrelevant=1 WHERE uid=?').run(drop.uid);
+    return { s, label };
+  }
+
+  it('hides irrelevant nodes from a default render', () => {
+    const { s, label } = makeStore();
+    const out = renderEntryTree(s, label, 2);
+    expect(out).toContain('keep me');
+    expect(out).not.toContain('hide me');
+    s.close();
+  });
+
+  it('shows irrelevant nodes when show_all is set', () => {
+    const { s, label } = makeStore();
+    const out = renderEntryTree(s, label, 2, true);
+    expect(out).toContain('keep me');
+    expect(out).toContain('hide me');
+    s.close();
+  });
+});
+
+describe('history cap', () => {
+  function makeStore(historyLimit?: number) {
+    const cfg = historyLimit === undefined ? DEFAULT_CONFIG : { ...DEFAULT_CONFIG, historyLimit };
+    const s = createV2Store(':memory:', cfg);
+    const { uid: root, label } = s.entries.createEntry({ prefix: 'P', level_1: 'Proj' });
+    const hist = s.entries.addNode({ root_uid: root, content: 'History' });
+    for (let i = 0; i < 12; i++) s.entries.addNode({ root_uid: root, parent_uid: hist.uid, content: `h${i}` });
+    const bugs = s.entries.addNode({ root_uid: root, content: 'Bugs' });
+    for (let i = 0; i < 12; i++) s.entries.addNode({ root_uid: root, parent_uid: bugs.uid, content: `bug${i}` });
+    return { s, label, histAddr: () => {
+      const m = renderEntryTree(s, label, 2).match(/\.(\d+)\s+History/);
+      return `${label}.${m![1]}`;
+    } };
+  }
+
+  it('caps History children to the last N (most recent) with an older-marker, default 8', () => {
+    const { s, label } = makeStore(); // default historyLimit 8
+    const out = renderEntryTree(s, label, 3);
+    expect(out).toContain('h11'); // newest kept
+    expect(out).toContain('h4');  // boundary of last 8 (h4..h11)
+    expect(out).not.toContain('h3'); // older, hidden
+    expect(out).not.toContain('h0');
+    expect(out).toMatch(/\+4 older/);
+    s.close();
+  });
+
+  it('does NOT cap a non-History section with many children', () => {
+    const { s, label } = makeStore();
+    const out = renderEntryTree(s, label, 3);
+    expect(out).toContain('bug0'); // bugs section fully rendered
+    expect(out).toContain('bug11');
+    s.close();
+  });
+
+  it('historyLimit 0 renders the History section title-only with a marker', () => {
+    const { s, label } = makeStore(0);
+    const out = renderEntryTree(s, label, 3);
+    expect(out).toContain('History');
+    expect(out).not.toContain('h0');
+    expect(out).not.toContain('h11');
+    expect(out).toMatch(/\+12 older/);
+    s.close();
+  });
+
+  it('does NOT cap when the History node is the explicit drill-in target', () => {
+    const { s, histAddr } = makeStore(); // default 8
+    const out = renderEntryTree(s, histAddr(), 2);
+    expect(out).toContain('h0'); // full history when targeted directly
+    expect(out).toContain('h11');
+    expect(out).not.toMatch(/older/);
+    s.close();
+  });
+});
+
 describe('addressable node seqs', () => {
   it('renders each child with its relative seq so the address round-trips', () => {
     const s = createV2Store(':memory:', DEFAULT_CONFIG);

@@ -83,6 +83,43 @@ describe('Chunk 2 — idempotency (reopen same file twice)', () => {
   });
 });
 
+// ── nodes.irrelevant (v2_alter_8) ─────────────────────────────────────────────
+
+describe('nodes.irrelevant — fresh install', () => {
+  it('nodes table has an irrelevant column with default 0', () => {
+    const db = openDb(tempPath('hmem-nodeirr-fresh-'));
+    try {
+      expect(columnNames(db, 'nodes')).toContain('irrelevant');
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('nodes.irrelevant — v2_alter_8 ALTER path on a pre-existing store', () => {
+  it('runMigrations adds nodes.irrelevant to a store missing it', () => {
+    const path = tempPath('hmem-alter8-');
+    const raw = new Database(path);
+    raw.exec(`
+      CREATE TABLE nodes (uid TEXT PRIMARY KEY, root_uid TEXT, content TEXT, updated_at TEXT);
+      CREATE TABLE schema_version (key TEXT PRIMARY KEY, value TEXT);
+      INSERT INTO schema_version(key, value) VALUES ('schema_major', '2');
+      INSERT INTO schema_version(key, value) VALUES ('v2_alter_1', 'applied');
+      INSERT INTO schema_version(key, value) VALUES ('v2_alter_2', 'applied');
+      INSERT INTO schema_version(key, value) VALUES ('v2_alter_3', 'applied');
+      INSERT INTO schema_version(key, value) VALUES ('v2_alter_4', 'applied');
+      INSERT INTO schema_version(key, value) VALUES ('v2_alter_5', 'applied');
+      INSERT INTO schema_version(key, value) VALUES ('v2_alter_6', 'applied');
+      INSERT INTO schema_version(key, value) VALUES ('v2_alter_7', 'applied');
+    `);
+    expect(columnNames(raw, 'nodes')).not.toContain('irrelevant');
+    runMigrations(raw);
+    expect(columnNames(raw, 'nodes')).toContain('irrelevant');
+    expect(raw.prepare("SELECT 1 FROM schema_version WHERE key='v2_alter_8'").get()).toBeTruthy();
+    raw.close();
+  });
+});
+
 // ── Migrated-existing-store path (ALTER path for irrelevant) ─────────────────
 
 describe('Chunk 2 — v2_alter_6 ALTER path: irrelevant added to pre-Chunk-2 sessions', () => {
@@ -94,6 +131,7 @@ describe('Chunk 2 — v2_alter_6 ALTER path: irrelevant added to pre-Chunk-2 ses
     const raw = new Database(path);
     raw.exec(`
       CREATE TABLE sessions (session_id TEXT PRIMARY KEY, project_uid TEXT, cwd TEXT);
+      CREATE TABLE nodes (uid TEXT PRIMARY KEY);
       CREATE TABLE schema_version (key TEXT PRIMARY KEY, value TEXT);
       INSERT INTO schema_version(key, value) VALUES ('schema_major', '2');
       INSERT INTO schema_version(key, value) VALUES ('v2_alter_1', 'applied');

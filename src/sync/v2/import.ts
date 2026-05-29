@@ -16,11 +16,31 @@ const PK: Record<V2Table, string[]> = {
   session_bindings: ['session_id', 'from_seq'],
 };
 
+/** Physical columns of a table, cached per-DB. Used to drop columns a remote (newer-schema)
+ *  device emits that this device's schema lacks — forward-compatibility so an additive
+ *  migration on one device never wedges pull on another. Keyed by db so multiple stores
+ *  (e.g. several `:memory:` DBs in one process) don't share a stale column set. */
+const colCache = new WeakMap<Database.Database, Map<string, Set<string>>>();
+function knownColumns(db: Database.Database, table: V2Table): Set<string> {
+  let perDb = colCache.get(db);
+  if (!perDb) { perDb = new Map(); colCache.set(db, perDb); }
+  let set = perDb.get(table);
+  if (!set) {
+    const rows = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]; // table ∈ V2Table union — no injection
+    set = new Set(rows.map((r) => r.name));
+    perDb.set(table, set);
+  }
+  return set;
+}
+
 /** Upsert a full row verbatim. Mutable tables overwrite on PK conflict (winner already chosen);
  *  events union (bare ON CONFLICT DO NOTHING — ignores event_uid OR (session_id,seq) conflict).
- *  Bypasses the semantic write API on purpose — sync is row-level. */
+ *  Bypasses the semantic write API on purpose — sync is row-level.
+ *  Columns the local schema doesn't have are dropped (forward-compat — see knownColumns). */
 function upsert(db: Database.Database, table: V2Table, row: Record<string, unknown>): void {
-  const cols = Object.keys(row);
+  const known = knownColumns(db, table);
+  const cols = Object.keys(row).filter((c) => known.has(c));
+  const params = Object.fromEntries(cols.map((c) => [c, row[c]]));
   const placeholders = cols.map((c) => `@${c}`).join(', ');
   const stmt =
     table === 'events'
@@ -28,7 +48,7 @@ function upsert(db: Database.Database, table: V2Table, row: Record<string, unkno
       : `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ` +
         `ON CONFLICT(${PK[table].join(', ')}) DO UPDATE SET ` +
         cols.filter((c) => !PK[table].includes(c)).map((c) => `${c}=excluded.${c}`).join(', ');
-  db.prepare(stmt).run(row);
+  db.prepare(stmt).run(params);
 }
 
 /** Fetch the local row for a mutable table entry by its PK columns (may include soft-deleted). */

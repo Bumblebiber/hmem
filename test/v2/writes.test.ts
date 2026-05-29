@@ -3,6 +3,26 @@ import { createV2Store } from '../../src/v2/store-facade.js';
 import { DEFAULT_CONFIG } from '../../src/hmem-config.js';
 import { writeMemory, appendMemory, updateMemory } from '../../src/v2/writes.js';
 
+describe('updateMemory — node irrelevant', () => {
+  it('sets and clears irrelevant on a sub-node and bumps updated_at', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const { uid, label } = s.entries.createEntry({ prefix: 'P', level_1: 'Proj' });
+    const n = s.entries.addNode({ root_uid: uid, content: 'a step' });
+    const seq = (s.db.prepare('SELECT seq FROM nodes WHERE uid=?').get(n.uid) as { seq: number }).seq;
+    s.db.prepare('UPDATE nodes SET updated_at=? WHERE uid=?').run('2026-01-01T00:00:00.000Z', n.uid);
+
+    expect(updateMemory(s, `${label}.${seq}`, { irrelevant: true })).toBe(true);
+    let row = s.db.prepare('SELECT irrelevant, updated_at FROM nodes WHERE uid=?').get(n.uid) as { irrelevant: number; updated_at: string };
+    expect(row.irrelevant).toBe(1);
+    expect(row.updated_at).not.toBe('2026-01-01T00:00:00.000Z'); // bumped so it syncs
+
+    updateMemory(s, `${label}.${seq}`, { irrelevant: false });
+    row = s.db.prepare('SELECT irrelevant FROM nodes WHERE uid=?').get(n.uid) as { irrelevant: number; updated_at: string };
+    expect(row.irrelevant).toBe(0);
+    s.close();
+  });
+});
+
 describe('writeMemory', () => {
   it('creates an entry with tab-nested children', () => {
     const s = createV2Store(':memory:', DEFAULT_CONFIG);

@@ -3,6 +3,20 @@ import { createV2Store } from '../../src/v2/store-facade.js';
 import { DEFAULT_CONFIG } from '../../src/hmem-config.js';
 import { listProjects, loadProject, createProject, readProject } from '../../src/v2/projects.js';
 
+describe('loadProject — irrelevant nodes', () => {
+  it('omits irrelevant nodes from the briefing (inherits the default filter)', () => {
+    const s = createV2Store(':memory:', DEFAULT_CONFIG);
+    const { uid, label } = s.entries.createEntry({ prefix: 'P', level_1: 'Proj' });
+    s.entries.addNode({ root_uid: uid, content: 'live step' });
+    const dead = s.entries.addNode({ root_uid: uid, content: 'done step' });
+    s.db.prepare('UPDATE nodes SET irrelevant=1 WHERE uid=?').run(dead.uid);
+    const { text } = loadProject(s, label);
+    expect(text).toContain('live step');
+    expect(text).not.toContain('done step');
+    s.close();
+  });
+});
+
 describe('listProjects', () => {
   it('lists P-entries with labels and titles', () => {
     const s = createV2Store(':memory:', DEFAULT_CONFIG);

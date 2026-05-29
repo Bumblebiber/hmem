@@ -562,11 +562,14 @@ server.tool(
     tag: z.string().optional().describe(
       "Filter bulk reads by hashtag, e.g. '#hmem'. Only entries with this tag are shown."
     ),
+    show_all: z.coerce.boolean().optional().describe(
+      "Include irrelevant [-] nodes (curation/review). Default: hidden from drill-in reads."
+    ),
     hmem_path: z.string().optional().describe(
       "Curator mode: absolute path to an external .hmem file to read from. Overrides `store`."
     ),
   },
-  async ({ id, depth, prefix, after, before, search, limit, titles_only, tag, context_for, max_results, why, store: storeName, hmem_path }) => {
+  async ({ id, depth, prefix, after, before, search, limit, titles_only, tag, show_all, context_for, max_results, why, store: storeName, hmem_path }) => {
     try {
       const { store, label: storeLabel } = openStore(storeName, hmem_path);
       try {
@@ -574,7 +577,7 @@ server.tool(
         let whyBlock = "";
 
         if (id) {
-          text = renderEntryTree(store, id, depth ?? 2);
+          text = renderEntryTree(store, id, depth ?? 2, show_all);
         } else if (search) {
           text = searchMemoryDb(store, search, { max: max_results });
         } else if (context_for) {

@@ -35,6 +35,7 @@ export interface NodeRow {
   tags: string | null;
   created_at: string;
   updated_at: string;
+  irrelevant: number;
   deleted_at: string | null;
 }
 

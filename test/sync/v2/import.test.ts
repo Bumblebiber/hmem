@@ -119,6 +119,21 @@ describe('importV2', () => {
     s.close();
   });
 
+  it('tolerates an unknown column from a future schema (forward-compat, no wedge)', () => {
+    // A device on a newer schema emits node rows with a column this (older) device
+    // lacks. Import must drop the unknown column, not throw — else pull wedges forever.
+    const s = fresh();
+    const { uid } = s.entries.createEntry({ prefix: 'P', level_1: 'Root' });
+    const n = s.entries.addNode({ root_uid: uid, content: 'A' });
+    s.db.prepare('UPDATE nodes SET updated_at=? WHERE uid=?').run(ts(0), n.uid);
+    const localNode = s.db.prepare('SELECT * FROM nodes WHERE uid=?').get(n.uid) as Record<string, unknown>;
+    const remote = rowToEnvelope('nodes', { ...localNode, content: 'B', updated_at: ts(9), future_col: 1 });
+    const staging = { file_id: 'f', cursor: null, acked: {} };
+    expect(() => importV2(s, staging, [remote])).not.toThrow();
+    expect((s.db.prepare('SELECT content FROM nodes WHERE uid=?').get(n.uid) as { content: string }).content).toBe('B');
+    s.close();
+  });
+
   it('a newer local delete is not clobbered by a stale remote edit', () => {
     const s = fresh();
     const { uid } = s.entries.createEntry({ prefix: 'P', level_1: 'X' });

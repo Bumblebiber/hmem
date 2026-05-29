@@ -67,6 +67,14 @@ const MIGRATIONS: string[] = [
      last_extracted_seq  INTEGER NOT NULL DEFAULT 0,
      PRIMARY KEY (session_id, from_seq)
    )`,
+  // (v2_alter_8): nodes.irrelevant — boolean (0=visible, 1=hidden from broad reads:
+  // load_project + read_memory on a parent entry). The render filter (read-render
+  // childrenOf) honours it; show_all bypasses. Mirrors entries.irrelevant /
+  // sessions.irrelevant. On fresh files the column is already in schema-v2.sql, so this
+  // ALTER throws "duplicate column" — which runMigrations() already tolerates.
+  // SYNC NOTE: emitting this new column to a device that predates it would wedge its
+  // import — guarded by the column-tolerant upsert() shipped first (sync/v2/import.ts).
+  `ALTER TABLE nodes ADD COLUMN irrelevant INTEGER NOT NULL DEFAULT 0`,
 ];
 
 /**

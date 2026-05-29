@@ -6,18 +6,27 @@ function cap(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) + '…' : text;
 }
 
-function childrenOf(store: V2Store, rootUid: string, parentUid: string | null): NodeRow[] {
+/** A section whose first title word is "History" or "Protocol" — a chronological
+ *  log that grows unbounded. Capped to config.historyLimit in broad reads. */
+function isHistorySection(content: string): boolean {
+  const first = content.toLowerCase().split(/[\s—:-]/)[0]?.trim();
+  return first === 'history' || first === 'protocol';
+}
+
+function childrenOf(store: V2Store, rootUid: string, parentUid: string | null, showAll = false): NodeRow[] {
+  // Default reads hide irrelevant [-] nodes; show_all (curation/review) bypasses.
+  const irr = showAll ? '' : ' AND irrelevant = 0';
   if (parentUid === null) {
     return store.db.prepare(
       `SELECT * FROM nodes
         WHERE root_uid = ? AND parent_uid IS NULL
-          AND deleted_at IS NULL ORDER BY seq`,
+          AND deleted_at IS NULL${irr} ORDER BY seq`,
     ).all(rootUid) as NodeRow[];
   }
   return store.db.prepare(
     `SELECT * FROM nodes
       WHERE root_uid = ? AND parent_uid = ?
-        AND deleted_at IS NULL ORDER BY seq`,
+        AND deleted_at IS NULL${irr} ORDER BY seq`,
   ).all(rootUid, parentUid) as NodeRow[];
 }
 
@@ -28,14 +37,25 @@ function renderChildren(
   depth: number,
   indent: number,
   maxNode: number,
+  historyLimit: number,
+  showAll: boolean,
   out: string[],
+  limit?: number,
 ): void {
   if (depth <= 1) return; // depth counts levels of children to show
-  for (const n of childrenOf(store, rootUid, parentUid)) {
+  let children = childrenOf(store, rootUid, parentUid, showAll);
+  // `limit` caps THIS level's children (set when descending into a History
+  // section): keep the most recent (highest seqs = tail) and collapse the rest.
+  if (limit !== undefined && children.length > limit) {
+    out.push('  '.repeat(indent) + `… [+${children.length - limit} older]`);
+    children = limit === 0 ? [] : children.slice(-limit);
+  }
+  for (const n of children) {
     out.push(
       '  '.repeat(indent) + '.' + n.seq + ' ' + cap(store.entries.renderRefs(n.content).split('\n')[0], maxNode),
     );
-    renderChildren(store, rootUid, n.uid, depth - 1, indent + 1, maxNode, out);
+    const childLimit = isHistorySection(n.content) ? historyLimit : undefined;
+    renderChildren(store, rootUid, n.uid, depth - 1, indent + 1, maxNode, historyLimit, showAll, out, childLimit);
   }
 }
 
@@ -49,21 +69,24 @@ function renderChildren(
  *
  * Pass `depth >= 2` to show any children at all.
  */
-export function renderEntryTree(store: V2Store, address: string, depth = 2): string {
+export function renderEntryTree(store: V2Store, address: string, depth = 2, showAll = false): string {
   const addr = resolveAddress(store, address);
   if (!addr) return `‹${address} not found›`;
   const maxNode = store.config.maxNodeChars ?? 600;
+  const historyLimit = store.config.historyLimit ?? 8;
   const out: string[] = [];
   if (addr.node_uid === null) {
     const e = store.entries.getEntry(addr.root_uid);
     if (!e) return `‹${address} not found›`;
     out.push(`${e.label}  ${cap(store.entries.renderRefs(e.level_1), maxNode)}`);
-    renderChildren(store, addr.root_uid, null, depth, 1, maxNode, out);
+    renderChildren(store, addr.root_uid, null, depth, 1, maxNode, historyLimit, showAll, out);
   } else {
+    // Drilling directly into a node renders its children uncapped — even a
+    // History node: the caller explicitly asked for the full log.
     const n = store.entries.getNode(addr.node_uid);
     if (!n) return `‹${address} not found›`;
     out.push(`${address}  ${cap(store.entries.renderRefs(n.content), maxNode)}`);
-    renderChildren(store, addr.root_uid, n.uid, depth, 1, maxNode, out);
+    renderChildren(store, addr.root_uid, n.uid, depth, 1, maxNode, historyLimit, showAll, out);
   }
   return out.join('\n');
 }
