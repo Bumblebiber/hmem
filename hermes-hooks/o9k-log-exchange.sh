@@ -1,47 +1,61 @@
 #!/usr/bin/env bash
-# o9k-log-exchange.sh — Hermes post_llm_call hook
-# Liest das Hook-JSON von stdin, transformiert es ins hmem-log-exchange Format,
-# und schreibt den Exchange in den aktiven O-Entry.
-#
-# Requires: jq, hmem (global npm), HMEM_PATH + HMEM_PROJECT_DIR
-
+# o9k-log-exchange.sh — Hermes post_llm_call hook → TIM session_log
+# Logs each user+assistant exchange to TIM session.
+# Supports route_exchanges_to for sessions that live in TIM but not on local disk.
+# Requires: jq, node
 set -euo pipefail
 
-# Env defaults (hardcoded für Strato-Server)
-export HMEM_PATH="${HMEM_PATH:-/home/bbbee/.hmem/Agents/DEVELOPER/DEVELOPER.hmem}"
-export HMEM_PROJECT_DIR="${HMEM_PROJECT_DIR:-/home/bbbee/.hmem/Agents/DEVELOPER}"
+TIM_CLI="${TIM_CLI:-/home/bbbee/projects/tim/packages/tim-cli/dist/cli.js}"
 
-# Lese Hook-Payload von stdin
 payload="$(cat -)"
+user_msg=$(printf '%s' "$payload" | jq -r '.extra.user_message // empty')
+agent_msg=$(printf '%s' "$payload" | jq -r '.extra.assistant_response // empty')
+cwd=$(printf '%s' "$payload" | jq -r '.cwd // empty')
 
-# Extrahiere user_message und assistant_response aus dem Hook-JSON
-user_msg=$(echo "$payload" | jq -r '.extra.user_message // empty')
-agent_msg=$(echo "$payload" | jq -r '.extra.assistant_response // empty')
-session_id=$(echo "$payload" | jq -r '.session_id // empty')
+# Guards
+[[ -z "$user_msg" || -z "$agent_msg" ]] && exit 0
+[[ ${#user_msg} -lt 2 || ${#agent_msg} -lt 2 ]] && exit 0
+[[ "$user_msg" == "Generate a concise one-line title"* ]] && exit 0
 
-# Guard: keine leeren Exchanges loggen
-if [[ -z "$user_msg" || -z "$agent_msg" ]]; then
-    exit 0
+# ── Resolve session ID ──
+session_id=""
+
+# 1. Try local .tim-project (walk up from cwd)
+local_session=$(node -e "
+  const fs = require('fs');
+  const path = require('path');
+  let dir = '$cwd';
+  while (true) {
+    const p = path.join(dir, '.tim-project');
+    if (fs.existsSync(p)) {
+      const m = JSON.parse(fs.readFileSync(p,'utf8'));
+      process.stdout.write(m.session || '');
+      break;
+    }
+    const next = path.dirname(dir);
+    if (next === dir) break;
+    dir = next;
+  }
+" 2>/dev/null || true)
+
+if [[ -n "$local_session" ]]; then
+  session_id="$local_session"
 fi
 
-# Guard: zu kurz
-if [[ ${#user_msg} -lt 2 || ${#agent_msg} -lt 2 ]]; then
-    exit 0
+# 2. Fallback: global route_exchanges_to → sessions map
+if [[ -z "$session_id" && -f "$HOME/.tim-project" ]]; then
+  route=$(jq -r '.route_exchanges_to // empty' "$HOME/.tim-project" 2>/dev/null || true)
+  if [[ -n "$route" ]]; then
+    session_id=$(jq -r ".sessions[\"$route\"] // empty" "$HOME/.tim-project" 2>/dev/null || true)
+  fi
 fi
 
-# Guard: interne Hook-Prompts
-if [[ "$user_msg" == "Generate a concise one-line title"* ]]; then
-    exit 0
-fi
+[[ -z "$session_id" ]] && exit 0
 
-# Transformiere ins hmem log-exchange Direct-Mode Format
-log_input=$(jq -n \
-    --arg user "$user_msg" \
-    --arg agent "$agent_msg" \
-    --arg sid "$session_id" \
-    '{last_user_message: $user, last_assistant_message: $agent, session_id: $sid}')
-
-# Pipe an hmem log-exchange
-echo "$log_input" | hmem log-exchange 2>/dev/null
+# Log exchange via TIM CLI
+node "$TIM_CLI" hook log \
+  --session "$session_id" \
+  --user "$user_msg" \
+  --agent "$agent_msg" 2>/dev/null || true
 
 exit 0
