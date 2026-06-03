@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # o9k-log-exchange.sh — Hermes post_llm_call hook → TIM session_log
 # Logs each user+assistant exchange to TIM session.
-# Supports route_exchanges_to for sessions that live in TIM but not on local disk.
+# Session id: local .tim-project cwd-walk, else hook payload .session_id (Hermes session key).
 # Requires: jq, node
 set -euo pipefail
 
@@ -11,6 +11,7 @@ payload="$(cat -)"
 user_msg=$(printf '%s' "$payload" | jq -r '.extra.user_message // empty')
 agent_msg=$(printf '%s' "$payload" | jq -r '.extra.assistant_response // empty')
 cwd=$(printf '%s' "$payload" | jq -r '.cwd // empty')
+hook_session=$(printf '%s' "$payload" | jq -r '.session_id // empty')
 
 # Guards
 [[ -z "$user_msg" || -z "$agent_msg" ]] && exit 0
@@ -42,12 +43,9 @@ if [[ -n "$local_session" ]]; then
   session_id="$local_session"
 fi
 
-# 2. Fallback: global route_exchanges_to → sessions map
-if [[ -z "$session_id" && -f "$HOME/.tim-project" ]]; then
-  route=$(jq -r '.route_exchanges_to // empty' "$HOME/.tim-project" 2>/dev/null || true)
-  if [[ -n "$route" ]]; then
-    session_id=$(jq -r ".sessions[\"$route\"] // empty" "$HOME/.tim-project" 2>/dev/null || true)
-  fi
+# 2. Harness session key (same id tim-session-start uses for TIM session)
+if [[ -z "$session_id" && -n "$hook_session" ]]; then
+  session_id="$hook_session"
 fi
 
 [[ -z "$session_id" ]] && exit 0
