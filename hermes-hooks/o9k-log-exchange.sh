@@ -17,6 +17,10 @@ hook_session=$(printf '%s' "$payload" | jq -r '.session_id // empty')
 [[ -z "$user_msg" || -z "$agent_msg" ]] && exit 0
 [[ ${#user_msg} -lt 2 || ${#agent_msg} -lt 2 ]] && exit 0
 [[ "$user_msg" == "Generate a concise one-line title"* ]] && exit 0
+# Skip exchange logging for Cron sessions (cron-prompt is 100-130KB skill assembly, not a real user message)
+[[ "$hook_session" == cron_* ]] && exit 0
+# Skip skill-invocation prefix (system-injected context, not a real user message)
+[[ "$user_msg" == "[IMPORTANT: The user has invoked the"* ]] && exit 0
 
 # ── Resolve session ID ──
 session_id=""
