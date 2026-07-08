@@ -47,5 +47,5 @@ export function runMcpAddCurate(): void {
   console.log("");
   console.log("  Activate via `/mcp` in Claude Code only when curating —");
   console.log("  it provides destructive bulk operations (obsolete, delete, merge).");
-  console.log("  Then invoke `/o9k-curate` to start a curation session.");
+  console.log("  Then invoke `/hmem-curate` to start a curation session.");
 }

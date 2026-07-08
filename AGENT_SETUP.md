@@ -1,4 +1,4 @@
-# AGENT_SETUP.md — its-over-9k Setup Guide for AI Agents
+# AGENT_SETUP.md — hmem Setup Guide for AI Agents
 
 This file is written for AI agents executing setup on behalf of a user.
 No marketing. No explanations. Only what you need to install and verify.
@@ -7,7 +7,7 @@ No marketing. No explanations. Only what you need to install and verify.
 
 ## What you are installing
 
-`its-over-9k` is a persistent memory MCP server. After setup:
+`hmem` is a persistent memory MCP server. After setup:
 - You gain 12 new MCP tools (`read_memory`, `write_memory`, `load_project`, etc.)
 - Every conversation exchange is auto-logged to a SQLite store
 - Memory persists across sessions, devices, and AI providers
@@ -17,7 +17,7 @@ No marketing. No explanations. Only what you need to install and verify.
 ## Step 1: Install
 
 ```bash
-npm install -g its-over-9k
+npm install -g hmem
 ```
 
 Verify:
@@ -76,8 +76,8 @@ The installer handles Steps 4–6 automatically. **If `hmem init` succeeds, skip
 Get exact paths first:
 ```bash
 NODE_PATH=$(which node)
-SERVER_PATH=$(npm root -g)/its-over-9k/dist/mcp-server.js
-CURATE_PATH=$(npm root -g)/its-over-9k/dist/mcp-curate-server.js
+SERVER_PATH=$(npm root -g)/hmem/dist/mcp-server.js
+CURATE_PATH=$(npm root -g)/hmem/dist/mcp-curate-server.js
 MEMORY_DIR="$HOME/.hmem"
 AGENT_ID="DEVELOPER"
 HMEM_PATH="$MEMORY_DIR/Agents/$AGENT_ID/$AGENT_ID.hmem"
@@ -168,7 +168,7 @@ Edit `~/.cursor/mcp.json`, `~/.codeium/windsurf/mcp_config.json`, or `.vscode/mc
 Pi does not use MCP config. Instead, copy the extension file to Pi's plugin directory:
 
 ```bash
-PLUGIN_SRC=$(npm root -g)/its-over-9k/dist/extensions/pi-hmem.js
+PLUGIN_SRC=$(npm root -g)/hmem/dist/extensions/pi-hmem.js
 PLUGIN_DIR="$HOME/.config/pi/plugins"   # adjust if Pi uses a different path
 mkdir -p "$PLUGIN_DIR"
 cp "$PLUGIN_SRC" "$PLUGIN_DIR/pi-hmem.js"
@@ -222,7 +222,7 @@ Hooks are installed by `hmem init`. For manual setup, add to `~/.claude/settings
 The OpenCode plugin bridges hmem into OpenCode's event system. `hmem init` installs it automatically. For manual setup:
 
 ```bash
-PLUGIN_SRC=$(npm root -g)/its-over-9k/opencode-plugin/hmem.js
+PLUGIN_SRC=$(npm root -g)/hmem/opencode-plugin/hmem.js
 mkdir -p "$HOME/.config/opencode/plugins"
 cp "$PLUGIN_SRC" "$HOME/.config/opencode/plugins/hmem.js"
 ```
@@ -256,11 +256,11 @@ Copies skill files to all detected tool skill directories:
 
 | Tool | Destination |
 |------|-------------|
-| Claude Code | `~/.claude/skills/o9k-*/` |
-| OpenCode | `~/.config/opencode/skills/o9k-*/` |
-| Gemini CLI | `~/.gemini/skills/o9k-*/` |
+| Claude Code | `~/.claude/skills/hmem-*/` |
+| OpenCode | `~/.config/opencode/skills/hmem-*/` |
+| Gemini CLI | `~/.gemini/skills/hmem-*/` |
 
-After install, agents gain `/o9k-*` slash commands (session start, write, read, curate, etc.).
+After install, agents gain `/hmem-*` slash commands (session start, write, read, curate, etc.).
 
 ---
 

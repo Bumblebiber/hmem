@@ -1,6 +1,6 @@
 # hermes-hmem
 
-[its-over-9k](https://github.com/Bumblebiber/its-over-9k) (hmem) integration for the Hermes agent.
+[hmem](https://github.com/Bumblebiber/hmem) (hmem) integration for the Hermes agent.
 
 Logs every (user, assistant) exchange to the active hmem O-entry and fires
 the `hmem checkpoint` background agent when a batch fills up or the session ends.
@@ -12,14 +12,14 @@ the Python equivalent of `src/extensions/pi-hmem.ts` in the hmem repo.
 ## Requirements
 
 - Hermes agent installed (any version exposing `register_hook`)
-- `hmem` CLI on `PATH` — install with `npm install -g its-over-9k`
+- `hmem` CLI on `PATH` — install with `npm install -g hmem`
 - A checkpoint provider configured: see hmem's [Checkpoint setup per harness](../../README.md#checkpoint-setup-per-harness)
 
 ## Install
 
 ```bash
 mkdir -p ~/.hermes/plugins
-ln -s "$(npm root -g)/its-over-9k/plugins/hermes-hmem" ~/.hermes/plugins/hermes-hmem
+ln -s "$(npm root -g)/hmem/plugins/hermes-hmem" ~/.hermes/plugins/hermes-hmem
 hermes plugins enable hermes-hmem
 ```
 

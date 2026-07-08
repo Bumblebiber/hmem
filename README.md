@@ -1,18 +1,18 @@
-# its-over-9k - The AI Memory Framework
+# hmem — Humanlike Memory for AI Agents
 
-> Your AI forgets everything between sessions. **its-over-9k fixes that** — and a lot more.
-
-![It's Over 9000](https://media1.giphy.com/media/v1.Y2lkPTc5MGI3NjExc3h1MDJxbWE0MnU0Y3Y2cmc3Z3ZkOWdjaThwYzVqbTkwbHo1eWM1NCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/tPKoWQJk3cEbC/giphy.gif)
+> Your AI forgets everything between sessions. **hmem fixes that.**
 
 One `load_project()` call. ~3000 tokens. Your agent knows everything important about a project — every past mistake, every decision, every open task — **across sessions, devices, and AI providers.** No setup per conversation. No "let me re-read the codebase." It just *remembers*.
 
 > **AI agent?** Skip this file. Read [AGENT_SETUP.md](AGENT_SETUP.md) — written for you, not for humans.
 
+> **Naming note (v2.0):** This package was briefly published as `its-over-9k` (1.x). It is now `hmem` again — pure memory framework, nothing else. The `its-over-9k` name lives on as a separate project: the [o9k token-efficiency meta-framework](https://github.com/Bumblebiber/its-over-9k), which combines skills/plugins like this one. Related: [TIM](https://github.com/Bumblebiber/tim) — hmem's next-generation successor (hypergraph memory, CRDT sync).
+
 ---
 
 ## What This Is
 
-its-over-9k is not a note-taking plugin. It's a **memory framework** for AI agents — a complete infrastructure layer for persistent, portable, token-efficient knowledge that survives session boundaries, device switches, and provider changes.
+hmem is not a note-taking plugin. It's a **memory framework** for AI agents — a complete infrastructure layer for persistent, portable, token-efficient knowledge that survives session boundaries, device switches, and provider changes.
 
 Four core guarantees:
 
@@ -91,7 +91,7 @@ Sessions are meaningless. Projects are everything.
 
 ### Skills System
 
-its-over-9k ships with a complete **skills layer** — structured behavior files that agents load on demand. Skills define *how* an agent should do something (debug, write memory, curate entries, handle a session start) — separate from memory, separate from prompts.
+hmem ships with a complete **skills layer** — structured behavior files that agents load on demand. Skills define *how* an agent should do something (debug, write memory, curate entries, handle a session start) — separate from memory, separate from prompts.
 
 ```bash
 npx hmem update-skills    # Pull latest skills to your AI tool's skill directory
@@ -101,51 +101,51 @@ Skills are versioned and updated independently. Your agents get smarter without 
 
 | Skill | Triggers when… |
 |-------|----------------|
-| `o9k-session-start` | Every session start — loads project + surfaces pending git work, open tasks, misrouted O-entries |
-| `o9k-using-hmem` | Meta-skill loaded at session start; defines mandatory memory habits |
-| `o9k-read` | Reading from long-term memory (search, prefix filter, find_related, cross-project read) |
-| `o9k-write` | Writing to hmem — picks prefix, tree location, tags, detects duplicates |
-| `o9k-search` | User references something without an ID ("the bug we had", "letzte Woche") |
-| `o9k-new-project` | Creating a P-entry — handles schema, sections, O-entry linking |
-| `o9k-new-error` | Creating an E-entry with the strict 5-level scaffold |
-| `o9k-activate` | Switching active project mid-session, plus fixing misrouted exchanges |
-| `o9k-context` | Loading specific context when load_project output isn't enough |
-| `o9k-recall` | Dispatching a Haiku sub-agent to search hmem |
-| `o9k-dispatch` | Dispatching an isolated sub-agent for any search/lookup/calculation |
-| `o9k-curate` | Cleaning up an .hmem file (mark obsolete, fix titles, consolidate dupes) |
-| `o9k-migrate-o` | Migrating O-entries to the project-bound 5-level structure |
-| `o9k-consolidate` | Merging session checkpoint summaries into one final O-entry summary |
-| `o9k-wipe` | Prep for `/clear` — save high-value knowledge, update Next Steps |
-| `o9k-config` | View/change memory settings, hooks, sync, checkpoints |
-| `o9k-setup` | First-time install of hmem for Claude Code / Gemini CLI / OpenCode |
-| `o9k-sync-setup` | Set up `hmem-sync` for cross-device sync |
-| `o9k-update` | Update flow — runs `npm update -g`, syncs skills, applies migrations |
-| `o9k-release` | Pre-publish checklist for its-over-9k itself |
-| `o9k-subagent` | Template for sub-agents dispatched by `o9k-dispatch` |
+| `hmem-session-start` | Every session start — loads project + surfaces pending git work, open tasks, misrouted O-entries |
+| `hmem-using-hmem` | Meta-skill loaded at session start; defines mandatory memory habits |
+| `hmem-read` | Reading from long-term memory (search, prefix filter, find_related, cross-project read) |
+| `hmem-write` | Writing to hmem — picks prefix, tree location, tags, detects duplicates |
+| `hmem-search` | User references something without an ID ("the bug we had", "letzte Woche") |
+| `hmem-new-project` | Creating a P-entry — handles schema, sections, O-entry linking |
+| `hmem-new-error` | Creating an E-entry with the strict 5-level scaffold |
+| `hmem-activate` | Switching active project mid-session, plus fixing misrouted exchanges |
+| `hmem-context` | Loading specific context when load_project output isn't enough |
+| `hmem-recall` | Dispatching a Haiku sub-agent to search hmem |
+| `hmem-dispatch` | Dispatching an isolated sub-agent for any search/lookup/calculation |
+| `hmem-curate` | Cleaning up an .hmem file (mark obsolete, fix titles, consolidate dupes) |
+| `hmem-migrate-o` | Migrating O-entries to the project-bound 5-level structure |
+| `hmem-consolidate` | Merging session checkpoint summaries into one final O-entry summary |
+| `hmem-wipe` | Prep for `/clear` — save high-value knowledge, update Next Steps |
+| `hmem-config` | View/change memory settings, hooks, sync, checkpoints |
+| `hmem-setup` | First-time install of hmem for Claude Code / Gemini CLI / OpenCode |
+| `hmem-sync-setup` | Set up `hmem-sync` for cross-device sync |
+| `hmem-update` | Update flow — runs `npm update -g`, syncs skills, applies migrations |
+| `hmem-release` | Pre-publish checklist for hmem itself |
+| `hmem-subagent` | Template for sub-agents dispatched by `hmem-dispatch` |
 
 ### Company Memory
 
 Beyond personal memory, agents can maintain a **shared company store** — a separate `company.hmem` that multiple agents and team members can read from. Personal and company memory coexist; agents query both simultaneously.
 
 ```typescript
-import { openCompanyMemory } from 'its-over-9k';
+import { openCompanyMemory } from 'hmem';
 const store = openCompanyMemory('/path/to/project');
 ```
 
 ### Embeddable SDK
 
-its-over-9k ships as a fully documented TypeScript SDK — import `HmemStore` directly into your own agents, tools, or automation pipelines:
+hmem ships as a fully documented TypeScript SDK — import `HmemStore` directly into your own agents, tools, or automation pipelines:
 
 ```typescript
 import {
   HmemStore, openCompanyMemory, resolveHmemPath,
   loadHmemConfig, saveHmemConfig, DEFAULT_CONFIG, DEFAULT_PREFIXES, formatPrefixList,
   searchMemory,
-} from 'its-over-9k';
+} from 'hmem';
 import type {
   AgentRole, MemoryEntry, MemoryNode, HmemConfig,
   SearchResult, SearchOptions, SearchScope,
-} from 'its-over-9k';
+} from 'hmem';
 
 const store = new HmemStore('/path/to/agent.hmem');
 const results = searchMemory('/path/to/project', 'auth token bug', { maxResults: 5 });
@@ -155,7 +155,7 @@ const results = searchMemory('/path/to/project', 'auth token bug', { maxResults:
 
 ## MCP Tools
 
-its-over-9k ships **two** MCP servers:
+hmem ships **two** MCP servers:
 
 - **`hmem`** (daily-use, 13 tools) — read, write, search, project lifecycle.
 - **`hmem-curate`** (maintenance, 11 tools) — bulk edits, schema migrations, backup/restore. Activate only when curating.
@@ -206,7 +206,7 @@ Then toggle it via `/mcp` only during curation sessions. For other MCP clients, 
 
 ## CLI Commands
 
-After `npm install -g its-over-9k`, the `hmem` binary is on PATH.
+After `npm install -g hmem`, the `hmem` binary is on PATH.
 
 ### User-facing
 
@@ -265,12 +265,12 @@ Default prefixes (configurable via `prefixes` in `hmem.config.json`):
 
 | Prefix | Category | Example |
 |--------|----------|---------|
-| **P** | Project | `its-over-9k \| Active \| TS/SQLite/npm` |
+| **P** | Project | `hmem \| Active \| TS/SQLite/npm` |
 | **L** | Lesson | `HMEM_AGENT_ID must be set in hooks — resolveHmemPath falls back to wrong DB` |
 | **T** | Task | `T0033 hmem-sync SaaS monetization — recurring monthly tier design` |
 | **E** | Error | `158 spurious O-entries created when Haiku MCP lacked HMEM_NO_SESSION guard` |
 | **D** | Decision | `Project-based O-entries over session-based — sessions are meaningless` |
-| **M** | Milestone | `v1.0.0 — package renamed to its-over-9k, npm rebrand complete` |
+| **M** | Milestone | `v1.0.0 — package renamed to hmem, npm rebrand complete` |
 | **S** | Skill | `Skill: TypeScript debugging with source maps` |
 | **N** | Navigator | High-level navigation entry (table of contents for a topic) |
 | **H** | Human | `User Skill: TypeScript 9, Architecture 9, React 3` |
@@ -288,7 +288,7 @@ Add custom prefixes (e.g. `A` for App, `F` for Function reference) by listing th
 ### 1. Install
 
 ```bash
-npm install -g its-over-9k
+npm install -g hmem
 ```
 
 ### 2. Run the interactive installer
@@ -326,7 +326,7 @@ Empty response = working (first run). Error = check the [troubleshooting section
   "mcpServers": {
     "hmem": {
       "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/its-over-9k/dist/mcp-server.js"],
+      "args": ["/absolute/path/to/hmem/dist/mcp-server.js"],
       "env": {
         "HMEM_PROJECT_DIR": "/home/yourname/.hmem",
         "HMEM_AGENT_ID": "DEVELOPER"
@@ -339,7 +339,7 @@ Empty response = working (first run). Error = check the [troubleshooting section
 Find the paths:
 ```bash
 echo "Node: $(which node)"
-echo "Server: $(npm root -g)/its-over-9k/dist/mcp-server.js"
+echo "Server: $(npm root -g)/hmem/dist/mcp-server.js"
 ```
 </details>
 
@@ -351,7 +351,7 @@ echo "Server: $(npm root -g)/its-over-9k/dist/mcp-server.js"
   "mcp": {
     "hmem": {
       "type": "local",
-      "command": ["/absolute/path/to/node", "/absolute/path/to/its-over-9k/dist/mcp-server.js"],
+      "command": ["/absolute/path/to/node", "/absolute/path/to/hmem/dist/mcp-server.js"],
       "environment": { "HMEM_PROJECT_DIR": "/home/yourname/.hmem" },
       "enabled": true
     }
@@ -370,7 +370,7 @@ Edit `~/.cursor/mcp.json`, `~/.codeium/windsurf/mcp_config.json`, or `.vscode/mc
   "mcpServers": {
     "hmem": {
       "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/its-over-9k/dist/mcp-server.js"],
+      "args": ["/absolute/path/to/hmem/dist/mcp-server.js"],
       "env": { "HMEM_PROJECT_DIR": "/home/yourname/.hmem" }
     }
   }
@@ -499,14 +499,14 @@ See [`settings.windows.example.json`](settings.windows.example.json) for the ful
       "matcher": "",
       "hooks": [{
         "type": "command",
-        "command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/its-over-9k/dist/cli.js log-exchange",
+        "command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/hmem/dist/cli.js log-exchange",
         "shell": "powershell"
       }]
     }]
   },
   "statusLine": {
     "type": "command",
-    "command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/its-over-9k/dist/cli.js statusline",
+    "command": "node C:/Users/YOUR_USERNAME/AppData/Roaming/npm/node_modules/hmem/dist/cli.js statusline",
     "shell": "powershell"
   }
 }
@@ -534,7 +534,7 @@ Run `npm root -g` to get the correct `node_modules` path for your machine.
 ## Updating
 
 ```bash
-npm update -g its-over-9k    # MCP server + SDK
+npm update -g hmem    # MCP server + SDK
 npm update -g hmem-sync      # Sync (if installed)
 npx hmem update-skills       # Refresh skill files
 ```

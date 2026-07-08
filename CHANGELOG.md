@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.0.0] — 2026-07-08
+
+### Breaking Changes — the split: hmem is hmem again
+- **Package renamed from `its-over-9k` back to `hmem` on npm.** hmem returns to being a pure memory framework. Migrate: `npm uninstall -g its-over-9k && npm install -g hmem`.
+- **GitHub repo renamed from `Bumblebiber/its-over-9k` back to `Bumblebiber/hmem`.**
+- **The `its-over-9k` name now belongs to a separate project** — the o9k token-efficiency meta-framework (skills + plugins that combine multiple efficiency frameworks and recommend a memory MCP like hmem/TIM). See https://github.com/Bumblebiber/its-over-9k.
+- **All skills renamed `o9k-*` → `hmem-*`** (e.g. `/o9k-session-start` → `/hmem-session-start`). `npx hmem update-skills` installs the new names and removes stale `o9k-*` skill folders automatically.
+- Hermes hook scripts renamed: `o9k-startup.sh` → `hmem-startup.sh`, `o9k-log-exchange.sh` → `hmem-log-exchange.sh` — update your Hermes hook config paths.
+- MCP registry name is now `io.github.Bumblebiber/hmem`.
+
+### What stays the same
+- CLI binary names: `hmem`, `hmem-curate`
+- MCP server names and all tool names
+- Your `.hmem` files, config (`hmem.config.json`), env vars (`HMEM_PATH`, `HMEM_PROJECT_DIR`, `HMEM_AGENT_ID`), and sync setup — no data migration needed
+
 ## [1.3.5] — 2026-05-20
 
 ### Changed

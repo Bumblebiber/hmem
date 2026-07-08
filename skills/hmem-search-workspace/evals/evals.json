@@ -1,0 +1,35 @@
+{
+  "skill_name": "hmem-search",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Gibt es irgendwo in hmem ein definiertes H-Standardschema? Ich glaube da war mal was dokumentiert.",
+      "expected_output": "Agent finds R0025 (H-Entry Schema: Standard-Struktur für Human-Context-Einträge) by trying variations like 'H-Entry Schema', 'Human schema', 'H Standard' after an initial search for 'H-Standardschema' returns nothing.",
+      "assertions": [
+        { "id": "finds_r0025", "description": "Agent finds or references R0025" },
+        { "id": "tries_variations", "description": "Agent tries at least 2 different search terms before giving up or succeeding" },
+        { "id": "no_premature_giveup", "description": "Agent does NOT report 'nichts gefunden' after a single null result" }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Was hatten wir nochmal zur Checkpoint-Strategie beschlossen? Irgendwas mit automatisch vs. manuell.",
+      "expected_output": "Agent searches for checkpoint strategy/decision, tries variations (checkpoint mode, auto checkpoint, checkpointMode), finds relevant D- or L-entries about checkpointMode auto vs remind.",
+      "assertions": [
+        { "id": "finds_relevant_entry", "description": "Agent finds at least one relevant entry about checkpoints (D- or L- or config entry)" },
+        { "id": "tries_english_variant", "description": "Agent tries English variant (checkpoint, checkpointMode) if German search fails" },
+        { "id": "summarizes", "description": "Agent summarizes findings rather than dumping raw IDs" }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Finde den Eintrag über O-Entry Kollisionen beim Multi-Agent-Betrieb. Da gab's eine Entscheidung wie wir das lösen.",
+      "expected_output": "Agent searches for O-entry collision / multi-agent conflict, tries variations (ID collision, multi-agent, O-Eintrag Konflikt), finds related D- or L-entries.",
+      "assertions": [
+        { "id": "finds_relevant", "description": "Agent finds at least one relevant entry about multi-agent ID collision or O-entry conflict" },
+        { "id": "tries_compound_split", "description": "Agent tries splitting compound terms or using English equivalents (collision, conflict, multi-agent)" },
+        { "id": "no_single_attempt", "description": "Agent makes more than one search attempt" }
+      ]
+    }
+  ]
+}

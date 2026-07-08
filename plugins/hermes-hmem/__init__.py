@@ -1,4 +1,4 @@
-"""hermes-hmem — its-over-9k (hmem) integration for the Hermes agent.
+"""hermes-hmem — hmem integration for the Hermes agent.
 
 Logs every (user, assistant) exchange to the active hmem O-entry and fires
 the hmem checkpoint agent when a batch fills up or the session ends.
@@ -180,7 +180,7 @@ def register(ctx) -> None:
     if not _HMEM_BIN:
         logger.warning(
             "hermes-hmem: `hmem` CLI not found on PATH — plugin loaded but "
-            "inactive. Install with `npm install -g its-over-9k`."
+            "inactive. Install with `npm install -g hmem`."
         )
     ctx.register_hook("on_session_start", on_session_start)
     ctx.register_hook("pre_llm_call", on_pre_llm_call)

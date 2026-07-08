@@ -921,9 +921,9 @@ export function updateSkills(): void {
       }
     }
 
-    // Remove stale hmem-* skills that are no longer bundled
+    // Remove stale hmem-*/o9k-* skills that are no longer bundled (o9k-* = pre-2.0 naming)
     for (const existing of fs.readdirSync(dir)) {
-      if (!existing.startsWith("hmem-")) continue;
+      if (!existing.startsWith("hmem-") && !existing.startsWith("o9k-")) continue;
       if (bundledSet.has(existing)) continue;
       const stalePath = path.join(dir, existing);
       if (fs.statSync(stalePath).isDirectory()) {
