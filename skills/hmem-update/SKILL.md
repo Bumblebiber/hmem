@@ -21,14 +21,14 @@ important — do not skip steps.
 >
 > | `hmem-mcp` (legacy) | `its-over-9k` (1.x line) | `hmem` (current) |
 > |---------------------|--------------------------|------------------|
-> | up to 7.4.x         | 1.0.0 – 1.3.8            | 2.0.0+           |
+> | up to 7.4.x         | 1.0.0 – 1.3.8            | 8.0.0+           |
 >
 > Steps 2d–2l below describe migrations only relevant when upgrading from the
-> legacy 5.x/6.x/7.x line. **Skip them if your installed version is 1.x or 2.x** —
+> legacy 5.x/6.x/7.x line. **Skip them if your installed version is 1.x or 8.x** —
 > they are already baked into the rename baseline.
 >
 > **Upgrading from `its-over-9k` 1.x:** uninstall the old package and install the
-> new name — `npm update -g its-over-9k` will never reach 2.0:
+> new name — `npm update -g its-over-9k` will never reach 8.0:
 >
 > ```bash
 > npm uninstall -g its-over-9k
@@ -36,7 +36,7 @@ important — do not skip steps.
 > npx hmem update-skills        # also removes the old o9k-* skill folders
 > ```
 >
-> The skills were renamed `o9k-*` → `hmem-*` in 2.0.0. `update-skills` cleans up
+> The skills were renamed `o9k-*` → `hmem-*` in 8.0.0. `update-skills` cleans up
 > stale `o9k-*` folders automatically.
 
 ---

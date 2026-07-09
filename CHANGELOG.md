@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.0.0] — 2026-07-08
+## [8.0.0] — 2026-07-09
 
 ### Breaking Changes — the split: hmem is hmem again
 - **Package renamed from `its-over-9k` back to `hmem` on npm.** hmem returns to being a pure memory framework. Migrate: `npm uninstall -g its-over-9k && npm install -g hmem`.

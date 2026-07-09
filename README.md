@@ -6,7 +6,7 @@ One `load_project()` call. ~3000 tokens. Your agent knows everything important a
 
 > **AI agent?** Skip this file. Read [AGENT_SETUP.md](AGENT_SETUP.md) — written for you, not for humans.
 
-> **Naming note (v2.0):** This package was briefly published as `its-over-9k` (1.x). It is now `hmem` again — pure memory framework, nothing else. The `its-over-9k` name lives on as a separate project: the [o9k token-efficiency meta-framework](https://github.com/Bumblebiber/its-over-9k), which combines skills/plugins like this one. Related: [TIM](https://github.com/Bumblebiber/tim) — hmem's next-generation successor (hypergraph memory, CRDT sync).
+> **Naming note (v8.0):** This package was briefly published as `its-over-9k` (1.x). It is now `hmem` again — pure memory framework, nothing else. The `its-over-9k` name lives on as a separate project: the [o9k token-efficiency meta-framework](https://github.com/Bumblebiber/its-over-9k), which combines skills/plugins like this one. Related: [TIM](https://github.com/Bumblebiber/tim) — hmem's next-generation successor (hypergraph memory, CRDT sync).
 
 ---
 
