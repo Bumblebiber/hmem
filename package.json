@@ -1,5 +1,5 @@
 {
-  "name": "hmem",
+  "name": "hmem-mcp",
   "version": "8.0.0",
   "description": "hmem \u2014 persistent, hierarchical, humanlike memory for AI agents (MCP). Because sessions shouldn't start from zero.",
   "author": "Bumblebiber",

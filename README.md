@@ -206,7 +206,7 @@ Then toggle it via `/mcp` only during curation sessions. For other MCP clients, 
 
 ## CLI Commands
 
-After `npm install -g hmem`, the `hmem` binary is on PATH.
+After `npm install -g hmem-mcp`, the `hmem` binary is on PATH.
 
 ### User-facing
 
@@ -288,7 +288,7 @@ Add custom prefixes (e.g. `A` for App, `F` for Function reference) by listing th
 ### 1. Install
 
 ```bash
-npm install -g hmem
+npm install -g hmem-mcp
 ```
 
 ### 2. Run the interactive installer
