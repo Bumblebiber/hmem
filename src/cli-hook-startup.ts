@@ -265,8 +265,8 @@ export async function hookStartup(): Promise<void> {
     const hasIntent = detectsProjectIntent(input?.prompt);
 
     const greetingDirective = hasIntent
-      ? "Session start. User named a project \u2014 call `load_project` for it, then invoke the `o9k-session-start` skill before responding."
-      : "Session start. User did not name a project. Invoke the `o9k-session-start` skill \u2014 it will list recent projects below and ask which to continue with.";
+      ? "Session start. User named a project \u2014 call `load_project` for it, then invoke the `hmem-session-start` skill before responding."
+      : "Session start. User did not name a project. Invoke the `hmem-session-start` skill \u2014 it will list recent projects below and ask which to continue with.";
 
     process.stdout.write(JSON.stringify({
       hookSpecificOutput: {

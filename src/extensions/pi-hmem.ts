@@ -300,7 +300,7 @@ async function buildStartupContext(): Promise<string> {
     // ── Assemble: full greetingDirective matching cli-hook-startup.ts ──
     // The directive tells the agent EXACTLY what to do on session start:
     // STEP 1: load_project or read_memory (silently)
-    // STEP 2: invoke o9k-session-start skill (silently)
+    // STEP 2: invoke hmem-session-start skill (silently)
     // STEP 3: handle user's actual message
     //
     // When the user already named a project, the agent sees recentProjects
@@ -311,7 +311,7 @@ async function buildStartupContext(): Promise<string> {
       "STEP 1 (silent — no output yet): Load context.\n" +
       "  - If the user's message names a specific project (e.g. \"lade Projekt hmem\", \"work on P0048\"): call ONLY load_project(id=\"P00XX\"). Do NOT also call read_memory().\n" +
       "  - Otherwise: call read_memory() (no parameters).\n\n" +
-      "STEP 2 (silent — no output yet): Invoke the `o9k-session-start` skill via the Skill tool. The skill handles the full session-start workflow: pending git work check (uncommitted, stashes, worktrees, unmerged branches), Next Steps + open T-tasks surfacing from the project's Roadmap, O-entry routing check, noise check, explanation-depth calibration, and the greeting format itself (one short line with sync-state dot from the `--- hmem-sync ---` block). The project is already loaded — the skill detects this and skips its activation step.\n\n" +
+      "STEP 2 (silent — no output yet): Invoke the `hmem-session-start` skill via the Skill tool. The skill handles the full session-start workflow: pending git work check (uncommitted, stashes, worktrees, unmerged branches), Next Steps + open T-tasks surfacing from the project's Roadmap, O-entry routing check, noise check, explanation-depth calibration, and the greeting format itself (one short line with sync-state dot from the `--- hmem-sync ---` block). The project is already loaded — the skill detects this and skips its activation step.\n\n" +
       "  - If the user named a project above: proceed straight to the task after the skill's output.\n" +
       "  - If the user did NOT name a project: the skill will list the 5 entries from `--- Recent projects ---` below as bullet points and ask which one to continue with.\n\n" +
       "STEP 3: Handle the user's actual message (or, if step 2 ended with a question, wait for their answer).";

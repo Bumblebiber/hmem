@@ -1,0 +1,370 @@
+{
+  "metadata": {
+    "skill_name": "hmem-activate",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-04-25T11:42:16Z",
+    "evals_run": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Agent explicitly notes which project was active before switching (OLD_PROJECT)",
+          "passed": true,
+          "evidence": "Step 1 states: 'OLD_PROJECT: P0043 (EasySAP)' and 'OLD_O: O0043 (corresponding O-entry for EasySAP session logging)'"
+        },
+        {
+          "text": "Agent calls load_project on the target project (P0048)",
+          "passed": true,
+          "evidence": "Step 2 states: 'I would call: load_project(id: \"P0048\")'"
+        },
+        {
+          "text": "Agent checks the OLD O-entry for misrouted exchanges (reads O0043 or mentions doing so)",
+          "passed": true,
+          "evidence": "Step 3 states: 'Call read_memory(id: \"O0043\") to fetch today's session and batch nodes from the EasySAP O-entry'"
+        },
+        {
+          "text": "Agent outputs a confirmation showing the activated project and O-entry routing",
+          "passed": true,
+          "evidence": "Step 4 shows final output: 'Activated: P0048 hmem / O-entry routing: O0048 / Misrouted exchanges moved: none'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Agent correctly identifies P0054 as OLD_PROJECT (the one to check for misrouted exchanges)",
+          "passed": true,
+          "evidence": "Step 1 states: 'OLD_PROJECT: P0054 (currently active)' and 'OLD_O: O0054 (corresponding O-entry for P0054)'"
+        },
+        {
+          "text": "Agent calls load_project on P0048 (the target)",
+          "passed": true,
+          "evidence": "Step 2 states: 'MCP call I would make: load_project(id=\"P0048\")'"
+        },
+        {
+          "text": "Agent checks O0054 specifically for today's exchanges that may belong to the P0048 context",
+          "passed": true,
+          "evidence": "Step 3 states: 'MCP call I would make: read_memory(id=\"O0054\")' and 'Filter for nodes with today's timestamp (2026-04-25)' and 'Read each exchange's content to determine if it discusses P0048 topics'"
+        },
+        {
+          "text": "Agent mentions or describes using move_nodes to correct misrouted exchanges if found",
+          "passed": true,
+          "evidence": "Step 3 states: 'I would collect their node IDs at the batch level (L3) and call: move_nodes(node_ids: [\"O0054.3\"], target_o_id: \"O0048\")'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Agent notes P0048 as current project before switching to P0043",
+          "passed": true,
+          "evidence": "Step 1 states: 'OLD_PROJECT: P0048 (hmem)' and 'OLD_O: O0048'"
+        },
+        {
+          "text": "Agent calls load_project on P0043 (EasySAP)",
+          "passed": true,
+          "evidence": "Step 2 states: 'Would call: load_project(id=\"P0043\")'"
+        },
+        {
+          "text": "Agent warns that O-entry routing now points to O0043, and reminds user to explicitly switch back",
+          "passed": true,
+          "evidence": "The 'User Re-activation Warning' section states: 'You'll need to re-invoke the skill to switch back. It's not automatic.' and confirms: 'OUTPUT: Activated: P0043 (EasySAP) / O-entry routing: O0043'"
+        },
+        {
+          "text": "Agent does NOT move any nodes (there are no misrouted exchanges yet at this point)",
+          "passed": true,
+          "evidence": "Step 3 concludes: 'Expected result for this scenario: Likely \"none\" \u2014 this is a fresh switch, not a return to a previously mixed session.' Final output shows: 'Misrouted exchanges moved: none'"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 4,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Agent infers or asks which project should actually be active (does not just accept the wrong one)",
+          "passed": true,
+          "evidence": "Decision Point section states: 'Approach: 1. First attempt: Infer from context. ... 2. If context unclear: Ask the user \"Which project should be active instead?\"' \u2014 the agent explicitly reasons about whether to ask or infer rather than silently accepting P0054."
+        },
+        {
+          "text": "Agent calls load_project on the correct project (P0048 in this scenario)",
+          "passed": true,
+          "evidence": "Step 2 shows: '[SIMULATED CALL] load_project(id: \"P0048\")' with confirmation 'Active project now: P0048 hmem'"
+        },
+        {
+          "text": "Agent checks the wrongly-activated project's O-entry (O0054) for misrouted exchanges from the current session",
+          "passed": true,
+          "evidence": "Step 3 states: '[SIMULATED CALL] read_memory(id: \"O0054\")' and proceeds to analyze each exchange (O0054.1, O0054.2, O0054.3) for misrouting."
+        },
+        {
+          "text": "Agent describes using move_nodes to move misrouted exchanges from wrong O-entry to correct one",
+          "passed": true,
+          "evidence": "Step 3 shows: '[SIMULATED CALL] move_nodes(node_ids: [\"O0054.2\", \"O0054.3\"], target_o_id: \"O0048\")' with full result description."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.0,
+        "passed": 0,
+        "failed": 4,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Agent explicitly notes which project was active before switching (OLD_PROJECT)",
+          "passed": false,
+          "evidence": "The agent mentions 'Aktuell aktives Projekt: P0043 (EasySAP)' at the top but never explicitly names it as the OLD_PROJECT or frames it as a tracked switch with routing implications. No OLD_PROJECT / OLD_O labeling present."
+        },
+        {
+          "text": "Agent calls load_project on the target project (P0048)",
+          "passed": false,
+          "evidence": "Agent does not know the real ID of the hmem project: 'load_project(id=\"P00XX\", // Die echte ID des hmem-Projekts)'. It uses a placeholder (P00XX) rather than the correct P0048, indicating it did not actually call the tool."
+        },
+        {
+          "text": "Agent checks the OLD O-entry for misrouted exchanges (reads O0043 or mentions doing so)",
+          "passed": false,
+          "evidence": "No mention of O-entries, misrouted exchanges, or reading O0043 anywhere in the response. The concept of O-entry routing is entirely absent."
+        },
+        {
+          "text": "Agent outputs a confirmation showing the activated project and O-entry routing",
+          "passed": false,
+          "evidence": "Confirmation given is generic: '\u2713 Projekt \"hmem\" ist jetzt aktiv' \u2014 no O-entry routing information included."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.25,
+        "passed": 1,
+        "failed": 3,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Agent correctly identifies P0054 as OLD_PROJECT (the one to check for misrouted exchanges)",
+          "passed": false,
+          "evidence": "The agent acknowledges P0054 as 'currently active' and as the project to deactivate, but never frames it as OLD_PROJECT to check for misrouted exchanges. The misrouting concept is entirely absent from the response."
+        },
+        {
+          "text": "Agent calls load_project on P0048 (the target)",
+          "passed": true,
+          "evidence": "Step 1 states: 'load_project({ id: \\'P0048\\', store: \\'personal\\' })'"
+        },
+        {
+          "text": "Agent checks O0054 specifically for today's exchanges that may belong to the P0048 context",
+          "passed": false,
+          "evidence": "No mention of reading O0054 or checking for misrouted exchanges anywhere in the response. The response is entirely about loading P0048 and getting the briefing."
+        },
+        {
+          "text": "Agent mentions or describes using move_nodes to correct misrouted exchanges if found",
+          "passed": false,
+          "evidence": "No mention of move_nodes or any exchange-routing correction. The response ends with 'P0054 is automatically deactivated when P0048 becomes active' \u2014 no misrouting awareness."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.75,
+        "passed": 3,
+        "failed": 1,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Agent notes P0048 as current project before switching to P0043",
+          "passed": true,
+          "evidence": "The response mentions 'Previous active project (hmem/P0048) can be restored immediately' and Step 3 shows 'load_project({ id: \\'P0048\\', store: \\'personal\\' })' as the switch-back command, implying P0048 is the current project."
+        },
+        {
+          "text": "Agent calls load_project on P0043 (EasySAP)",
+          "passed": true,
+          "evidence": "Step 1 states: 'load_project({ id: \\'P0043\\', store: \\'personal\\' })'"
+        },
+        {
+          "text": "Agent warns that O-entry routing now points to O0043, and reminds user to explicitly switch back",
+          "passed": false,
+          "evidence": "No mention of O-entry routing pointing to O0043. The response says it's a 'non-destructive context switch' and that the user 'can restore immediately', but gives no warning about routing implications or the need to explicitly invoke the switch-back."
+        },
+        {
+          "text": "Agent does NOT move any nodes (there are no misrouted exchanges yet at this point)",
+          "passed": true,
+          "evidence": "No move_nodes call or any mention of moving exchanges anywhere in the response."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 4,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.5,
+        "passed": 2,
+        "failed": 2,
+        "total": 4,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "Agent infers or asks which project should actually be active (does not just accept the wrong one)",
+          "passed": true,
+          "evidence": "Section 2 states: 'Call load_project(id=\"P0048\") to: Switch from MAIMO-RPG to hmem' \u2014 the agent identifies P0048 as the correct target and does not continue with P0054."
+        },
+        {
+          "text": "Agent calls load_project on the correct project (P0048 in this scenario)",
+          "passed": true,
+          "evidence": "Section 2 states: 'Immediately load P0048 with load_project(id=\"P0048\")'"
+        },
+        {
+          "text": "Agent checks the wrongly-activated project's O-entry (O0054) for misrouted exchanges from the current session",
+          "passed": false,
+          "evidence": "No mention of checking O0054, reading the wrong project's O-entry, or inspecting for misrouted exchanges. The response ends after loading P0048 and offering to help with hmem work."
+        },
+        {
+          "text": "Agent describes using move_nodes to move misrouted exchanges from wrong O-entry to correct one",
+          "passed": false,
+          "evidence": "No mention of move_nodes anywhere in the response. The routing-correction step is entirely absent."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.375,
+        "stddev": 0.3227,
+        "min": 0.0,
+        "max": 0.75
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.62",
+      "time_seconds": "+0.0",
+      "tokens": "+0"
+    }
+  },
+  "notes": []
+}

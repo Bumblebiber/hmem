@@ -76,7 +76,7 @@ function printHelp(): void {
   console.log(`🧠 hmem — Quick Tips
 
   📦 Context full? (>100k tokens)
-     /o9k-wipe  — saves high-value knowledge to hmem, then /clear.
+     /hmem-wipe  — saves high-value knowledge to hmem, then /clear.
                   Run before context compaction kicks in.
 
   🔄 Multiple devices?
@@ -89,7 +89,7 @@ function printHelp(): void {
 
   ✨ Register a new project?
      In-session: say "new project XYZ"
-       → o9k-new-project skill handles schema + O-entry linking.
+       → hmem-new-project skill handles schema + O-entry linking.
 
   📌 Keep important entries visible every session?
      In-session: say "pin this entry"

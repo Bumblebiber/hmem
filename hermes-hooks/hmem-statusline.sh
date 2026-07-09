@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hmem-statusline.sh — hmem-Status für Hermes Statusbar
-# Nutzt hmem statusline mit session_id-Cache vom o9k-startup.sh
+# Nutzt hmem statusline mit session_id-Cache vom hmem-startup.sh
 
 set -euo pipefail
 

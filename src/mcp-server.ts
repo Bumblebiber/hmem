@@ -85,7 +85,7 @@ function checkVersionUpgrade(): string {
     if (lastSeen !== PKG_VERSION) {
       saveLastSeenVersion(configPath, raw);
       autoSyncSkills();
-      return `\n\n⚠ its-over-9k updated: v${lastSeen} → v${PKG_VERSION}. Skills have been auto-synced. Run /o9k-update for full post-update steps (entry migration, schema enforcement, config check).`;
+      return `\n\n⚠ hmem updated: v${lastSeen} → v${PKG_VERSION}. Skills have been auto-synced. Run /hmem-update for full post-update steps (entry migration, schema enforcement, config check).`;
     }
   } catch {}
   return "";
@@ -2643,12 +2643,12 @@ function checkForUpdates(): void {
     // Rate-limit: once per day per package
     let state: Record<string, string> = {};
     try { state = JSON.parse(fs.readFileSync(updateCheckFile, "utf8")); } catch {}
-    const lastCheck = state["its-over-9k"] ? new Date(state["its-over-9k"]).getTime() : 0;
+    const lastCheck = state["hmem"] ? new Date(state["hmem"]).getTime() : 0;
     if (Date.now() - lastCheck < UPDATE_CHECK_INTERVAL_MS) return;
 
     // On Windows, npm is a .cmd wrapper — use shell only as last resort
     const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-    const child = spawn(npmCmd, ["show", "its-over-9k", "version"], {
+    const child = spawn(npmCmd, ["show", "hmem", "version"], {
       stdio: ["ignore", "pipe", "ignore"],
       detached: true,
       windowsHide: true,
@@ -2660,7 +2660,7 @@ function checkForUpdates(): void {
       const latest = out.trim();
       if (!latest) return;
       // Save check timestamp
-      state["its-over-9k"] = new Date().toISOString();
+      state["hmem"] = new Date().toISOString();
       try {
         fs.mkdirSync(path.dirname(updateCheckFile), { recursive: true });
         fs.writeFileSync(updateCheckFile, JSON.stringify(state, null, 2), "utf8");
@@ -2671,7 +2671,7 @@ function checkForUpdates(): void {
         const [li, lj, lk] = latest.split(".").map(Number);
         const isNewer = li > ci || (li === ci && lj > cj) || (li === ci && lj === cj && lk > ck);
         if (isNewer) {
-          log(`⚠ its-over-9k update available: ${PKG_VERSION} → ${latest}. Run: npm install -g its-over-9k@latest`);
+          log(`⚠ hmem update available: ${PKG_VERSION} → ${latest}. Run: npm install -g hmem@latest`);
         }
       }
     });

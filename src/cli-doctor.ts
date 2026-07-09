@@ -29,14 +29,14 @@ interface McpEntry {
   [key: string]: unknown;
 }
 
-const HMEM_KEY_PATTERN = /^(hmem|its-over-9k|o9k-mcp)$/i;
+const HMEM_KEY_PATTERN = /^(hmem|hmem-mcp|its-over-9k|o9k-mcp)$/i;
 
 function looksLikeHmemEntry(key: string, entry: McpEntry): boolean {
   if (HMEM_KEY_PATTERN.test(key)) return true;
   const args = Array.isArray(entry.args) ? entry.args : [];
   const argStr = args.join(" ");
-  if (/(?:^|[\\/])(?:hmem|its-over-9k|o9k-mcp)[\\/]/i.test(argStr)) return true;
-  if (/mcp-server\.js$/i.test(argStr) && /\b(hmem|its-over-9k|o9k-mcp)\b/i.test(argStr)) return true;
+  if (/(?:^|[\\/])(?:hmem|hmem-mcp|its-over-9k|o9k-mcp)[\\/]/i.test(argStr)) return true;
+  if (/mcp-server\.js$/i.test(argStr) && /\b(hmem|hmem-mcp|its-over-9k|o9k-mcp)\b/i.test(argStr)) return true;
   return false;
 }
 
@@ -112,7 +112,7 @@ function checkEntry(location: string, serverKey: string, entry: McpEntry): Findi
       location,
       serverKey,
       reason: `uses deprecated env vars (${present.join(", ")}) without HMEM_PATH`,
-      hint: "Replace with a single HMEM_PATH pointing at your .hmem file. See /o9k-update Step 2d.",
+      hint: "Replace with a single HMEM_PATH pointing at your .hmem file. See /hmem-update Step 2d.",
     });
   }
 
@@ -181,6 +181,6 @@ export async function doctor(): Promise<void> {
   }
 
   console.log(`\n${total} issue(s) found. hmem doctor does not auto-modify host configs — edit them manually or re-run \`hmem init\`.`);
-  console.log("If this looks like a bug, file an issue: https://github.com/Bumblebiber/its-over-9k/issues");
+  console.log("If this looks like a bug, file an issue: https://github.com/Bumblebiber/hmem/issues");
   process.exitCode = 1;
 }

@@ -17,9 +17,9 @@ describe("hmem help", () => {
     expect(out).toContain("🧠 hmem — Quick Tips");
   });
 
-  it("mentions /o9k-wipe in tips", () => {
+  it("mentions /hmem-wipe in tips", () => {
     const out = runCli(["help"]);
-    expect(out).toContain("/o9k-wipe");
+    expect(out).toContain("/hmem-wipe");
   });
 
   it("mentions hmem sync setup in tips", () => {
