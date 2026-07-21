@@ -2029,18 +2029,49 @@ export class HmemStore {
    */
   getRecentOEntries(limit: number, linkedTo?: string): { id: string; title: string; created_at: string }[] {
     if (limit <= 0) return [];
+    // Rank by newest child activity under the O-root, not the root's own created_at.
+    // Long-lived project O-entries (100+ batches) keep an old root timestamp; ordering by
+    // root created_at surfaces unrelated newer O-roots instead (#30).
+    const activityOrder = `COALESCE(
+         (SELECT MAX(created_at) FROM memory_nodes WHERE root_id = memories.id),
+         memories.created_at
+       ) DESC`;
     if (linkedTo) {
+      // Prefer the canonical O{seq} matching P{seq} when present and linked — even if
+      // another O-entry also links to the project and has a newer root timestamp.
+      const projSeq = parseInt(linkedTo.replace(/\D/g, ""), 10);
+      const canonicalId = Number.isFinite(projSeq) && projSeq > 0
+        ? `O${String(projSeq).padStart(4, "0")}`
+        : null;
+      if (canonicalId) {
+        const canonical = this.db.prepare(
+          `SELECT id, title, created_at FROM memories
+           WHERE id = ? AND prefix = 'O' AND obsolete != 1 AND irrelevant != 1
+             AND links LIKE ?
+           LIMIT 1`
+        ).get(canonicalId, `%"${linkedTo}"%`) as { id: string; title: string; created_at: string } | undefined;
+        if (canonical) {
+          if (limit <= 1) return [canonical];
+          const rest = this.db.prepare(
+            `SELECT id, title, created_at FROM memories
+             WHERE prefix = 'O' AND seq > 0 AND obsolete != 1 AND irrelevant != 1
+               AND id != ? AND links LIKE ?
+             ORDER BY ${activityOrder} LIMIT ?`
+          ).all(canonicalId, `%"${linkedTo}"%`, limit - 1) as { id: string; title: string; created_at: string }[];
+          return [canonical, ...rest];
+        }
+      }
       return this.db.prepare(
         `SELECT id, title, created_at FROM memories
          WHERE prefix = 'O' AND seq > 0 AND obsolete != 1 AND irrelevant != 1
            AND links LIKE ?
-         ORDER BY created_at DESC LIMIT ?`
+         ORDER BY ${activityOrder} LIMIT ?`
       ).all(`%"${linkedTo}"%`, limit) as { id: string; title: string; created_at: string }[];
     }
     return this.db.prepare(
       `SELECT id, title, created_at FROM memories
        WHERE prefix = 'O' AND seq > 0 AND obsolete != 1 AND irrelevant != 1
-       ORDER BY created_at DESC LIMIT ?`
+       ORDER BY ${activityOrder} LIMIT ?`
     ).all(limit) as { id: string; title: string; created_at: string }[];
   }
 

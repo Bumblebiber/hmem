@@ -1,5 +1,7 @@
 # hmem — Humanlike Memory for AI Agents
 
+[![mcpindex](https://mcpindex.ai/api/v1/badge/io-github-bumblebiber-hmem-mcp)](https://mcpindex.ai/server/io-github-bumblebiber-hmem-mcp)
+
 > Your AI forgets everything between sessions. **hmem fixes that.**
 
 One `load_project()` call. ~3000 tokens. Your agent knows everything important about a project — every past mistake, every decision, every open task — **across sessions, devices, and AI providers.** No setup per conversation. No "let me re-read the codebase." It just *remembers*.

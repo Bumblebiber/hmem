@@ -755,6 +755,17 @@ export async function runInit(args: string[] = []): Promise<void> {
           }
         }
 
+        // SessionStart[clear] — deactivate active project for the new session (issue #32).
+        // Without this, statusline falls through to the per-process/DB active marker and
+        // keeps showing the previous project's name after /clear.
+        if (!hasHookCmd("SessionStart", "hmem deactivate")) {
+          settings.hooks.SessionStart.push({
+            matcher: "clear",
+            hooks: [{ type: "command", command: `hmem ${pathFlag} deactivate`, timeout: 5 }],
+          });
+          changed = true;
+        }
+
         if (changed) {
           fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
           console.log(`  [ok] All hooks registered in: ${settingsPath}`);

@@ -207,9 +207,29 @@ function formatRecentOEntries(
   exchangeCount: number,
   linkedTo?: string,
   expandAll?: boolean,
+  forceIds?: string[],
 ): { text: string; ids: string[] } {
   if (limit <= 0) return { text: "", ids: [] };
-  const recentO = store.getRecentOEntries(limit, linkedTo);
+  // forceIds: pin specific O-roots (e.g. canonical O{seq} for load_project) so ranking
+  // by root created_at / cross-linked O-entries cannot displace them (#30).
+  let recentO: { id: string; title: string; created_at: string }[];
+  if (forceIds && forceIds.length > 0) {
+    recentO = [];
+    for (const oid of forceIds) {
+      if (recentO.length >= limit) break;
+      // Use depth-1 id read so we get title/created_at/flags (readEntry is too narrow).
+      const entries = store.read({ id: oid, depth: 1 });
+      const entry = entries[0];
+      if (!entry || entry.obsolete || entry.irrelevant) continue;
+      recentO.push({
+        id: entry.id,
+        title: entry.title ?? entry.level_1 ?? entry.id,
+        created_at: entry.created_at,
+      });
+    }
+  } else {
+    recentO = store.getRecentOEntries(limit, linkedTo);
+  }
   if (recentO.length === 0) return { text: "", ids: [] };
 
   const lines: string[] = ["Recent sessions:"];
@@ -1793,13 +1813,17 @@ server.tool(
 
 
         // Inject recent O-entries linked to THIS project
-        // Purpose: seamless continuation of the previous session's conversation
+        // Purpose: seamless continuation of the previous session's conversation.
+        // Prefer the canonical O{seq}↔P{seq} entry so large long-lived O-nodes
+        // are not outranked by a different O-root with a newer created_at (#30).
         if (hmemConfig.recentOEntries > 0) {
           const projectSeq = parseInt(id.replace(/\D/g, ""), 10);
           const projectOId = `O${String(projectSeq).padStart(4, "0")}`;
           const oExists = hmemStore.readEntry(projectOId);
           if (oExists) {
-            const { text: oText, ids } = formatRecentOEntries(hmemStore, 1, 5, id, true);
+            const { text: oText, ids } = formatRecentOEntries(
+              hmemStore, 1, 5, id, true, [projectOId],
+            );
             if (oText.trim()) {
               lines.push("");
               lines.push("  --- Recent Session Context ---");
