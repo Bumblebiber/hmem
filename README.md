@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/bumblebiber-hmem-badge.png)](https://mseep.ai/app/bumblebiber-hmem)
+
 # hmem — Humanlike Memory for AI Agents
 
 [![mcpindex](https://mcpindex.ai/api/v1/badge/io-github-bumblebiber-hmem-mcp)](https://mcpindex.ai/server/io-github-bumblebiber-hmem-mcp)
