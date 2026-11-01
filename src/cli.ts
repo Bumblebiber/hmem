@@ -7,12 +7,18 @@
  */
 
 // Parse --hmem-path flag (cross-platform alternative to HMEM_PATH=... env prefix)
+import { inheritHmemMcpEnv } from "./cli-mcp-env.js";
+
 const args = process.argv.slice(2);
 const pathIdx = args.indexOf("--hmem-path");
 if (pathIdx !== -1 && args[pathIdx + 1]) {
   process.env.HMEM_PATH = args[pathIdx + 1];
   args.splice(pathIdx, 2);
 }
+
+// MCP config env applies only to the MCP server process. Shell hooks start
+// hmem separately, so inherit their project settings from .mcp.json here.
+inheritHmemMcpEnv();
 
 const command = args[0];
 
